@@ -1,0 +1,19 @@
+I'm continuing development of the Wayland Remote Desktop Server (wrd-server).
+
+Repository: https://github.com/lamco-admin/wayland-rdp
+Foundation (P1-01) and Security (P1-02) are complete.
+
+NEXT TASK: Portal Integration (P1-03)
+
+Please create a new branch "task/p1-03-portal" and implement the complete specification found at:
+https://github.com/lamco-admin/wayland-rdp/blob/main/phase1-tasks/TASK-P1-03-PORTAL-INTEGRATION-REVISED.md
+
+Key deliverables:
+1. src/portal/ module with 5 files (mod.rs, screencast.rs, remote_desktop.rs, clipboard.rs, session.rs)
+2. PortalManager implementation using ashpd crate
+3. Integration test in tests/integration/portal_test.rs
+4. Example program in examples/portal_info.rs
+
+The specification includes complete code examples. Follow it exactly.
+
+Success: Portal session creates, PipeWire FD obtained, input injection works, all tests pass.
