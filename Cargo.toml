@@ -1,0 +1,100 @@
+[package]
+name = "wrd-server"
+version = "0.1.0"
+edition = "2021"
+authors = ["WRD-Server Contributors"]
+description = "Wayland Remote Desktop Server using RDP protocol"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lamco-admin/wayland-rdp"
+
+[[bin]]
+name = "wrd-server"
+path = "src/main.rs"
+
+[lib]
+name = "wrd_server"
+path = "src/lib.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+futures = "0.3"
+
+# Configuration and CLI
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+clap = { version = "4.4", features = ["derive", "env"] }
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+tracing-appender = "0.2"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Networking and protocols
+bytes = "1.5"
+rustls = { version = "0.21", features = ["dangerous_configuration"] }
+rustls-pemfile = "1.0"
+tokio-rustls = "0.24"
+
+# RDP protocol
+# Note: These will be implemented in future tasks
+# ironrdp and related crates are placeholders for now
+
+# Video encoding
+# Note: These will be added when video encoding is implemented
+
+# Wayland and Portal integration
+wayland-client = { version = "0.31", optional = true }
+wayland-protocols = { version = "0.31", features = ["client"], optional = true }
+
+# Input handling
+# libei is not yet available on crates.io
+
+# System and utilities
+nix = { version = "0.27", features = ["signal", "process"] }
+libc = "0.2"
+chrono = "0.4"
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# Memory management
+memmap2 = "0.9"
+crossbeam-channel = "0.5"
+
+# Authentication (optional, for PAM support)
+pam = { version = "0.7", optional = true }
+
+[dev-dependencies]
+# Testing
+criterion = { version = "0.5", features = ["html_reports"] }
+mockall = "0.12"
+tempfile = "3.8"
+proptest = "1.4"
+
+[features]
+default = []
+wayland = ["wayland-client", "wayland-protocols"]
+pam-auth = ["pam"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[[bench]]
+name = "video_encoding"
+harness = false
+
+[[bench]]
+name = "network_throughput"
+harness = false
