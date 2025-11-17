@@ -1,0 +1,35 @@
+Repository: https://github.com/lamco-admin/wayland-rdp
+
+I'm continuing development of wrd-server (Wayland Remote Desktop Server).
+
+COMPLETED:
+- P1-01: Foundation (config, main, logging) ✅
+- P1-02: Security (TLS, auth, certificates) ✅  
+- P1-03: Portal Integration (ashpd, screen capture, input injection) ✅
+
+NEXT TASK: PipeWire Integration (P1-04)
+
+Objective: Connect to PipeWire using the file descriptor from the portal module and receive video frames.
+
+Implement src/pipewire/ module with:
+1. PipeWire connection using FD from PortalSessionHandle
+2. Frame reception (width, height, pixel data, format)
+3. Multi-stream support (multiple monitors)
+4. VideoFrame struct for output
+5. Integration test (tests/integration/pipewire_test.rs)
+6. Example program (examples/pipewire_frames.rs)
+
+Dependencies already in Cargo.toml:
+- pipewire = "0.9.2"
+- libspa = "0.9.2"
+
+Success criteria:
+- PipeWire connects using portal FD
+- Frames received at ~30 FPS
+- Frame data accessible
+- cargo build succeeds
+- Example demonstrates frame reception
+
+See CCW-CONTINUE-SESSION.md in repo for complete details.
+
+Estimated duration: 3-5 days
