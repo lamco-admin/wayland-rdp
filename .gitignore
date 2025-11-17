@@ -1,0 +1,36 @@
+# Rust build artifacts
+/target
+Cargo.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test and temporary files
+*.log
+logs/
+*.tmp
+
+# Build outputs
+*.o
+*.so
+*.a
+*.exe
+
+# Documentation
+target/doc/
+
+# Benchmark results
+target/criterion/
+
+# Coverage reports
+*.profraw
+*.profdata
+
+# Environment files
+.env
+.env.local
