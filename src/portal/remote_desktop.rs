@@ -5,7 +5,6 @@
 use anyhow::{Context, Result};
 use ashpd::desktop::remote_desktop::{DeviceType, KeyState, RemoteDesktop};
 use ashpd::desktop::PersistMode;
-use ashpd::WindowIdentifier;
 use enumflags2::BitFlags;
 use std::os::fd::{AsRawFd, RawFd};
 use std::sync::Arc;

@@ -5,7 +5,6 @@
 use anyhow::{Context, Result};
 use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
 use ashpd::desktop::PersistMode;
-use ashpd::WindowIdentifier;
 use std::os::fd::{AsRawFd, RawFd};
 use std::sync::Arc;
 use tracing::{debug, info};

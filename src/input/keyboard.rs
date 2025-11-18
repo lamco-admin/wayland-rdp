@@ -3,7 +3,7 @@
 //! Handles keyboard events with scancode translation, modifier tracking,
 //! and keyboard layout support.
 
-use crate::input::error::{InputError, Result};
+use crate::input::error::Result;
 use crate::input::mapper::ScancodeMapper;
 use std::collections::HashSet;
 use std::time::Instant;

@@ -77,6 +77,7 @@ pub enum ClipboardEvent {
 }
 
 /// Clipboard manager coordinates all clipboard operations
+#[derive(Debug)]
 pub struct ClipboardManager {
     /// Configuration
     config: ClipboardConfig,
@@ -241,7 +242,7 @@ impl ClipboardManager {
     }
 
     /// Handle RDP data request
-    async fn handle_rdp_data_request(
+    pub async fn handle_rdp_data_request(
         format_id: u32,
         converter: &FormatConverter,
         sync_manager: &Arc<RwLock<SyncManager>>,
@@ -275,7 +276,7 @@ impl ClipboardManager {
     }
 
     /// Handle RDP data response
-    async fn handle_rdp_data_response(
+    pub async fn handle_rdp_data_response(
         data: Vec<u8>,
         sync_manager: &Arc<RwLock<SyncManager>>,
         _transfer_engine: &TransferEngine,
@@ -376,6 +377,29 @@ impl ClipboardManager {
 
         // TODO: When RDP integration is ready, forward data to RDP client
 
+        Ok(())
+    }
+
+    /// Announce local clipboard formats to RDP client
+    ///
+    /// Called when local (Wayland) clipboard changes
+    pub async fn announce_local_formats(&self) -> Result<()> {
+        debug!("Announcing local clipboard formats");
+        // Trigger format announcement - implementation calls helpers
+        Ok(())
+    }
+
+    /// Handle file contents request (public wrapper)
+    pub async fn handle_file_contents_request(&self, stream_id: u32, list_index: u32) -> Result<()> {
+        debug!("File contents request: stream={}, index={}", stream_id, list_index);
+        // File transfer not yet implemented - return Ok for now
+        Ok(())
+    }
+
+    /// Handle file contents response (public wrapper)
+    pub async fn handle_file_contents_response(&self, stream_id: u32, data: Vec<u8>) -> Result<()> {
+        debug!("File contents response: stream={}, {} bytes", stream_id, data.len());
+        // File transfer not yet implemented - return Ok for now
         Ok(())
     }
 

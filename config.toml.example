@@ -1,0 +1,85 @@
+# WRD-Server Configuration Example
+# Copy this to config.toml and customize as needed
+
+[server]
+# Address to listen on for RDP connections
+# 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only
+listen_addr = "0.0.0.0:3389"
+
+# Maximum concurrent connections
+max_connections = 5
+
+# Session timeout in seconds (0 = no timeout)
+session_timeout = 0
+
+# Use XDG Desktop Portals (required for Wayland)
+use_portals = true
+
+[security]
+# TLS certificate paths (required)
+# Generate with: openssl req -x509 -newkey rsa:4096 -nodes \
+#                  -keyout certs/key.pem -out certs/cert.pem \
+#                  -days 365 -subj "/CN=wrd-server"
+cert_path = "certs/cert.pem"
+key_path = "certs/key.pem"
+
+# Require TLS (highly recommended)
+require_tls = true
+
+[video]
+# Maximum frames per second (30 or 60)
+max_fps = 30
+
+# Enable damage tracking for efficiency
+# (only send changed regions, not full frames)
+enable_damage_tracking = true
+
+# Preferred pixel format (auto-detected if not specified)
+# Options: "BGRx", "BGRA", "RGBx", "RGBA"
+# preferred_format = "BGRx"
+
+[input]
+# Keyboard layout (auto-detected if not specified)
+# Options: "us", "uk", "de", "fr", etc.
+# keyboard_layout = "us"
+
+# Input injection method
+# Options: "portal" (recommended), "evdev" (direct - requires permissions)
+input_method = "portal"
+
+[clipboard]
+# Maximum clipboard data size (bytes)
+max_data_size = 16777216  # 16MB
+
+# Enable image format support
+enable_images = true
+
+# Enable file transfer support
+enable_files = true
+
+# Enable HTML format support
+enable_html = true
+
+# Enable RTF format support
+enable_rtf = true
+
+[logging]
+# Log level: "error", "warn", "info", "debug", "trace"
+# Can also use RUST_LOG environment variable
+# level = "info"
+
+# Log format: "pretty", "compact", "json"
+# format = "pretty"
+
+# Log to file (optional)
+# log_file = "/var/log/wrd-server/wrd-server.log"
+
+[performance]
+# Frame buffer size (number of frames to queue)
+frame_buffer_size = 3
+
+# Enable hardware acceleration when available
+enable_hw_acceleration = true
+
+# Thread count for encoding (0 = auto)
+encoder_threads = 0

@@ -1,4 +1,318 @@
-//! Server implementation for WRD-Server
+//! Server Implementation Module
 //!
-//! This module contains the main server logic, connection handling,
-//! and session management.
+//! This module provides the main WRD-Server implementation, orchestrating all subsystems
+//! to provide complete RDP server functionality for Wayland desktops.
+//!
+//! # Architecture
+//!
+//! The server integrates multiple subsystems:
+//!
+//! ```text
+//! WrdServer
+//!   ├─> Portal Session (screen capture + input injection permissions)
+//!   ├─> PipeWire Thread Manager (video frame capture)
+//!   ├─> Display Handler (video streaming to RDP clients)
+//!   ├─> Input Handler (keyboard/mouse from RDP clients)
+//!   ├─> Clipboard Manager (bidirectional clipboard sync)
+//!   └─> IronRDP Server (RDP protocol, TLS, RemoteFX encoding)
+//! ```
+//!
+//! # Data Flow
+//!
+//! **Video Path:** Portal → PipeWire → Display Handler → IronRDP → Client
+//!
+//! **Input Path:** Client → IronRDP → Input Handler → Portal → Compositor
+//!
+//! **Clipboard Path:** Client ↔ IronRDP ↔ Clipboard Manager ↔ Portal ↔ Compositor
+//!
+//! # Threading Model
+//!
+//! - **Tokio async runtime:** Main server logic, Portal API calls, frame processing
+//! - **PipeWire thread:** Dedicated thread for PipeWire MainLoop (handles non-Send types)
+//! - **IronRDP threads:** Managed by IronRDP library for protocol handling
+//!
+//! # Example
+//!
+//! ```no_run
+//! use wrd_server::config::Config;
+//! use wrd_server::server::WrdServer;
+//!
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     let config = Config::load("config.toml")?;
+//!     let server = WrdServer::new(config).await?;
+//!     server.run().await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! # Security
+//!
+//! - TLS 1.3 mandatory for all connections
+//! - Certificate-based authentication
+//! - Portal-based authorization (user approves screen sharing)
+//! - No direct Wayland protocol access
+//!
+//! # Performance
+//!
+//! - Target: <100ms end-to-end latency
+//! - Target: 30-60 FPS video streaming
+//! - RemoteFX compression for efficient bandwidth usage
+
+mod display_handler;
+mod input_handler;
+
+pub use display_handler::WrdDisplayHandler;
+pub use input_handler::WrdInputHandler;
+
+use anyhow::{Context, Result};
+use ironrdp_pdu::rdp::capability_sets::server_codecs_capabilities;
+use ironrdp_server::RdpServer;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tracing::{debug, error, info};
+
+use crate::clipboard::{ClipboardConfig, ClipboardManager, WrdCliprdrFactory};
+use crate::config::Config;
+use crate::input::coordinates::MonitorInfo as InputMonitorInfo;
+use crate::portal::PortalManager;
+use crate::security::TlsConfig;
+
+/// WRD Server
+///
+/// Main server struct that orchestrates all subsystems and integrates
+/// with IronRDP for RDP protocol handling.
+pub struct WrdServer {
+    /// Configuration (kept for future dynamic reconfiguration)
+    #[allow(dead_code)]
+    config: Arc<Config>,
+
+    /// IronRDP server instance
+    rdp_server: RdpServer,
+
+    /// Portal manager for Wayland access (kept for resource cleanup)
+    #[allow(dead_code)]
+    portal_manager: Arc<PortalManager>,
+
+    /// Display handler (kept for lifecycle management)
+    #[allow(dead_code)]
+    display_handler: Arc<WrdDisplayHandler>,
+}
+
+impl WrdServer {
+    /// Create a new WRD server instance
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Server configuration
+    ///
+    /// # Returns
+    ///
+    /// A new `WrdServer` instance ready to run
+    pub async fn new(config: Config) -> Result<Self> {
+        info!("Initializing WRD Server");
+        let config = Arc::new(config);
+
+        // Initialize Portal manager
+        info!("Setting up Portal connection");
+        let portal_manager = Arc::new(
+            PortalManager::new(&config)
+                .await
+                .context("Failed to initialize Portal manager")?,
+        );
+
+        // Create RemoteDesktop portal session via portal manager
+        info!("Creating RemoteDesktop portal session");
+        let remote_desktop = Arc::clone(portal_manager.remote_desktop());
+
+        let session = remote_desktop
+            .create_session()
+            .await
+            .context("Failed to create portal session")?;
+
+        // Select devices (keyboard + mouse + pointer)
+        use ashpd::desktop::remote_desktop::DeviceType;
+        use enumflags2::BitFlags;
+        let devices = BitFlags::from(DeviceType::Keyboard) | DeviceType::Pointer;
+        remote_desktop
+            .select_devices(&session, devices)
+            .await
+            .context("Failed to select input devices")?;
+
+        // Start the portal session and get PipeWire FD
+        info!("Starting portal session");
+        let (pipewire_fd, stream_info) = remote_desktop
+            .start_session(&session)
+            .await
+            .context("Failed to start RemoteDesktop session")?;
+
+        info!(
+            "Portal session started with {} streams, PipeWire FD: {}",
+            stream_info.len(),
+            pipewire_fd
+        );
+
+        // Determine initial desktop size from first stream
+        let initial_size = stream_info
+            .first()
+            .map(|s| (s.size.0 as u16, s.size.1 as u16))
+            .unwrap_or((1920, 1080)); // Default fallback
+
+        info!("Initial desktop size: {}x{}", initial_size.0, initial_size.1);
+
+        // Create display handler with PipeWire FD and stream info
+        let display_handler = Arc::new(
+            WrdDisplayHandler::new(initial_size.0, initial_size.1, pipewire_fd, stream_info.clone())
+                .await
+                .context("Failed to create display handler")?,
+        );
+
+        // Start the display pipeline
+        Arc::clone(&display_handler).start_pipeline();
+
+        // Convert stream info to monitor info for coordinate transformation
+        let monitors: Vec<InputMonitorInfo> = stream_info
+            .iter()
+            .enumerate()
+            .map(|(idx, s)| InputMonitorInfo {
+                id: s.node_id,
+                name: format!("Monitor_{}", idx),
+                x: s.position.0,
+                y: s.position.1,
+                width: s.size.0,
+                height: s.size.1,
+                dpi: 96.0,
+                scale_factor: 1.0,
+                stream_x: s.position.0 as u32,
+                stream_y: s.position.1 as u32,
+                stream_width: s.size.0,
+                stream_height: s.size.1,
+                is_primary: idx == 0,
+            })
+            .collect();
+
+        // Create input handler
+        let input_handler = WrdInputHandler::new(remote_desktop, session, monitors)
+            .map_err(|e| anyhow::anyhow!("Failed to create input handler: {}", e))?;
+
+        // Create TLS acceptor from security config
+        info!("Setting up TLS");
+        let tls_config = TlsConfig::from_files(
+            &config.security.cert_path,
+            &config.security.key_path,
+        )
+        .context("Failed to load TLS certificates")?;
+
+        let tls_acceptor = ironrdp_server::tokio_rustls::TlsAcceptor::from(tls_config.server_config());
+
+        // Configure RemoteFX codec (IronRDP's built-in codec)
+        // Server uses "remotefx" string to enable RemoteFX codec (default enabled)
+        let codecs = server_codecs_capabilities(&["remotefx"])
+            .map_err(|e| anyhow::anyhow!("Failed to create codec capabilities: {}", e))?;
+
+        // Create clipboard manager
+        info!("Initializing clipboard manager");
+        let clipboard_config = ClipboardConfig::default();
+        let clipboard_manager = Arc::new(Mutex::new(
+            ClipboardManager::new(clipboard_config)
+                .await
+                .context("Failed to create clipboard manager")?,
+        ));
+
+        // Create clipboard factory for IronRDP
+        let clipboard_factory = WrdCliprdrFactory::new(Arc::clone(&clipboard_manager));
+
+        // Build IronRDP server using builder pattern
+        info!("Building IronRDP server");
+        let listen_addr: SocketAddr = config
+            .server
+            .listen_addr
+            .parse()
+            .context("Invalid listen address")?;
+
+        let rdp_server = RdpServer::builder()
+            .with_addr(listen_addr)
+            .with_tls(tls_acceptor)
+            .with_input_handler(input_handler)
+            .with_display_handler((*display_handler).clone()) // Clone the handler for IronRDP
+            .with_bitmap_codecs(codecs)
+            .with_cliprdr_factory(Some(Box::new(clipboard_factory)))
+            .build();
+
+        info!("WRD Server initialized successfully");
+
+        Ok(Self {
+            config,
+            rdp_server,
+            portal_manager,
+            display_handler,
+        })
+    }
+
+    /// Run the server
+    ///
+    /// This starts the RDP server and handles incoming connections.
+    /// Blocks until the server is shut down.
+    pub async fn run(mut self) -> Result<()> {
+        info!("╔════════════════════════════════════════════════════════════╗");
+        info!("║          WRD-Server is Starting                            ║");
+        info!("╚════════════════════════════════════════════════════════════╝");
+        info!("  Listen Address: {}", self.config.server.listen_addr);
+        info!("  TLS: Enabled (rustls 0.23)");
+        info!("  Codec: RemoteFX");
+        info!("  Max Connections: {}", self.config.server.max_connections);
+        info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+        info!("Server is ready and listening for RDP connections");
+        info!("Waiting for clients to connect...");
+
+        // Run the IronRDP server
+        let result = self.rdp_server
+            .run()
+            .await
+            .context("RDP server error");
+
+        if let Err(ref e) = result {
+            error!("Server stopped with error: {:#}", e);
+        } else {
+            info!("Server stopped gracefully");
+        }
+
+        info!("WRD Server shutdown complete");
+        result
+    }
+
+    /// Graceful shutdown
+    ///
+    /// Sends a quit event to stop the server gracefully.
+    pub fn shutdown(&self) {
+        info!("Initiating graceful shutdown");
+        let _ = self
+            .rdp_server
+            .event_sender()
+            .send(ironrdp_server::ServerEvent::Quit(
+                "Shutdown requested".to_string(),
+            ));
+    }
+}
+
+impl Drop for WrdServer {
+    fn drop(&mut self) {
+        debug!("WrdServer dropped - cleaning up resources");
+        // Resources are automatically cleaned up through Arc<Mutex<>> drops
+        // and tokio task cancellation
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore] // Requires D-Bus and portal access
+    async fn test_server_initialization() {
+        // This test would require a full environment
+        // For now, just verify compilation
+    }
+}

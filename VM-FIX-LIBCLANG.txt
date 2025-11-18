@@ -1,0 +1,51 @@
+========================================
+FIX FOR LIBCLANG ERROR ON VM
+========================================
+
+Run these commands on the VM:
+
+# Install clang packages
+sudo apt install -y clang llvm-dev libclang-dev libc6-dev
+
+# Find where libclang is installed
+find /usr/lib -name "libclang.so*" 2>/dev/null
+
+# You'll see something like:
+# /usr/lib/llvm-18/lib/libclang.so.1
+# OR
+# /usr/lib/x86_64-linux-gnu/libclang.so.1
+
+# Set the path to the DIRECTORY (not the .so file)
+# If you saw /usr/lib/llvm-18/lib/libclang.so.1, use:
+export LIBCLANG_PATH=/usr/lib/llvm-18/lib
+
+# OR if you saw /usr/lib/x86_64-linux-gnu/libclang.so.1, use:
+export LIBCLANG_PATH=/usr/lib/x86_64-linux-gnu
+
+# Add to bashrc so it persists
+echo "export LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> ~/.bashrc
+
+# Verify it's set
+echo $LIBCLANG_PATH
+ls $LIBCLANG_PATH/libclang.so*
+
+# Should show the .so file
+
+# Clean and rebuild
+cd ~/wayland-rdp
+cargo clean
+cargo build --release
+
+# Should work now!
+
+========================================
+MOST LIKELY COMMAND FOR UBUNTU 24.04:
+========================================
+
+export LIBCLANG_PATH=/usr/lib/llvm-18/lib
+
+OR
+
+export LIBCLANG_PATH=/usr/lib/x86_64-linux-gnu
+
+Try the first one, if build fails, try the second.

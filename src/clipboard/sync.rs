@@ -3,7 +3,7 @@
 //! Manages bidirectional clipboard synchronization between RDP and Wayland,
 //! with sophisticated loop detection and prevention mechanisms.
 
-use crate::clipboard::error::{ClipboardError, Result};
+use crate::clipboard::error::Result;
 use crate::clipboard::formats::ClipboardFormat;
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
@@ -87,6 +87,7 @@ struct ContentHash {
 }
 
 /// Loop detector prevents clipboard synchronization loops
+#[derive(Debug)]
 pub struct LoopDetector {
     /// Recent clipboard operations
     history: VecDeque<ClipboardOperation>,
@@ -332,6 +333,7 @@ impl Default for LoopDetector {
 }
 
 /// Synchronization manager coordinates clipboard sync
+#[derive(Debug)]
 pub struct SyncManager {
     /// Current clipboard state
     state: ClipboardState,
@@ -416,6 +418,34 @@ impl SyncManager {
     /// Reset loop detector
     pub fn reset_loop_detector(&mut self) {
         self.loop_detector.reset();
+    }
+
+    /// Check if RDP format list would cause a loop
+    ///
+    /// # Arguments
+    ///
+    /// * `formats` - RDP clipboard formats
+    ///
+    /// # Returns
+    ///
+    /// True if this would cause a loop, false otherwise
+    pub fn would_cause_loop_rdp(&mut self, formats: &[ClipboardFormat]) -> Result<bool> {
+        Ok(self.loop_detector.would_cause_loop(formats))
+    }
+
+    /// Set RDP formats as current clipboard owner
+    ///
+    /// # Arguments
+    ///
+    /// * `formats` - RDP clipboard formats
+    ///
+    /// # Returns
+    ///
+    /// Ok(()) on success
+    pub fn set_rdp_formats(&mut self, formats: Vec<ClipboardFormat>) -> Result<()> {
+        self.state = ClipboardState::RdpOwned(formats.clone());
+        self.loop_detector.record_rdp_operation(formats);
+        Ok(())
     }
 }
 

@@ -4,7 +4,7 @@
 //! coordinate transformation and button mapping.
 
 use crate::input::coordinates::CoordinateTransformer;
-use crate::input::error::{InputError, Result};
+use crate::input::error::Result;
 use std::time::Instant;
 use tracing::debug;
 

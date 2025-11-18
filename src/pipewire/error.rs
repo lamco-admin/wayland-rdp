@@ -2,7 +2,6 @@
 //!
 //! Comprehensive error handling for the PipeWire integration module.
 
-use std::fmt;
 use thiserror::Error;
 
 /// Result type for PipeWire operations
@@ -86,6 +85,14 @@ pub enum PipeWireError {
     /// FFI error
     #[error("FFI error: {0}")]
     Ffi(String),
+
+    /// Thread communication failed
+    #[error("Thread communication failed: {0}")]
+    ThreadCommunicationFailed(String),
+
+    /// Thread panicked
+    #[error("Thread panicked: {0}")]
+    ThreadPanic(String),
 
     /// Unknown error
     #[error("Unknown error: {0}")]

@@ -7,12 +7,8 @@ use clap::Parser;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod config;
-// mod server;  // Commented out until implemented
-// ... other modules commented for now
-
-use config::Config;
-// use server::Server;  // Commented until implemented
+use wrd_server::config::Config;
+use wrd_server::server::WrdServer;
 
 /// Command-line arguments for wrd-server
 #[derive(Parser, Debug)]
@@ -49,6 +45,9 @@ async fn main() -> Result<()> {
 
     info!("Starting WRD-Server v{}", env!("CARGO_PKG_VERSION"));
 
+    // Log startup diagnostics
+    wrd_server::utils::log_startup_diagnostics();
+
     // Load configuration
     let config = Config::load(&args.config).or_else(|e| {
         tracing::warn!("Failed to load config: {}, using defaults", e);
@@ -61,16 +60,23 @@ async fn main() -> Result<()> {
     info!("Configuration loaded successfully");
     tracing::debug!("Config: {:?}", config);
 
-    // TODO: Create and start server (in future tasks)
-    // let server = Server::new(config).await?;
-    // server.run().await?;
+    // Create and start WRD server
+    info!("Initializing WRD Server");
+    let server = match WrdServer::new(config).await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", wrd_server::utils::format_user_error(&e));
+            return Err(e);
+        }
+    };
 
-    info!("Server would start here (not yet implemented)");
+    info!("Starting WRD Server");
+    if let Err(e) = server.run().await {
+        eprintln!("{}", wrd_server::utils::format_user_error(&e));
+        return Err(e);
+    }
 
-    // For now, just wait for Ctrl+C
-    tokio::signal::ctrl_c().await?;
-    info!("Shutdown signal received, exiting");
-
+    info!("WRD Server shut down");
     Ok(())
 }
 

@@ -4,8 +4,6 @@
 //! This module extends the pipewire-rs crate with additional functionality
 //! needed for DMA-BUF handling and advanced features.
 
-use std::os::fd::RawFd;
-use std::os::raw::{c_char, c_int, c_uint, c_void};
 
 // Re-export from pipewire crate
 pub use pipewire::{

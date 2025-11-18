@@ -1,7 +1,6 @@
 //! Clipboard portal integration
 
 use anyhow::Result;
-use ashpd::desktop::clipboard::Clipboard;
 use std::sync::Arc;
 use tracing::{debug, info};
 

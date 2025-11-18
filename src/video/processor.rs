@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
 use crate::pipewire::frame::VideoFrame;
-use crate::video::converter::{BitmapConverter, BitmapUpdate, ConversionError};
+use crate::video::converter::{BitmapConverter, BitmapUpdate};
 
 /// Default frame queue size
 const DEFAULT_QUEUE_SIZE: usize = 30;
@@ -383,12 +383,15 @@ pub enum ProcessingError {
     #[error("Queue overflow: max depth {0} exceeded")]
     QueueOverflow(usize),
 
+    /// Invalid frame data or format
     #[error("Invalid frame: {0}")]
     InvalidFrame(String),
 
+    /// Channel communication error
     #[error("Channel error: {0}")]
     ChannelError(String),
 
+    /// Processor is not currently running
     #[error("Processor not running")]
     NotRunning,
 }
