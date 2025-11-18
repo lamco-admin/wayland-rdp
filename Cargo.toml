@@ -63,6 +63,12 @@ libspa-sys = "0.8"
 
 # Input handling
 # libei is not yet available on crates.io
+xkbcommon = "0.7"
+
+# Clipboard and image processing
+image = { version = "0.24", features = ["png", "jpeg", "bmp"] }
+percent-encoding = "2.3"
+sha2 = "0.10"
 
 # System and utilities
 nix = { version = "0.27", features = ["signal", "process"] }
