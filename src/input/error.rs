@@ -2,7 +2,6 @@
 //!
 //! Comprehensive error handling for the input handling module.
 
-use std::fmt;
 use thiserror::Error;
 
 /// Result type for input operations
@@ -86,6 +85,14 @@ pub enum InputError {
     /// IO error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// Invalid key event
+    #[error("Invalid key event: {0}")]
+    InvalidKeyEvent(String),
+
+    /// Invalid mouse event
+    #[error("Invalid mouse event: {0}")]
+    InvalidMouseEvent(String),
 
     /// Unknown error
     #[error("Unknown error: {0}")]

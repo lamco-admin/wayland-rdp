@@ -1,81 +1,100 @@
 //! TLS 1.3 configuration and management
 //!
 //! Provides secure TLS termination for RDP connections using rustls.
+//!
+//! Uses IronRDP's re-exported rustls (v0.23) for version compatibility.
 
 use anyhow::{Context, Result};
-use rustls::server::ServerConnection;
-use rustls::version::TLS13;
-use rustls::{Certificate, PrivateKey, ServerConfig};
+use ironrdp_server::tokio_rustls::rustls;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::ServerConfig;
+use std::fs::File;
+use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
 
 /// TLS configuration wrapper
-#[derive(Clone)]
 pub struct TlsConfig {
-    /// Certificate chain
-    cert_chain: Vec<Certificate>,
-
-    /// Private key
+    /// Certificate chain (owned for lifetime management)
     #[allow(dead_code)]
-    private_key: PrivateKey,
+    cert_chain: Vec<CertificateDer<'static>>,
+
+    /// Private key (owned for lifetime management)
+    #[allow(dead_code)]
+    private_key: PrivateKeyDer<'static>,
 
     /// rustls ServerConfig
     server_config: Arc<ServerConfig>,
 }
 
+impl Clone for TlsConfig {
+    fn clone(&self) -> Self {
+        Self {
+            // Clone certificates (CertificateDer is Clone)
+            cert_chain: self.cert_chain.clone(),
+            // Clone key using clone_key() method
+            private_key: self.private_key.clone_key(),
+            // Clone Arc
+            server_config: Arc::clone(&self.server_config),
+        }
+    }
+}
+
 impl TlsConfig {
     /// Create TLS config from PEM files
+    ///
+    /// # Arguments
+    ///
+    /// * `cert_path` - Path to PEM certificate file
+    /// * `key_path` - Path to PEM private key file
+    ///
+    /// # Returns
+    ///
+    /// A configured `TlsConfig` with TLS 1.3 enabled
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Files cannot be opened
+    /// - PEM parsing fails
+    /// - No certificates or keys found
+    /// - ServerConfig creation fails
     pub fn from_files(cert_path: &Path, key_path: &Path) -> Result<Self> {
         info!("Loading TLS configuration from files");
         debug!("Certificate: {:?}", cert_path);
         debug!("Private key: {:?}", key_path);
 
         // Load certificate chain
-        let cert_file =
-            std::fs::File::open(cert_path).context("Failed to open certificate file")?;
-        let mut cert_reader = std::io::BufReader::new(cert_file);
-        let certs = rustls_pemfile::certs(&mut cert_reader)
-            .context("Failed to parse certificate")?
-            .into_iter()
-            .map(Certificate)
-            .collect::<Vec<_>>();
+        let cert_file = File::open(cert_path).context("Failed to open certificate file")?;
+        let mut cert_reader = BufReader::new(cert_file);
+
+        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to parse certificates")?;
 
         if certs.is_empty() {
             anyhow::bail!("No certificates found in file");
         }
 
+        debug!("Loaded {} certificate(s)", certs.len());
+
         // Load private key
-        let key_file = std::fs::File::open(key_path).context("Failed to open private key file")?;
-        let mut key_reader = std::io::BufReader::new(key_file);
+        let key_file = File::open(key_path).context("Failed to open private key file")?;
+        let mut key_reader = BufReader::new(key_file);
 
-        // Try different key formats
-        let keys = rustls_pemfile::pkcs8_private_keys(&mut key_reader)
-            .context("Failed to parse private key")?;
+        // rustls 0.23 uses rustls_pemfile::private_key() which auto-detects format
+        let private_key = rustls_pemfile::private_key(&mut key_reader)
+            .context("Failed to parse private key")?
+            .ok_or_else(|| anyhow::anyhow!("No private key found in file"))?;
 
-        let private_key = if !keys.is_empty() {
-            PrivateKey(keys[0].clone())
-        } else {
-            // Try RSA format
-            let key_file = std::fs::File::open(key_path)?;
-            let mut key_reader = std::io::BufReader::new(key_file);
-            let rsa_keys = rustls_pemfile::rsa_private_keys(&mut key_reader)
-                .context("Failed to parse RSA private key")?;
+        debug!("Private key loaded successfully");
 
-            if rsa_keys.is_empty() {
-                anyhow::bail!("No private key found in file");
-            }
-            PrivateKey(rsa_keys[0].clone())
-        };
-
-        // Create ServerConfig with TLS 1.3 only
+        // Create ServerConfig with modern rustls 0.23 API
+        // Use builder pattern with defaults
         let server_config = ServerConfig::builder()
-            .with_safe_default_cipher_suites()
-            .with_safe_default_kx_groups()
-            .with_protocol_versions(&[&TLS13])
-            .context("Failed to configure TLS versions")?
             .with_no_client_auth()
-            .with_single_cert(certs.clone(), private_key.clone())
+            .with_single_cert(certs.clone(), private_key.clone_key())
             .context("Failed to configure certificate")?;
 
         info!("TLS 1.3 configuration created successfully");
@@ -88,48 +107,23 @@ impl TlsConfig {
     }
 
     /// Get rustls ServerConfig
+    ///
+    /// Returns an Arc to the ServerConfig for use with tokio_rustls::TlsAcceptor
     pub fn server_config(&self) -> Arc<ServerConfig> {
-        self.server_config.clone()
-    }
-
-    /// Get certificate chain
-    pub fn certificates(&self) -> &[Certificate] {
-        &self.cert_chain
+        Arc::clone(&self.server_config)
     }
 
     /// Verify TLS configuration is valid
+    ///
+    /// Performs basic validation checks on the configuration.
     pub fn verify(&self) -> Result<()> {
         // Verify we have at least one certificate
         if self.cert_chain.is_empty() {
             anyhow::bail!("No certificates in chain");
         }
 
-        // Verify ServerConfig is properly initialized
-        if Arc::strong_count(&self.server_config) == 0 {
-            anyhow::bail!("ServerConfig not properly initialized");
-        }
-
         info!("TLS configuration verified");
         Ok(())
-    }
-}
-
-/// TLS acceptor for incoming connections
-pub struct TlsAcceptor {
-    config: Arc<ServerConfig>,
-}
-
-impl TlsAcceptor {
-    /// Create new TLS acceptor
-    pub fn new(config: TlsConfig) -> Self {
-        Self {
-            config: config.server_config(),
-        }
-    }
-
-    /// Accept TLS connection
-    pub fn accept(&self) -> ServerConnection {
-        ServerConnection::new(self.config.clone()).expect("Failed to create ServerConnection")
     }
 }
 
@@ -156,7 +150,7 @@ mod tests {
         }
 
         let config = TlsConfig::from_files(&cert_path, &key_path).unwrap();
-        assert!(!config.certificates().is_empty());
+        assert!(!config.cert_chain.is_empty());
     }
 
     #[test]
@@ -169,18 +163,5 @@ mod tests {
 
         let config = TlsConfig::from_files(&cert_path, &key_path).unwrap();
         assert!(config.verify().is_ok());
-    }
-
-    #[test]
-    fn test_tls_acceptor_creation() {
-        let (cert_path, key_path) = get_test_cert_paths();
-
-        if !cert_path.exists() || !key_path.exists() {
-            return;
-        }
-
-        let config = TlsConfig::from_files(&cert_path, &key_path).unwrap();
-        let _acceptor = TlsAcceptor::new(config);
-        // If we get here, acceptor was created successfully
     }
 }

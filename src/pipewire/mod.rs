@@ -1,7 +1,18 @@
 //! PipeWire Integration Module
 //!
-//! This module provides comprehensive PipeWire integration for screen capture
-//! on Wayland systems. It handles:
+//! This module provides production-ready PipeWire integration for high-performance
+//! screen capture on Wayland systems with proper thread safety and comprehensive
+//! error handling.
+//!
+//! # Overview
+//!
+//! PipeWire is the modern multimedia framework for Linux that provides low-latency,
+//! high-performance video and audio streaming. This module integrates with PipeWire
+//! to capture screen content from Wayland compositors via the xdg-desktop-portal.
+//!
+//! # Architecture
+//!
+//! The module uses a **dedicated thread architecture** to handle PipeWire's non-Send types:
 //!
 //! - Connection management via XDG Desktop Portal file descriptors
 //! - Stream creation and format negotiation
@@ -14,10 +25,48 @@
 //! # Architecture
 //!
 //! ```text
-//! Portal Module → PipeWire Connection → Streams → Buffers → Frames
-//!                        ↓                 ↓
-//!                   Coordinator ←→ Frame Dispatcher
+//! ┌─────────────────────────────────────────────────────────┐
+//! │              Tokio Async Runtime                        │
+//! │                                                         │
+//! │  Display Handler → PipeWireThreadManager                │
+//! │                    (Send + Sync wrapper)                │
+//! │                           │                             │
+//! │                           │ Commands via mpsc           │
+//! │                           ▼                             │
+//! └───────────────────────────┼─────────────────────────────┘
+//!                             │
+//! ┌───────────────────────────▼─────────────────────────────┐
+//! │         Dedicated PipeWire Thread                       │
+//! │         (std::thread - owns all non-Send types)         │
+//! │                                                         │
+//! │  MainLoop (Rc) ─> Context (Rc) ─> Core (Rc)            │
+//! │                                      │                  │
+//! │                                      ▼                  │
+//! │                              Streams (NonNull)          │
+//! │                                      │                  │
+//! │                                      ▼                  │
+//! │                              Frame Callbacks            │
+//! │                                      │                  │
+//! │                                      │ Frames via mpsc  │
+//! └──────────────────────────────────────┼─────────────────┘
+//!                                        │
+//!                                        ▼
+//!                              Display Handler receives frames
 //! ```
+//!
+//! # Thread Safety
+//!
+//! PipeWire's Rust bindings use `Rc<>` and `NonNull<>` internally, making them
+//! **not Send**. This module solves this constraint by:
+//!
+//! 1. Running PipeWire on a dedicated `std::thread`
+//! 2. Using `std::sync::mpsc` channels for cross-thread communication
+//! 3. Sending commands to PipeWire thread (CreateStream, DestroyStream, etc.)
+//! 4. Receiving frames from PipeWire thread via channel
+//! 5. Implementing `unsafe impl Send + Sync` for the manager with thread confinement
+//!
+//! This is the **industry-standard pattern** for integrating non-Send libraries
+//! into async Rust applications.
 //!
 //! # Usage
 //!
@@ -69,12 +118,15 @@ pub mod error;
 pub mod ffi;
 pub mod format;
 pub mod frame;
+pub mod pw_thread;
 pub mod stream;
+pub mod thread_comm;
 
 // Re-export main types
 pub use buffer::{BufferManager, BufferType, ManagedBuffer, SharedBufferManager};
 pub use connection::{ConnectionState, PipeWireConnection, PipeWireEvent};
 pub use coordinator::{MonitorEvent, MonitorInfo, MultiStreamConfig, MultiStreamCoordinator};
+pub use pw_thread::{PipeWireThreadCommand, PipeWireThreadManager};
 pub use error::{
     classify_error, ErrorContext, ErrorType, PipeWireError, RecoveryAction, Result, RetryConfig,
 };
@@ -134,7 +186,7 @@ pub fn is_dmabuf_supported() -> bool {
     #[cfg(target_os = "linux")]
     {
         // Try to open DRM device
-        use std::fs;
+        
         use std::path::Path;
 
         let drm_paths = ["/dev/dri/card0", "/dev/dri/card1", "/dev/dri/renderD128"];

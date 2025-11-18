@@ -12,7 +12,7 @@ pub mod tls;
 
 pub use auth::{AuthMethod, SessionToken, UserAuthenticator};
 pub use certificates::CertificateGenerator;
-pub use tls::{TlsAcceptor, TlsConfig};
+pub use tls::TlsConfig;
 
 use crate::config::Config;
 
@@ -47,8 +47,9 @@ impl SecurityManager {
     }
 
     /// Create TLS acceptor
-    pub fn create_acceptor(&self) -> TlsAcceptor {
-        TlsAcceptor::new(self.tls_config.clone())
+    /// Get TLS server config for creating acceptor
+    pub fn server_config(&self) -> Arc<ironrdp_server::tokio_rustls::rustls::ServerConfig> {
+        self.tls_config.server_config()
     }
 
     /// Get authenticator

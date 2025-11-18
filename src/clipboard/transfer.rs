@@ -161,6 +161,7 @@ impl TransferHandle {
 }
 
 /// Transfer engine manages clipboard data transfers
+#[derive(Debug)]
 pub struct TransferEngine {
     config: TransferConfig,
     next_transfer_id: Arc<RwLock<u64>>,

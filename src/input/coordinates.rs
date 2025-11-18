@@ -5,7 +5,7 @@
 //! and sub-pixel accuracy.
 
 use crate::input::error::{InputError, Result};
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Monitor information
 #[derive(Debug, Clone)]

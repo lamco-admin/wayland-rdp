@@ -2,7 +2,6 @@
 //!
 //! Comprehensive error handling for the clipboard synchronization module.
 
-use std::fmt;
 use thiserror::Error;
 
 /// Result type for clipboard operations

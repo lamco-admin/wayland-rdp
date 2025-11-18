@@ -38,14 +38,18 @@ thiserror = "1.0"
 
 # Networking and protocols
 bytes = "1.5"
-rustls = { version = "0.21", features = ["dangerous_configuration"] }
-rustls-pemfile = "1.0"
-tokio-rustls = "0.24"
+# Note: rustls and tokio-rustls provided by ironrdp-server (v0.23)
+rustls-pemfile = "2.2" # Updated to match rustls 0.23
 
 # RDP protocol
-# BLOCKED: IronRDP has dependency issues - tracked in our analysis docs
-# Using PR #1028's approach with git dependencies
+# Using PR #1028's approach with git dependencies to resolve sspi/picky issues
 ironrdp = { git = "https://github.com/allan2/IronRDP", branch = "update-sspi", default-features = false, features = ["server"] }
+ironrdp-server = { git = "https://github.com/allan2/IronRDP", branch = "update-sspi" }
+ironrdp-pdu = { git = "https://github.com/allan2/IronRDP", branch = "update-sspi" }
+ironrdp-displaycontrol = { git = "https://github.com/allan2/IronRDP", branch = "update-sspi" }
+ironrdp-cliprdr = { git = "https://github.com/allan2/IronRDP", branch = "update-sspi" }
+ironrdp-core = { git = "https://github.com/allan2/IronRDP", branch = "update-sspi" }
+async-trait = "0.1"
 
 # Video encoding
 # Note: These will be added when video encoding is implemented
@@ -76,6 +80,7 @@ nix = { version = "0.27", features = ["signal", "process"] }
 libc = "0.2"
 chrono = "0.4"
 uuid = { version = "1.6", features = ["v4", "serde"] }
+sysinfo = "0.30"
 
 # Memory management
 memmap2 = "0.9"

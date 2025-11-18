@@ -60,7 +60,37 @@ pub struct ClipboardFormat {
     pub format_name: String,
 }
 
+impl ClipboardFormat {
+    /// Create from RDP format ID and name
+    ///
+    /// # Arguments
+    ///
+    /// * `format_id` - RDP clipboard format ID
+    /// * `format_name` - Format name (empty for standard formats)
+    ///
+    /// # Returns
+    ///
+    /// A new ClipboardFormat instance
+    pub fn from_rdp_format(format_id: u32, format_name: Option<&str>) -> Self {
+        Self {
+            format_id,
+            format_name: format_name.unwrap_or("").to_string(),
+        }
+    }
+
+    /// Get format ID
+    pub fn id(&self) -> u32 {
+        self.format_id
+    }
+
+    /// Get format name
+    pub fn name(&self) -> &str {
+        &self.format_name
+    }
+}
+
 /// Format converter handles conversion between RDP and MIME types
+#[derive(Debug)]
 pub struct FormatConverter {
     /// RDP format ID to MIME type mapping
     format_map: HashMap<u32, String>,
