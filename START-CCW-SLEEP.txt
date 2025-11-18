@@ -1,0 +1,22 @@
+https://github.com/lamco-admin/wayland-rdp
+
+DEPENDENCY CONFLICT SOLVED ✅
+
+SOLUTION: ironrdp metacrate with server-only features
+
+EXACT CARGO.TOML TO USE:
+
+```toml
+[dependencies]
+ironrdp = { version = "0.13.0", default-features = false, features = ["server", "tokio", "svc"] }
+```
+
+KEY: default-features = false (disables connector, avoids sspi conflicts!)
+
+Copy complete Cargo.toml from: CCW-USE-THIS-EXACT-CARGO.txt
+
+Then:
+1. rm Cargo.lock && cargo clean && cargo check
+2. Implement PipeWire: phase1-tasks/TASK-P1-04-PIPEWIRE-COMPLETE.md
+
+Work overnight. Use exact dependencies. Good night! 🌙
