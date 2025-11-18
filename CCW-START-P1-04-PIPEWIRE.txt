@@ -1,0 +1,46 @@
+Repository: https://github.com/lamco-admin/wayland-rdp
+
+IMPORTANT: The specifications have been completely revised to v2.0 (production-grade).
+
+COMPLETED TASKS:
+- P1-01: Foundation ✅
+- P1-02: Security ✅  
+- P1-03: Portal Integration ✅
+
+NEXT TASK: P1-04 - PipeWire Integration
+
+Read the COMPLETE specification at:
+https://github.com/lamco-admin/wayland-rdp/blob/main/phase1-tasks/TASK-P1-04-PIPEWIRE-COMPLETE.md
+
+This is a 73KB, 1500+ line PRODUCTION-GRADE specification with:
+- Complete PipeWire C API implementation
+- DMA-BUF zero-copy path (complete)
+- 21 format conversions specified
+- Multi-stream handling (8 monitors)
+- 800+ lines of complete production code
+- NO TODOs or placeholders
+
+Implement src/pipewire/ module with:
+1. Complete PipeWire connection using portal FD
+2. Format negotiation with SPA Pods
+3. Buffer handling (DMA-BUF + memory buffers)
+4. Frame extraction and VideoFrame creation
+5. Multi-stream coordinator
+6. Integration tests
+7. Example program
+
+Dependencies (already in Cargo.toml):
+- pipewire = "0.9.2"
+- libspa = "0.9.2"
+
+Success criteria:
+- PipeWire connects using portal FD
+- Frames received at 30 FPS
+- DMA-BUF zero-copy works (when available)
+- All pixel formats handled
+- Multi-monitor streams coordinated
+- All tests pass
+
+Follow the specification exactly - it includes complete implementations.
+
+Estimated duration: 3-5 days
