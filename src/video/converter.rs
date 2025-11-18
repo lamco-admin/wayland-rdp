@@ -637,6 +637,20 @@ pub enum ConversionError {
     AllocationFailed(usize),
 }
 
+// Safety: BitmapConverter is Send because all its fields are Send.
+// - Arc<RwLock<T>> is Send when T is Send
+// - u64 is Send
+// - bool is Send
+unsafe impl Send for BitmapConverter {}
+
+// Safety: BufferPool is Send because Vec<T> is Send when T is Send,
+// and all contained types (PooledBuffer, usize) are Send.
+unsafe impl Send for BufferPool {}
+
+// Safety: DamageTracker is Send because all its fields are Send
+// (Vec<Rectangle>, bool, u16, u16 are all Send).
+unsafe impl Send for DamageTracker {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
