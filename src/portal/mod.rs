@@ -61,36 +61,87 @@ impl PortalManager {
         })
     }
 
-    /// Create a complete portal session (RemoteDesktop + ScreenCast)
+    /// Create a complete portal session (ScreenCast for video, RemoteDesktop for input)
     ///
     /// This triggers the user permission dialog and returns a session handle
     /// with PipeWire access for video and input injection capabilities.
+    ///
+    /// # Flow
+    ///
+    /// 1. Create combined RemoteDesktop session (includes ScreenCast capability)
+    /// 2. Select devices (keyboard + pointer for input injection)
+    /// 3. Select sources (monitors to capture for screen sharing)
+    /// 4. Start session (triggers permission dialog)
+    /// 5. Get PipeWire FD and stream information
+    ///
+    /// # Returns
+    ///
+    /// PortalSessionHandle with PipeWire FD, stream information, and session reference
     pub async fn create_session(&self) -> Result<PortalSessionHandle> {
-        info!("Creating portal session (RemoteDesktop + ScreenCast)");
+        info!("Creating combined portal session (ScreenCast + RemoteDesktop)");
 
-        // Create RemoteDesktop session (this includes ScreenCast capabilities)
-        let session = self.remote_desktop.create_session().await?;
+        // Create RemoteDesktop session (this type of session can include screen sharing)
+        let remote_desktop_session = self.remote_desktop.create_session().await
+            .context("Failed to create RemoteDesktop session")?;
 
-        // Select devices for input injection using BitFlags
-        let devices: BitFlags<DeviceType> = DeviceType::Keyboard | DeviceType::Pointer;
+        info!("RemoteDesktop session created");
+
+        // Select devices for input injection
+        use ashpd::desktop::remote_desktop::DeviceType;
+        use enumflags2::BitFlags;
+        let devices = BitFlags::from(DeviceType::Keyboard) | DeviceType::Pointer;
         self.remote_desktop
-            .select_devices(&session, devices)
-            .await?;
+            .select_devices(&remote_desktop_session, devices)
+            .await
+            .context("Failed to select input devices")?;
 
-        // Note: We can also use ScreenCast directly for screen-only capture
-        // But RemoteDesktop gives us both screen + input
+        info!("Input devices selected (keyboard + pointer)");
 
-        // Start the session (triggers permission dialog)
-        let (pipewire_fd, streams) = self.remote_desktop.start_session(&session).await?;
+        // CRITICAL FIX: Also use ScreenCast to select screen sources
+        // This is what makes screens available for sharing
+        let screencast_proxy = ashpd::desktop::screencast::Screencast::new().await?;
 
-        info!("Portal session created successfully");
-        debug!("  PipeWire FD: {}", pipewire_fd);
-        debug!("  Streams: {}", streams.len());
+        use ashpd::desktop::screencast::{CursorMode, SourceType};
+        use ashpd::desktop::PersistMode;
 
-        // Create session handle - use a placeholder string ID
+        screencast_proxy
+            .select_sources(
+                &remote_desktop_session,  // Use same session
+                CursorMode::Metadata,      // Include cursor metadata
+                SourceType::Monitor.into(), // Request monitor sources
+                true,                       // Allow multiple monitors
+                None,                       // No restore token
+                PersistMode::DoNot,        // Don't persist
+            )
+            .await
+            .context("Failed to select screen sources")?;
+
+        info!("Screen sources selected - permission dialog will appear");
+
+        // Start the combined session (triggers permission dialog)
+        let (pipewire_fd, streams) = self.remote_desktop.start_session(&remote_desktop_session).await
+            .context("Failed to start RemoteDesktop session")?;
+
+        info!("Portal session started successfully");
+        info!("  PipeWire FD: {}", pipewire_fd);
+        info!("  Streams: {}", streams.len());
+
+        if streams.is_empty() {
+            anyhow::bail!("No streams available - user may have denied permission or no screens to share");
+        }
+
+        // Create session handle with session reference
+        // We need to keep the session alive for input injection
         let session_id = format!("portal-session-{}", uuid::Uuid::new_v4());
-        let handle =
-            PortalSessionHandle::new(session_id.clone(), pipewire_fd, streams, Some(session_id));
+        let stream_count = streams.len();
+        let handle = PortalSessionHandle::new(
+            session_id.clone(),
+            pipewire_fd,
+            streams,
+            Some(session_id), // Store session ID for input operations
+        );
+
+        info!("Portal session handle created with {} streams", stream_count);
 
         Ok(handle)
     }

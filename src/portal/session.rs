@@ -33,16 +33,16 @@ pub enum SourceType {
 /// Handle to an active portal session
 pub struct PortalSessionHandle {
     /// Session identifier from portal
-    session_id: String,
+    pub session_id: String,
 
     /// PipeWire file descriptor
-    pipewire_fd: RawFd,
+    pub pipewire_fd: RawFd,
 
     /// Available streams (one per monitor typically)
-    streams: Vec<StreamInfo>,
+    pub streams: Vec<StreamInfo>,
 
     /// RemoteDesktop session for input injection
-    remote_desktop_session: Option<String>,
+    pub remote_desktop_session: Option<String>,
 }
 
 impl PortalSessionHandle {

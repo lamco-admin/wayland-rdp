@@ -122,30 +122,18 @@ impl WrdServer {
                 .context("Failed to initialize Portal manager")?,
         );
 
-        // Create RemoteDesktop portal session via portal manager
-        info!("Creating RemoteDesktop portal session");
-        let remote_desktop = Arc::clone(portal_manager.remote_desktop());
-
-        let session = remote_desktop
+        // Create combined portal session (ScreenCast + RemoteDesktop)
+        info!("Creating combined portal session");
+        let session_handle = portal_manager
             .create_session()
             .await
             .context("Failed to create portal session")?;
 
-        // Select devices (keyboard + mouse + pointer)
-        use ashpd::desktop::remote_desktop::DeviceType;
-        use enumflags2::BitFlags;
-        let devices = BitFlags::from(DeviceType::Keyboard) | DeviceType::Pointer;
-        remote_desktop
-            .select_devices(&session, devices)
-            .await
-            .context("Failed to select input devices")?;
+        info!("Portal session created successfully");
 
-        // Start the portal session and get PipeWire FD
-        info!("Starting portal session");
-        let (pipewire_fd, stream_info) = remote_desktop
-            .start_session(&session)
-            .await
-            .context("Failed to start RemoteDesktop session")?;
+        // Extract session details
+        let pipewire_fd = session_handle.pipewire_fd;
+        let stream_info = session_handle.streams;
 
         info!(
             "Portal session started with {} streams, PipeWire FD: {}",
@@ -171,30 +159,23 @@ impl WrdServer {
         // Start the display pipeline
         Arc::clone(&display_handler).start_pipeline();
 
-        // Convert stream info to monitor info for coordinate transformation
-        let monitors: Vec<InputMonitorInfo> = stream_info
-            .iter()
-            .enumerate()
-            .map(|(idx, s)| InputMonitorInfo {
-                id: s.node_id,
-                name: format!("Monitor_{}", idx),
-                x: s.position.0,
-                y: s.position.1,
-                width: s.size.0,
-                height: s.size.1,
-                dpi: 96.0,
-                scale_factor: 1.0,
-                stream_x: s.position.0 as u32,
-                stream_y: s.position.1 as u32,
-                stream_width: s.size.0,
-                stream_height: s.size.1,
-                is_primary: idx == 0,
-            })
-            .collect();
+        // For initial testing, use a no-op input handler
+        // This allows us to verify video streaming works first
+        // Full input injection will be enabled once video is confirmed working
+        info!("Creating input handler (no-op for initial testing)");
 
-        // Create input handler
-        let input_handler = WrdInputHandler::new(remote_desktop, session, monitors)
-            .map_err(|e| anyhow::anyhow!("Failed to create input handler: {}", e))?;
+        // Create a simple no-op handler that logs events but doesn't inject
+        struct NoopInputHandler;
+        impl ironrdp_server::RdpServerInputHandler for NoopInputHandler {
+            fn keyboard(&mut self, event: ironrdp_server::KeyboardEvent) {
+                debug!("Keyboard event (not injected): {:?}", event);
+            }
+            fn mouse(&mut self, event: ironrdp_server::MouseEvent) {
+                debug!("Mouse event (not injected): {:?}", event);
+            }
+        }
+
+        let input_handler = NoopInputHandler;
 
         // Create TLS acceptor from security config
         info!("Setting up TLS");
