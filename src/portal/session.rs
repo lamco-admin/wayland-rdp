@@ -43,6 +43,9 @@ pub struct PortalSessionHandle {
 
     /// RemoteDesktop session for input injection
     pub remote_desktop_session: Option<String>,
+
+    /// Active ashpd session (needed for input injection)
+    pub session: ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>,
 }
 
 impl PortalSessionHandle {
@@ -52,6 +55,7 @@ impl PortalSessionHandle {
         pipewire_fd: RawFd,
         streams: Vec<StreamInfo>,
         remote_desktop_session: Option<String>,
+        session: ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>,
     ) -> Self {
         info!(
             "Created portal session handle: {}, {} streams, fd: {}",
@@ -65,6 +69,7 @@ impl PortalSessionHandle {
             pipewire_fd,
             streams,
             remote_desktop_session,
+            session,
         }
     }
 

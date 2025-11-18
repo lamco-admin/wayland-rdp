@@ -159,23 +159,38 @@ impl WrdServer {
         // Start the display pipeline
         Arc::clone(&display_handler).start_pipeline();
 
-        // For initial testing, use a no-op input handler
-        // This allows us to verify video streaming works first
-        // Full input injection will be enabled once video is confirmed working
-        info!("Creating input handler (no-op for initial testing)");
+        // Create input handler for mouse and keyboard injection
+        info!("Creating input handler for mouse/keyboard control");
 
-        // Create a simple no-op handler that logs events but doesn't inject
-        struct NoopInputHandler;
-        impl ironrdp_server::RdpServerInputHandler for NoopInputHandler {
-            fn keyboard(&mut self, event: ironrdp_server::KeyboardEvent) {
-                debug!("Keyboard event (not injected): {:?}", event);
-            }
-            fn mouse(&mut self, event: ironrdp_server::MouseEvent) {
-                debug!("Mouse event (not injected): {:?}", event);
-            }
-        }
+        // Convert stream info to monitor info for coordinate transformation
+        let monitors: Vec<InputMonitorInfo> = stream_info
+            .iter()
+            .enumerate()
+            .map(|(idx, stream)| InputMonitorInfo {
+                id: idx as u32,
+                name: format!("Monitor {}", idx),
+                x: stream.position.0 as i32,
+                y: stream.position.1 as i32,
+                width: stream.size.0 as u32,
+                height: stream.size.1 as u32,
+                dpi: 96.0, // Default DPI
+                scale_factor: 1.0, // Default scale, Portal doesn't provide this
+                stream_x: stream.position.0 as u32,
+                stream_y: stream.position.1 as u32,
+                stream_width: stream.size.0 as u32,
+                stream_height: stream.size.1 as u32,
+                is_primary: idx == 0, // First monitor is primary
+            })
+            .collect();
 
-        let input_handler = NoopInputHandler;
+        let input_handler = WrdInputHandler::new(
+            portal_manager.remote_desktop().clone(),
+            session_handle.session,
+            monitors,
+        )
+        .context("Failed to create input handler")?;
+
+        info!("Input handler created successfully - mouse/keyboard enabled");
 
         // Create TLS acceptor from security config
         info!("Setting up TLS");
