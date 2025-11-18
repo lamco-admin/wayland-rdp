@@ -34,6 +34,10 @@ pub struct Args {
     /// Log format (json|pretty|compact)
     #[arg(long, default_value = "pretty")]
     pub log_format: String,
+
+    /// Write logs to file (in addition to stdout)
+    #[arg(long)]
+    pub log_file: Option<String>,
 }
 
 #[tokio::main]
@@ -81,6 +85,9 @@ async fn main() -> Result<()> {
 }
 
 fn init_logging(args: &Args) -> Result<()> {
+    use std::fs::File;
+    use tracing_subscriber::fmt::format::FmtSpan;
+
     let log_level = match args.verbose {
         0 => "info",
         1 => "debug",
@@ -91,24 +98,55 @@ fn init_logging(args: &Args) -> Result<()> {
         tracing_subscriber::EnvFilter::new(format!("wrd_server={},warn", log_level))
     });
 
-    match args.log_format.as_str() {
-        "json" => {
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(tracing_subscriber::fmt::layer().json())
-                .init();
+    // If log file is specified, write to both stdout and file
+    if let Some(log_file_path) = &args.log_file {
+        let file = File::create(log_file_path)?;
+
+        match args.log_format.as_str() {
+            "json" => {
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(tracing_subscriber::fmt::layer().json().with_writer(std::io::stdout))
+                    .with(tracing_subscriber::fmt::layer().json().with_writer(file).with_ansi(false))
+                    .init();
+            }
+            "compact" => {
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(tracing_subscriber::fmt::layer().compact().with_writer(std::io::stdout))
+                    .with(tracing_subscriber::fmt::layer().compact().with_writer(file).with_ansi(false))
+                    .init();
+            }
+            _ => {
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(tracing_subscriber::fmt::layer().pretty().with_writer(std::io::stdout))
+                    .with(tracing_subscriber::fmt::layer().with_writer(file).with_ansi(false))
+                    .init();
+            }
         }
-        "compact" => {
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(tracing_subscriber::fmt::layer().compact())
-                .init();
-        }
-        _ => {
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(tracing_subscriber::fmt::layer().pretty())
-                .init();
+        info!("Logging to file: {}", log_file_path);
+    } else {
+        // Stdout only
+        match args.log_format.as_str() {
+            "json" => {
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(tracing_subscriber::fmt::layer().json())
+                    .init();
+            }
+            "compact" => {
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(tracing_subscriber::fmt::layer().compact())
+                    .init();
+            }
+            _ => {
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(tracing_subscriber::fmt::layer().pretty())
+                    .init();
+            }
         }
     }
 

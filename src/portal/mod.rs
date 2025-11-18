@@ -138,7 +138,8 @@ impl PortalManager {
             session_id.clone(),
             pipewire_fd,
             streams,
-            Some(session_id), // Store session ID for input operations
+            Some(session_id.clone()), // Store session ID for input operations
+            remote_desktop_session, // Pass the actual ashpd session for input injection
         );
 
         info!("Portal session handle created with {} streams", stream_count);
