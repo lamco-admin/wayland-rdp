@@ -22,24 +22,17 @@ This specification is organized into multiple documents:
 5. **04-DATA-STRUCTURES.md** - All data structures and type definitions
 6. **05-PROTOCOL-SPECIFICATIONS.md** - RDP, Wayland, Portal protocol details
 
-### Phase Documents
-7. **PHASE-1-SPECIFICATION.md** - Complete Phase 1 implementation plan
-8. **PHASE-2-SPECIFICATION.md** - Complete Phase 2 implementation plan
-
 ### Task Documents (Phase 1)
 - **phase1-tasks/TASK-P1-01-FOUNDATION.md**
 - **phase1-tasks/TASK-P1-02-SECURITY.md**
-- **phase1-tasks/TASK-P1-03-RDP-PROTOCOL.md**
-- **phase1-tasks/TASK-P1-04-PORTAL-INTEGRATION.md**
-- **phase1-tasks/TASK-P1-05-PIPEWIRE.md**
-- **phase1-tasks/TASK-P1-06-ENCODER-SOFTWARE.md**
-- **phase1-tasks/TASK-P1-07-ENCODER-VAAPI.md**
-- **phase1-tasks/TASK-P1-08-VIDEO-PIPELINE.md**
-- **phase1-tasks/TASK-P1-09-GRAPHICS-CHANNEL.md**
-- **phase1-tasks/TASK-P1-10-INPUT-HANDLING.md**
-- **phase1-tasks/TASK-P1-11-CLIPBOARD.md**
-- **phase1-tasks/TASK-P1-12-MULTIMONITOR.md**
-- **phase1-tasks/TASK-P1-13-TESTING.md**
+- **phase1-tasks/TASK-P1-03-PORTAL-INTEGRATION.md**
+- **phase1-tasks/TASK-P1-04-PIPEWIRE.md**
+- **phase1-tasks/TASK-P1-05-BITMAP-CONVERSION.md**
+- **phase1-tasks/TASK-P1-06-IRONRDP-SERVER-INTEGRATION.md**
+- **phase1-tasks/TASK-P1-07-INPUT-HANDLING.md**
+- **phase1-tasks/TASK-P1-08-CLIPBOARD.md**
+- **phase1-tasks/TASK-P1-09-MULTIMONITOR.md**
+- **phase1-tasks/TASK-P1-10-TESTING-INTEGRATION.md**
 
 ### Reference Documents
 - **reference/TESTING-SPECIFICATION.md**
@@ -58,15 +51,15 @@ Build a production-ready Wayland remote desktop server in Rust that enables Wind
 ### Target Platform
 - **Server:** Linux with Wayland compositor (GNOME 45+, KDE Plasma 6+, Sway 1.8+)
 - **Client:** Windows 10/11 RDP client (mstsc.exe), FreeRDP 2.x+
-- **Protocol:** RDP 10.x with H.264 (AVC444) Graphics Pipeline Extension
+- **Protocol:** RDP 10.x with RemoteFX codec support
 
 ### Key Features
 
-#### Phase 1 (Core - 12 weeks)
+#### Phase 1 (Core - 10 weeks)
 - ✅ RDP server with TLS 1.3 encryption
 - ✅ Network Level Authentication (NLA) with PAM
-- ✅ Video streaming using H.264 codec
-- ✅ Hardware-accelerated encoding (VA-API) with software fallback (OpenH264)
+- ✅ Video streaming using RemoteFX codec
+- ✅ Efficient bitmap compression and delta encoding
 - ✅ Full input control (keyboard + mouse)
 - ✅ Bidirectional clipboard sharing
 - ✅ Multi-monitor support (up to 4 monitors)
@@ -74,7 +67,7 @@ Build a production-ready Wayland remote desktop server in Rust that enables Wind
 - ✅ Cursor metadata for reduced latency
 - ✅ Portal-based architecture for maximum compositor compatibility
 
-#### Phase 2 (Audio + Advanced - 6 weeks)
+#### Phase 2 (Audio + Advanced - 4 weeks)
 - ✅ Bidirectional audio streaming
 - ✅ Opus audio codec
 - ✅ Audio/video synchronization
@@ -88,9 +81,9 @@ Build a production-ready Wayland remote desktop server in Rust that enables Wind
 
 ### Architecture Philosophy
 1. **Portal-First:** Use xdg-desktop-portal APIs for maximum compositor compatibility
-2. **Rust-Native:** Pure Rust implementation avoiding unsafe C bindings where possible
-3. **Hardware-Accelerated:** Prioritize VA-API hardware encoding for performance
-4. **Graceful Degradation:** Automatic fallback to software encoding
+2. **Rust-Native:** Pure Rust implementation using IronRDP library
+3. **Efficient Processing:** RemoteFX codec with bitmap compression
+4. **Built-in Encoding:** IronRDP handles all codec operations internally
 5. **Standards-Compliant:** Follow RDP 10.x, Wayland, and Portal specifications exactly
 
 ### Technology Choices
@@ -98,53 +91,48 @@ Build a production-ready Wayland remote desktop server in Rust that enables Wind
 | Component | Technology | Rationale |
 |-----------|------------|-----------|
 | Language | Rust 1.75+ | Memory safety, performance, excellent async support |
-| RDP Protocol | IronRDP | Pure Rust, security-focused, actively maintained |
-| Video Codec | H.264 (AVC444) | Native Windows support, hardware acceleration |
+| RDP Server | ironrdp-server 0.9.0 | Complete RDP server implementation in pure Rust |
+| Video Codec | RemoteFX | Built into IronRDP, efficient bitmap compression |
 | Portal Access | ashpd | Mature Rust bindings for xdg-desktop-portal |
 | Media Transport | PipeWire | Modern Linux multimedia framework |
-| HW Encoding | VA-API | Broad GPU support (Intel, AMD) |
-| SW Encoding | OpenH264 | Cisco's open-source H.264 encoder |
+| Image Processing | image-rs | Pure Rust image manipulation library |
 | Async Runtime | Tokio | Industry standard, excellent ecosystem |
-| TLS | rustls | Pure Rust, modern TLS 1.3 implementation |
+| TLS | rustls (via IronRDP) | Pure Rust, modern TLS 1.3 implementation |
 | Authentication | PAM | Standard Linux authentication |
 
 ### Critical Dependencies
 - **Wayland Compositor:** GNOME 45+, KDE Plasma 6+, or Sway 1.8+
 - **PipeWire:** 0.3.77+ (for screencasting)
 - **xdg-desktop-portal:** 1.18+ (with compositor-specific backend)
-- **VA-API:** libva 2.20+ (for hardware encoding)
 - **System:** Linux kernel 6.0+, systemd
 
 ---
 
 ## PROJECT PHASES
 
-### Phase 1: Core Functionality (Weeks 1-12)
+### Phase 1: Core Functionality (Weeks 1-10)
 
 **Milestones:**
-1. **Foundation** (Weeks 1-2): Project setup, configuration, logging
-2. **Security** (Week 3): TLS, certificates, NLA authentication
-3. **RDP Foundation** (Weeks 4-5): Protocol handling, session management
-4. **Portal Integration** (Week 6): ScreenCast and RemoteDesktop portals
-5. **PipeWire** (Week 7): Video stream capture
-6. **Encoding** (Weeks 8-9): H.264 encoding (software + hardware)
-7. **Video Pipeline** (Weeks 9-10): Complete video processing pipeline
-8. **Graphics Channel** (Week 10): RDP graphics output
-9. **Input** (Week 11): Keyboard and mouse control
-10. **Clipboard** (Weeks 11-12): Bidirectional clipboard sync
-11. **Multi-Monitor** (Week 12): Multiple display support
-12. **Testing & Stabilization** (Week 12): Integration testing, bug fixes
+1. **Foundation** (Week 1): Project setup, configuration, logging
+2. **Security** (Week 2): TLS, certificates, NLA authentication via IronRDP
+3. **Portal Integration** (Week 3): ScreenCast and RemoteDesktop portals
+4. **PipeWire** (Week 4): Video stream capture and format conversion
+5. **Bitmap Conversion** (Week 5): RGB to bitmap format for RemoteFX
+6. **IronRDP Server** (Week 6): Complete server integration with RemoteFX
+7. **Input** (Week 7): Keyboard and mouse control via IronRDP
+8. **Clipboard** (Week 8): Bidirectional clipboard sync
+9. **Multi-Monitor** (Week 9): Multiple display support
+10. **Testing & Stabilization** (Week 10): Integration testing, bug fixes
 
 **Deliverable:** Fully functional remote desktop server with video, input, clipboard, and multi-monitor support
 
-### Phase 2: Audio & Polish (Weeks 13-18)
+### Phase 2: Audio & Polish (Weeks 11-14)
 
 **Milestones:**
-1. **Audio Capture** (Weeks 13-14): PipeWire audio, Opus encoding
-2. **Audio Channels** (Weeks 14-15): RDP audio output/input, A/V sync
-3. **Optimization** (Weeks 15-16): Performance tuning, profiling
-4. **Advanced Features** (Weeks 16-17): Metrics, monitoring, optional web UI
-5. **Documentation** (Week 18): Complete user and API documentation
+1. **Audio Capture** (Week 11): PipeWire audio, Opus encoding
+2. **Audio Channels** (Week 12): RDP audio output/input via IronRDP, A/V sync
+3. **Optimization** (Week 13): Performance tuning, profiling
+4. **Documentation & Features** (Week 14): Complete documentation, metrics, monitoring
 
 **Deliverable:** Production-ready v1.0 release with full audio support
 
@@ -159,16 +147,16 @@ Build a production-ready Wayland remote desktop server in Rust that enables Wind
 - **End-to-end (WAN):** < 150ms (target), < 300ms (maximum)
 
 ### Throughput
-- **1080p @ 30 FPS:** 4 Mbps (VA-API), 6 Mbps (OpenH264)
-- **1080p @ 60 FPS:** 8 Mbps (VA-API)
-- **4K @ 30 FPS:** 12 Mbps (VA-API)
+- **1080p @ 30 FPS:** 5-8 Mbps (RemoteFX with compression)
+- **1080p @ 60 FPS:** 10-15 Mbps (RemoteFX)
+- **4K @ 30 FPS:** 20-30 Mbps (RemoteFX)
 
 ### Resource Usage
 - **CPU (idle):** < 2%
-- **CPU (1080p30, VA-API):** < 10%
-- **CPU (1080p30, OpenH264):** < 50%
+- **CPU (1080p30, RemoteFX):** < 25%
+- **CPU (4K30, RemoteFX):** < 40%
 - **Memory:** < 300 MB typical, < 500 MB maximum
-- **GPU (VA-API):** < 15%
+- **GPU:** N/A (RemoteFX is CPU-based)
 
 ---
 
@@ -228,12 +216,12 @@ Build a production-ready Wayland remote desktop server in Rust that enables Wind
 | Sway | 1.8+ | ✅ Secondary | wlroots-based |
 | Hyprland | Latest | 🔶 Best Effort | Community tested |
 
-### Supported GPUs
-| Vendor | Driver | VA-API | Status |
-|--------|--------|--------|--------|
-| Intel | Mesa | ✅ | Full support |
-| AMD | Mesa | ✅ | Full support |
-| NVIDIA | Proprietary | ⚠️ | Limited (nouveau better) |
+### Supported Hardware
+| Component | Requirement | Notes |
+|-----------|-------------|-------|
+| CPU | x86_64 with SSE4.2 | RemoteFX benefits from SIMD |
+| Memory | 4GB minimum | 8GB+ recommended |
+| GPU | Not required | RemoteFX is CPU-based |
 
 ### Supported Clients
 | Client | Version | Status | Notes |
@@ -257,7 +245,6 @@ Build a production-ready Wayland remote desktop server in Rust that enables Wind
 - **Wayland Compositor:** Running and active
 - **PipeWire:** 0.3.77+ running
 - **xdg-desktop-portal:** 1.18+ with compositor backend running
-- **VA-API:** Optional (for hardware encoding)
 - **PAM:** For authentication
 
 ---
@@ -273,11 +260,10 @@ wrd-server/
 │   ├── main.rs
 │   ├── lib.rs
 │   ├── config/             # Configuration module
-│   ├── server/             # Server coordination
-│   ├── rdp/                # RDP protocol handling
+│   ├── server/             # IronRDP server integration
 │   ├── portal/             # Portal integration
 │   ├── pipewire/           # PipeWire integration
-│   ├── video/              # Video processing pipeline
+│   ├── bitmap/             # Bitmap conversion for RemoteFX
 │   ├── input/              # Input handling
 │   ├── clipboard/          # Clipboard management
 │   ├── multimon/           # Multi-monitor support
@@ -299,15 +285,18 @@ wrd-server-specs/
 ├── 03-PROJECT-STRUCTURE.md              # Directory layout
 ├── 04-DATA-STRUCTURES.md                # Type definitions
 ├── 05-PROTOCOL-SPECIFICATIONS.md        # Protocol details
-├── PHASE-1-SPECIFICATION.md             # Phase 1 plan
-├── PHASE-2-SPECIFICATION.md             # Phase 2 plan
+├── IRONRDP-INTEGRATION-GUIDE.md        # IronRDP integration guide
 ├── phase1-tasks/                        # Individual task specs
 │   ├── TASK-P1-01-FOUNDATION.md
 │   ├── TASK-P1-02-SECURITY.md
-│   └── ... (13 task documents)
-├── phase2-tasks/                        # Phase 2 tasks
-│   ├── TASK-P2-01-AUDIO-CAPTURE.md
-│   └── ... (3 task documents)
+│   ├── TASK-P1-03-PORTAL-INTEGRATION.md
+│   ├── TASK-P1-04-PIPEWIRE.md
+│   ├── TASK-P1-05-BITMAP-CONVERSION.md
+│   ├── TASK-P1-06-IRONRDP-SERVER-INTEGRATION.md
+│   ├── TASK-P1-07-INPUT-HANDLING.md
+│   ├── TASK-P1-08-CLIPBOARD.md
+│   ├── TASK-P1-09-MULTIMONITOR.md
+│   └── TASK-P1-10-TESTING-INTEGRATION.md
 └── reference/                           # Reference docs
     ├── TESTING-SPECIFICATION.md
     ├── DEPLOYMENT-GUIDE.md
@@ -454,8 +443,8 @@ Issues must include:
 ### For Implementors
 1. Read **01-ARCHITECTURE.md** for system design understanding
 2. Read **02-TECHNOLOGY-STACK.md** for dependency setup
-3. Read **PHASE-1-SPECIFICATION.md** for implementation plan
-4. Select a task from **phase1-tasks/** directory
+3. Read **IRONRDP-INTEGRATION-GUIDE.md** for IronRDP usage
+4. Select a task from **phase1-tasks/** directory (P1-01 through P1-10)
 5. Read the specific task specification completely
 6. Implement exactly as specified
 7. Write tests as specified
@@ -479,18 +468,17 @@ Issues must include:
 
 ## APPENDIX: ACRONYMS AND TERMINOLOGY
 
-- **AVC:** Advanced Video Coding (H.264)
 - **DMA-BUF:** Direct Memory Access Buffer
 - **FPS:** Frames Per Second
-- **NAL:** Network Abstraction Layer (H.264 unit)
 - **NLA:** Network Level Authentication
 - **PAM:** Pluggable Authentication Modules
 - **PDU:** Protocol Data Unit
 - **PTS:** Presentation Timestamp
 - **RDP:** Remote Desktop Protocol
+- **RemoteFX:** Microsoft's RDP codec for bitmap compression
 - **RFB:** Remote Framebuffer (VNC protocol)
+- **RGB:** Red Green Blue color model
 - **TLS:** Transport Layer Security
-- **VA-API:** Video Acceleration API
 - **VNC:** Virtual Network Computing
 
 ---
@@ -500,6 +488,7 @@ Issues must include:
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2025-01-18 | System | Initial authoritative specification |
+| 2.0 | 2025-11-18 | System | Major update: Replaced H.264 with RemoteFX, integrated IronRDP server, reduced timeline from 18 to 14 weeks |
 
 ---
 
