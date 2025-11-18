@@ -1,0 +1,50 @@
+Repository: https://github.com/lamco-admin/wayland-rdp
+
+CODE REVIEW COMPLETE - CRITICAL FIXES NEEDED
+
+SITUATION:
+- Specifications: v2.0 PRODUCTION-COMPLETE ✅  
+- Implementation: 30% done, 8 CRITICAL issues found
+- Issue: Cargo.toml MISSING IronRDP (fatal!)
+
+MISSION (Overnight - Unattended):
+
+PHASE 1: FIX CRITICAL ISSUES (2-3 hours)
+1. Fix Cargo.toml - Add ironrdp-server = "0.9.0" + all missing deps
+   Read: 02-TECHNOLOGY-STACK.md for complete correct Cargo.toml
+   
+2. Fix portal/screencast.rs - Currently empty stub, needs 130 lines
+   Copy from: TASK-P1-03-PORTAL-INTEGRATION-REVISED.md lines 200-270
+   
+3. Fix portal/clipboard.rs - Remove placeholders, complete implementation
+   
+4. Fix security/certificates.rs - Empty stub, needs implementation
+   Copy from: TASK-P1-02-SECURITY.md lines 250-370
+   
+Verify: cargo check must succeed
+
+PHASE 2: IMPLEMENT PIPEWIRE (4-6 hours)
+Read: phase1-tasks/TASK-P1-04-PIPEWIRE-COMPLETE.md (73KB, 100% complete spec)
+
+Implement:
+- src/pipewire/mod.rs (250 lines)
+- src/pipewire/stream.rs (350 lines)
+- src/pipewire/format.rs (200 lines)
+- src/pipewire/receiver.rs (400 lines)
+- examples/pipewire_frames.rs
+- tests/integration/pipewire_test.rs
+
+The spec has complete code - follow exactly.
+
+PHASE 3: DOCUMENT
+Create: OVERNIGHT-PROGRESS-REPORT.md
+Push: git push -u origin <branch>
+
+CRITICAL REFERENCES:
+- CODE-QUALITY-REVIEW.md (what needs fixing)
+- 02-TECHNOLOGY-STACK.md (correct Cargo.toml)
+- TASK-P1-04-PIPEWIRE-COMPLETE.md (implementation)
+
+Work overnight. Fix critical issues first. Implement PipeWire second.
+
+Good luck! 🌙
