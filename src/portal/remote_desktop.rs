@@ -2,17 +2,17 @@
 //!
 //! Provides input injection and screen capture via RemoteDesktop portal.
 
-use ashpd::desktop::remote_desktop::{RemoteDesktop, DeviceType, KeyState};
+use anyhow::{Context, Result};
+use ashpd::desktop::remote_desktop::{DeviceType, KeyState, RemoteDesktop};
 use ashpd::desktop::PersistMode;
 use ashpd::WindowIdentifier;
-use std::sync::Arc;
-use std::os::fd::{AsRawFd, RawFd};
-use anyhow::{Result, Context};
-use tracing::{info, debug};
 use enumflags2::BitFlags;
+use std::os::fd::{AsRawFd, RawFd};
+use std::sync::Arc;
+use tracing::{debug, info};
 
-use crate::config::Config;
 use super::session::StreamInfo;
+use crate::config::Config;
 
 /// RemoteDesktop portal manager
 pub struct RemoteDesktopManager {
@@ -23,13 +23,13 @@ impl RemoteDesktopManager {
     /// Create new RemoteDesktop manager
     pub async fn new(_connection: zbus::Connection, config: Arc<Config>) -> Result<Self> {
         info!("Initializing RemoteDesktop portal manager");
-        Ok(Self {
-            config,
-        })
+        Ok(Self { config })
     }
 
     /// Create a remote desktop session
-    pub async fn create_session(&self) -> Result<ashpd::desktop::Session<'static, RemoteDesktop<'static>>> {
+    pub async fn create_session(
+        &self,
+    ) -> Result<ashpd::desktop::Session<'static, RemoteDesktop<'static>>> {
         info!("Creating RemoteDesktop session");
 
         let proxy = RemoteDesktop::new().await?;
@@ -53,12 +53,15 @@ impl RemoteDesktopManager {
 
         let proxy = RemoteDesktop::new().await?;
 
-        proxy.select_devices(
-            session,
-            devices,
-            None, // No restore token yet
-            PersistMode::DoNot, // Don't persist for now
-        ).await.context("Failed to select devices")?;
+        proxy
+            .select_devices(
+                session,
+                devices,
+                None,               // No restore token yet
+                PersistMode::DoNot, // Don't persist for now
+            )
+            .await
+            .context("Failed to select devices")?;
 
         info!("Devices selected successfully");
         Ok(())
@@ -75,7 +78,8 @@ impl RemoteDesktopManager {
 
         // Start returns a Request that resolves to SelectedDevices
         // None for headless/no parent window
-        let response = proxy.start(session, None)
+        let response = proxy
+            .start(session, None)
             .await
             .context("Failed to start remote desktop session")?;
 
@@ -83,16 +87,19 @@ impl RemoteDesktopManager {
         let selected = response.response()?;
 
         let stream_count = selected.streams().map(|s| s.len()).unwrap_or(0);
-        info!("RemoteDesktop started with {} devices and {} streams",
-              selected.devices().bits(),
-              stream_count);
+        info!(
+            "RemoteDesktop started with {} devices and {} streams",
+            selected.devices().bits(),
+            stream_count
+        );
 
         // Get PipeWire FD - note: open_pipe_wire_remote is on the Screencast trait/methods
         // For RemoteDesktop, we need to access streams differently
         // Actually, RemoteDesktop in 0.12.0 uses the screencast portal internally
         use ashpd::desktop::screencast::Screencast;
         let screencast_proxy = Screencast::new().await?;
-        let fd = screencast_proxy.open_pipe_wire_remote(session)
+        let fd = screencast_proxy
+            .open_pipe_wire_remote(session)
             .await
             .context("Failed to open PipeWire remote")?;
 
@@ -100,17 +107,21 @@ impl RemoteDesktopManager {
         info!("PipeWire FD obtained: {}", raw_fd);
 
         // Convert stream info using new API
-        let stream_info: Vec<StreamInfo> = selected.streams()
+        let stream_info: Vec<StreamInfo> = selected
+            .streams()
             .map(|streams| {
-                streams.iter().map(|stream| {
-                    let size = stream.size().unwrap_or((0, 0));
-                    StreamInfo {
-                        node_id: stream.pipe_wire_node_id(),
-                        position: stream.position().unwrap_or((0, 0)),
-                        size: (size.0 as u32, size.1 as u32), // Convert from i32 to u32
-                        source_type: super::session::SourceType::Monitor,
-                    }
-                }).collect()
+                streams
+                    .iter()
+                    .map(|stream| {
+                        let size = stream.size().unwrap_or((0, 0));
+                        StreamInfo {
+                            node_id: stream.pipe_wire_node_id(),
+                            position: stream.position().unwrap_or((0, 0)),
+                            size: (size.0 as u32, size.1 as u32), // Convert from i32 to u32
+                            source_type: super::session::SourceType::Monitor,
+                        }
+                    })
+                    .collect()
             })
             .unwrap_or_default();
 
@@ -141,7 +152,9 @@ impl RemoteDesktopManager {
         y: f64,
     ) -> Result<()> {
         let proxy = RemoteDesktop::new().await?;
-        proxy.notify_pointer_motion_absolute(session, stream, x, y).await?;
+        proxy
+            .notify_pointer_motion_absolute(session, stream, x, y)
+            .await?;
         Ok(())
     }
 
@@ -153,7 +166,11 @@ impl RemoteDesktopManager {
         pressed: bool,
     ) -> Result<()> {
         let proxy = RemoteDesktop::new().await?;
-        let state = if pressed { KeyState::Pressed } else { KeyState::Released };
+        let state = if pressed {
+            KeyState::Pressed
+        } else {
+            KeyState::Released
+        };
         proxy.notify_pointer_button(session, button, state).await?;
         Ok(())
     }
@@ -180,8 +197,14 @@ impl RemoteDesktopManager {
         pressed: bool,
     ) -> Result<()> {
         let proxy = RemoteDesktop::new().await?;
-        let state = if pressed { KeyState::Pressed } else { KeyState::Released };
-        proxy.notify_keyboard_keycode(session, keycode, state).await?;
+        let state = if pressed {
+            KeyState::Pressed
+        } else {
+            KeyState::Released
+        };
+        proxy
+            .notify_keyboard_keycode(session, keycode, state)
+            .await?;
         Ok(())
     }
 }

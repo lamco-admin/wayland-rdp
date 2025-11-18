@@ -4,8 +4,8 @@
 //! This module extends the pipewire-rs crate with additional functionality
 //! needed for DMA-BUF handling and advanced features.
 
-use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::os::fd::RawFd;
+use std::os::raw::{c_char, c_int, c_uint, c_void};
 
 // Re-export from pipewire crate
 pub use pipewire::{
@@ -17,10 +17,10 @@ pub use pipewire::{
     stream::{Stream, StreamState},
 };
 
-pub use libspa::pod::{self as spa_pod, Pod as SpaPod};
 pub use libspa::param::video::{VideoFormat, VideoInfoRaw};
-pub use libspa::param::{ParamType, format::MediaType, format::MediaSubtype};
-pub use libspa::utils::{Direction, Rectangle, Fraction, Id, Choice, ChoiceFlags};
+pub use libspa::param::{format::MediaSubtype, format::MediaType, ParamType};
+pub use libspa::pod::{self as spa_pod, Pod as SpaPod};
+pub use libspa::utils::{Choice, ChoiceFlags, Direction, Fraction, Id, Rectangle};
 pub use libspa_sys as spa_sys;
 
 /// DRM format modifiers for DMA-BUF
@@ -61,8 +61,7 @@ pub fn drm_fourcc_to_spa_video_format(fourcc: u32) -> Option<VideoFormat> {
 /// Get bytes per pixel for a video format
 pub fn get_bytes_per_pixel(format: VideoFormat) -> usize {
     match format {
-        VideoFormat::BGRx | VideoFormat::BGRA |
-        VideoFormat::RGBx | VideoFormat::RGBA => 4,
+        VideoFormat::BGRx | VideoFormat::BGRA | VideoFormat::RGBx | VideoFormat::RGBA => 4,
         VideoFormat::RGB | VideoFormat::BGR => 3,
         VideoFormat::GRAY8 => 1,
         // YUV formats - return for Y plane
@@ -84,15 +83,16 @@ pub fn calculate_buffer_size(width: u32, height: u32, format: VideoFormat) -> us
     let stride = calculate_stride(width, format) as usize;
     match format {
         // RGB formats
-        VideoFormat::BGRx | VideoFormat::BGRA |
-        VideoFormat::RGBx | VideoFormat::RGBA |
-        VideoFormat::RGB | VideoFormat::BGR |
-        VideoFormat::GRAY8 => stride * height as usize,
+        VideoFormat::BGRx
+        | VideoFormat::BGRA
+        | VideoFormat::RGBx
+        | VideoFormat::RGBA
+        | VideoFormat::RGB
+        | VideoFormat::BGR
+        | VideoFormat::GRAY8 => stride * height as usize,
 
         // YUV420 formats (1.5 bytes per pixel)
-        VideoFormat::NV12 | VideoFormat::I420 => {
-            (stride * height as usize * 3) / 2
-        }
+        VideoFormat::NV12 | VideoFormat::I420 => (stride * height as usize * 3) / 2,
 
         // YUV422 formats (2 bytes per pixel)
         VideoFormat::YUY2 => stride * height as usize,
@@ -145,7 +145,12 @@ pub struct DamageRegion {
 
 impl DamageRegion {
     pub fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     pub fn is_valid(&self) -> bool {
@@ -176,7 +181,12 @@ pub trait StreamEventsListener: Send + Sync {
 /// Note: This is a placeholder. Actual format parameter construction
 /// would be done using PipeWire stream builder in production code.
 /// The pipewire crate provides higher-level APIs for this.
-pub fn build_format_params(_width: u32, _height: u32, _framerate: Fraction, _formats: &[VideoFormat]) -> Vec<u8> {
+pub fn build_format_params(
+    _width: u32,
+    _height: u32,
+    _framerate: Fraction,
+    _formats: &[VideoFormat],
+) -> Vec<u8> {
     // In production, use pipewire::stream::StreamBuilder with appropriate parameters
     // This would use the PipeWire C API directly or through pipewire-rs
     Vec::new()
@@ -186,7 +196,12 @@ pub fn build_format_params(_width: u32, _height: u32, _framerate: Fraction, _for
 ///
 /// Note: This is a placeholder. Actual buffer parameter construction
 /// would be done using PipeWire stream builder in production code.
-pub fn build_buffer_params(_buffer_count: u32, _buffer_size: u32, _stride: u32, _support_dmabuf: bool) -> Vec<u8> {
+pub fn build_buffer_params(
+    _buffer_count: u32,
+    _buffer_size: u32,
+    _stride: u32,
+    _support_dmabuf: bool,
+) -> Vec<u8> {
     // In production, use pipewire::stream::StreamBuilder with appropriate parameters
     Vec::new()
 }

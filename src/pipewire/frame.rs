@@ -2,10 +2,10 @@
 //!
 //! Structures and utilities for handling video frames captured from PipeWire.
 
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
 use crate::pipewire::ffi::DamageRegion;
 use crate::pipewire::format::PixelFormat;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 /// Video frame captured from PipeWire
 #[derive(Clone)]
@@ -185,9 +185,7 @@ impl VideoFrame {
 
     /// Get total damage area
     pub fn total_damage_area(&self) -> u32 {
-        self.damage_regions.iter()
-            .map(|r| r.width * r.height)
-            .sum()
+        self.damage_regions.iter().map(|r| r.width * r.height).sum()
     }
 
     /// Check if frame has significant damage
@@ -218,9 +216,7 @@ impl VideoFrame {
 
     /// Check if frame data is valid
     pub fn is_valid(&self) -> bool {
-        !self.data.is_empty() &&
-        !self.flags.is_corrupted() &&
-        !self.flags.is_incomplete()
+        !self.data.is_empty() && !self.flags.is_corrupted() && !self.flags.is_incomplete()
     }
 
     /// Clone frame data (makes a copy)
@@ -377,10 +373,7 @@ mod tests {
     fn test_frame_stats() {
         let mut stats = FrameStats::new();
 
-        let frame = VideoFrame::with_data(
-            1, 100, 100, 400, PixelFormat::BGRA, 0,
-            vec![0u8; 40000]
-        );
+        let frame = VideoFrame::with_data(1, 100, 100, 400, PixelFormat::BGRA, 0, vec![0u8; 40000]);
 
         stats.update(&frame);
 

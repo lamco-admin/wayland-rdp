@@ -2,16 +2,16 @@
 //!
 //! Provides access to screen content via xdg-desktop-portal ScreenCast interface.
 
-use ashpd::desktop::screencast::{Screencast, SourceType, CursorMode};
+use anyhow::{Context, Result};
+use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
 use ashpd::desktop::PersistMode;
 use ashpd::WindowIdentifier;
-use std::sync::Arc;
 use std::os::fd::{AsRawFd, RawFd};
-use anyhow::{Result, Context};
-use tracing::{info, debug};
+use std::sync::Arc;
+use tracing::{debug, info};
 
-use crate::config::Config;
 use super::session::StreamInfo;
+use crate::config::Config;
 
 /// ScreenCast portal manager
 pub struct ScreenCastManager {
@@ -26,7 +26,9 @@ impl ScreenCastManager {
     }
 
     /// Create a screencast session
-    pub async fn create_session(&self) -> Result<ashpd::desktop::Session<'static, Screencast<'static>>> {
+    pub async fn create_session(
+        &self,
+    ) -> Result<ashpd::desktop::Session<'static, Screencast<'static>>> {
         info!("Creating ScreenCast session");
 
         let proxy = Screencast::new().await?;
@@ -56,14 +58,17 @@ impl ScreenCastManager {
         // Select sources: monitors + windows if available
         let source_types = SourceType::Monitor | SourceType::Window;
 
-        proxy.select_sources(
-            session,
-            cursor_mode,
-            source_types.into(),
-            true,  // multiple sources
-            None,  // no restore token yet
-            PersistMode::DoNot,  // don't persist for now
-        ).await.context("Failed to select sources")?;
+        proxy
+            .select_sources(
+                session,
+                cursor_mode,
+                source_types.into(),
+                true,               // multiple sources
+                None,               // no restore token yet
+                PersistMode::DoNot, // don't persist for now
+            )
+            .await
+            .context("Failed to select sources")?;
 
         info!("Sources selected successfully");
         Ok(())
@@ -80,17 +85,22 @@ impl ScreenCastManager {
 
         // Start returns a Request that resolves to Streams
         // None for headless/no parent window
-        let streams_request = proxy.start(session, None)
+        let streams_request = proxy
+            .start(session, None)
             .await
             .context("Failed to start screencast")?;
 
         // Get the streams from the request response
         let streams = streams_request.response()?;
 
-        info!("Screencast started with {} streams", streams.streams().len());
+        info!(
+            "Screencast started with {} streams",
+            streams.streams().len()
+        );
 
         // Get PipeWire FD
-        let fd = proxy.open_pipe_wire_remote(session)
+        let fd = proxy
+            .open_pipe_wire_remote(session)
             .await
             .context("Failed to open PipeWire remote")?;
 
@@ -98,15 +108,19 @@ impl ScreenCastManager {
         info!("PipeWire FD obtained: {}", raw_fd);
 
         // Convert stream info using new API
-        let stream_info: Vec<StreamInfo> = streams.streams().iter().map(|stream| {
-            let size = stream.size().unwrap_or((0, 0));
-            StreamInfo {
-                node_id: stream.pipe_wire_node_id(),
-                position: stream.position().unwrap_or((0, 0)),
-                size: (size.0 as u32, size.1 as u32), // Convert from i32 to u32
-                source_type: super::session::SourceType::Monitor, // Simplified for now
-            }
-        }).collect();
+        let stream_info: Vec<StreamInfo> = streams
+            .streams()
+            .iter()
+            .map(|stream| {
+                let size = stream.size().unwrap_or((0, 0));
+                StreamInfo {
+                    node_id: stream.pipe_wire_node_id(),
+                    position: stream.position().unwrap_or((0, 0)),
+                    size: (size.0 as u32, size.1 as u32), // Convert from i32 to u32
+                    source_type: super::session::SourceType::Monitor, // Simplified for now
+                }
+            })
+            .collect();
 
         // Don't close fd - we need to keep it
         std::mem::forget(fd);

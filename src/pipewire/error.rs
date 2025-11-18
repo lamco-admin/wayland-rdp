@@ -2,8 +2,8 @@
 //!
 //! Comprehensive error handling for the PipeWire integration module.
 
-use thiserror::Error;
 use std::fmt;
+use thiserror::Error;
 
 /// Result type for PipeWire operations
 pub type Result<T> = std::result::Result<T, PipeWireError>;
@@ -116,24 +116,27 @@ pub enum ErrorType {
 /// Classify error for recovery strategy selection
 pub fn classify_error(error: &PipeWireError) -> ErrorType {
     match error {
-        PipeWireError::ConnectionFailed(_) |
-        PipeWireError::InitializationFailed(_) => ErrorType::Connection,
+        PipeWireError::ConnectionFailed(_) | PipeWireError::InitializationFailed(_) => {
+            ErrorType::Connection
+        }
 
-        PipeWireError::StreamCreationFailed(_) |
-        PipeWireError::StreamNotFound(_) |
-        PipeWireError::StreamStalled(_) => ErrorType::Stream,
+        PipeWireError::StreamCreationFailed(_)
+        | PipeWireError::StreamNotFound(_)
+        | PipeWireError::StreamStalled(_) => ErrorType::Stream,
 
-        PipeWireError::BufferAllocationFailed(_) |
-        PipeWireError::NoBuffersAvailable => ErrorType::Buffer,
+        PipeWireError::BufferAllocationFailed(_) | PipeWireError::NoBuffersAvailable => {
+            ErrorType::Buffer
+        }
 
-        PipeWireError::FormatNegotiationFailed(_) |
-        PipeWireError::FormatConversionFailed(_) => ErrorType::Format,
+        PipeWireError::FormatNegotiationFailed(_) | PipeWireError::FormatConversionFailed(_) => {
+            ErrorType::Format
+        }
 
-        PipeWireError::TooManyStreams(_) |
-        PipeWireError::DmaBufImportFailed(_) => ErrorType::Resource,
+        PipeWireError::TooManyStreams(_) | PipeWireError::DmaBufImportFailed(_) => {
+            ErrorType::Resource
+        }
 
-        PipeWireError::PermissionDenied |
-        PipeWireError::Portal(_) => ErrorType::Permission,
+        PipeWireError::PermissionDenied | PipeWireError::Portal(_) => ErrorType::Permission,
 
         PipeWireError::Timeout => ErrorType::Timeout,
 

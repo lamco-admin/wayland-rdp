@@ -2,8 +2,8 @@
 //!
 //! Manages the lifecycle of portal sessions and associated resources.
 
-use std::os::fd::RawFd;
 use anyhow::Result;
+use std::os::fd::RawFd;
 use tracing::info;
 
 /// Information about a PipeWire stream from the portal
@@ -53,8 +53,12 @@ impl PortalSessionHandle {
         streams: Vec<StreamInfo>,
         remote_desktop_session: Option<String>,
     ) -> Self {
-        info!("Created portal session handle: {}, {} streams, fd: {}",
-              session_id, streams.len(), pipewire_fd);
+        info!(
+            "Created portal session handle: {}, {} streams, fd: {}",
+            session_id,
+            streams.len(),
+            pipewire_fd
+        );
 
         Self {
             session_id,
@@ -105,14 +109,12 @@ mod tests {
 
     #[test]
     fn test_session_handle_creation() {
-        let streams = vec![
-            StreamInfo {
-                node_id: 42,
-                position: (0, 0),
-                size: (1920, 1080),
-                source_type: SourceType::Monitor,
-            }
-        ];
+        let streams = vec![StreamInfo {
+            node_id: 42,
+            position: (0, 0),
+            size: (1920, 1080),
+            source_type: SourceType::Monitor,
+        }];
 
         let handle = PortalSessionHandle::new(
             "test-session".to_string(),

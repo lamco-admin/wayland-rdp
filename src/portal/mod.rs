@@ -2,21 +2,21 @@
 //!
 //! Provides unified access to ScreenCast, RemoteDesktop, and Clipboard portals.
 
-use std::sync::Arc;
-use anyhow::{Result, Context};
-use tracing::{info, debug};
+use anyhow::{Context, Result};
 use ashpd::desktop::remote_desktop::DeviceType;
 use enumflags2::BitFlags;
+use std::sync::Arc;
+use tracing::{debug, info};
 
-pub mod screencast;
-pub mod remote_desktop;
 pub mod clipboard;
+pub mod remote_desktop;
+pub mod screencast;
 pub mod session;
 
-pub use screencast::ScreenCastManager;
-pub use remote_desktop::RemoteDesktopManager;
 pub use clipboard::ClipboardManager;
-pub use session::{PortalSessionHandle, StreamInfo, SourceType};
+pub use remote_desktop::RemoteDesktopManager;
+pub use screencast::ScreenCastManager;
+pub use session::{PortalSessionHandle, SourceType, StreamInfo};
 
 use crate::config::Config;
 
@@ -42,20 +42,13 @@ impl PortalManager {
         debug!("Connected to D-Bus session bus");
 
         // Initialize portal managers
-        let screencast = Arc::new(ScreenCastManager::new(
-            connection.clone(),
-            config.clone(),
-        ).await?);
+        let screencast =
+            Arc::new(ScreenCastManager::new(connection.clone(), config.clone()).await?);
 
-        let remote_desktop = Arc::new(RemoteDesktopManager::new(
-            connection.clone(),
-            config.clone(),
-        ).await?);
+        let remote_desktop =
+            Arc::new(RemoteDesktopManager::new(connection.clone(), config.clone()).await?);
 
-        let clipboard = Arc::new(ClipboardManager::new(
-            connection.clone(),
-            config.clone(),
-        ).await?);
+        let clipboard = Arc::new(ClipboardManager::new(connection.clone(), config.clone()).await?);
 
         info!("Portal Manager initialized successfully");
 
@@ -80,7 +73,9 @@ impl PortalManager {
 
         // Select devices for input injection using BitFlags
         let devices: BitFlags<DeviceType> = DeviceType::Keyboard | DeviceType::Pointer;
-        self.remote_desktop.select_devices(&session, devices).await?;
+        self.remote_desktop
+            .select_devices(&session, devices)
+            .await?;
 
         // Note: We can also use ScreenCast directly for screen-only capture
         // But RemoteDesktop gives us both screen + input
@@ -94,12 +89,8 @@ impl PortalManager {
 
         // Create session handle - use a placeholder string ID
         let session_id = format!("portal-session-{}", uuid::Uuid::new_v4());
-        let handle = PortalSessionHandle::new(
-            session_id.clone(),
-            pipewire_fd,
-            streams,
-            Some(session_id),
-        );
+        let handle =
+            PortalSessionHandle::new(session_id.clone(), pipewire_fd, streams, Some(session_id));
 
         Ok(handle)
     }

@@ -2,13 +2,13 @@
 //!
 //! Manages PipeWire buffers including DMA-BUF and memory-mapped buffers.
 
+use crate::pipewire::error::{PipeWireError, Result};
+use crate::pipewire::ffi::SpaDataType;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::fd::RawFd;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::Mutex;
-use crate::pipewire::error::{PipeWireError, Result};
-use crate::pipewire::ffi::SpaDataType;
 
 /// Safe wrapper for raw pointer that implements Send+Sync
 /// Safety: The buffer manager ensures proper synchronization
@@ -118,16 +118,16 @@ impl ManagedBuffer {
 
     /// Get mapped data as slice
     pub unsafe fn as_slice(&self) -> Option<&[u8]> {
-        self.mapped.as_ref().map(|send_ptr| {
-            std::slice::from_raw_parts(send_ptr.as_ptr(), self.mapped_size)
-        })
+        self.mapped
+            .as_ref()
+            .map(|send_ptr| std::slice::from_raw_parts(send_ptr.as_ptr(), self.mapped_size))
     }
 
     /// Get mapped data as mutable slice
     pub unsafe fn as_mut_slice(&mut self) -> Option<&mut [u8]> {
-        self.mapped.as_mut().map(|send_ptr| {
-            std::slice::from_raw_parts_mut(send_ptr.as_ptr(), self.mapped_size)
-        })
+        self.mapped
+            .as_mut()
+            .map(|send_ptr| std::slice::from_raw_parts_mut(send_ptr.as_ptr(), self.mapped_size))
     }
 }
 
@@ -190,7 +190,7 @@ impl BufferManager {
     ) -> Result<u32> {
         if self.buffers.len() >= self.max_buffers {
             return Err(PipeWireError::BufferAllocationFailed(
-                "Maximum buffer count reached".to_string()
+                "Maximum buffer count reached".to_string(),
             ));
         }
 
@@ -215,9 +215,10 @@ impl BufferManager {
                     );
 
                     if ptr == libc::MAP_FAILED {
-                        return Err(PipeWireError::BufferAllocationFailed(
-                            format!("Failed to mmap buffer: {}", std::io::Error::last_os_error())
-                        ));
+                        return Err(PipeWireError::BufferAllocationFailed(format!(
+                            "Failed to mmap buffer: {}",
+                            std::io::Error::last_os_error()
+                        )));
                     }
 
                     SendPtr::new(ptr as *mut u8)
@@ -256,9 +257,10 @@ impl BufferManager {
             self.stats.releases += 1;
             Ok(())
         } else {
-            Err(PipeWireError::InvalidParameter(
-                format!("Buffer {} not found", id)
-            ))
+            Err(PipeWireError::InvalidParameter(format!(
+                "Buffer {} not found",
+                id
+            )))
         }
     }
 
@@ -280,9 +282,10 @@ impl BufferManager {
             self.stats.total_freed += 1;
             Ok(())
         } else {
-            Err(PipeWireError::InvalidParameter(
-                format!("Buffer {} not found", id)
-            ))
+            Err(PipeWireError::InvalidParameter(format!(
+                "Buffer {} not found",
+                id
+            )))
         }
     }
 
@@ -349,7 +352,8 @@ impl BufferStats {
         if self.acquisitions == 0 {
             0.0
         } else {
-            self.acquisition_failures as f64 / (self.acquisitions + self.acquisition_failures) as f64
+            self.acquisition_failures as f64
+                / (self.acquisitions + self.acquisition_failures) as f64
         }
     }
 }
@@ -375,7 +379,10 @@ impl SharedBufferManager {
         fd: Option<RawFd>,
         modifier: u64,
     ) -> Result<u32> {
-        self.inner.lock().await.register_buffer(buffer_type, size, fd, modifier)
+        self.inner
+            .lock()
+            .await
+            .register_buffer(buffer_type, size, fd, modifier)
     }
 
     /// Acquire a buffer
@@ -465,8 +472,12 @@ mod tests {
         let mut mgr = BufferManager::new(5);
 
         // Register buffers
-        let id1 = mgr.register_buffer(BufferType::MemPtr, 1024, None, 0).unwrap();
-        let id2 = mgr.register_buffer(BufferType::MemPtr, 2048, None, 0).unwrap();
+        let id1 = mgr
+            .register_buffer(BufferType::MemPtr, 1024, None, 0)
+            .unwrap();
+        let id2 = mgr
+            .register_buffer(BufferType::MemPtr, 2048, None, 0)
+            .unwrap();
 
         assert_eq!(mgr.total_count(), 2);
         assert_eq!(mgr.free_count(), 2);
@@ -486,8 +497,10 @@ mod tests {
     fn test_buffer_limit() {
         let mut mgr = BufferManager::new(2);
 
-        mgr.register_buffer(BufferType::MemPtr, 1024, None, 0).unwrap();
-        mgr.register_buffer(BufferType::MemPtr, 1024, None, 0).unwrap();
+        mgr.register_buffer(BufferType::MemPtr, 1024, None, 0)
+            .unwrap();
+        mgr.register_buffer(BufferType::MemPtr, 1024, None, 0)
+            .unwrap();
 
         // Should fail due to limit
         let result = mgr.register_buffer(BufferType::MemPtr, 1024, None, 0);
@@ -498,7 +511,10 @@ mod tests {
     async fn test_shared_buffer_manager() {
         let mgr = SharedBufferManager::new(5);
 
-        let id = mgr.register_buffer(BufferType::MemPtr, 1024, None, 0).await.unwrap();
+        let id = mgr
+            .register_buffer(BufferType::MemPtr, 1024, None, 0)
+            .await
+            .unwrap();
         assert_eq!(mgr.free_count().await, 1);
 
         let acquired = mgr.acquire_buffer().await.unwrap();

@@ -74,10 +74,9 @@ pub mod stream;
 // Re-export main types
 pub use buffer::{BufferManager, BufferType, ManagedBuffer, SharedBufferManager};
 pub use connection::{ConnectionState, PipeWireConnection, PipeWireEvent};
-pub use coordinator::{MonitorInfo, MonitorEvent, MultiStreamCoordinator, MultiStreamConfig};
+pub use coordinator::{MonitorEvent, MonitorInfo, MultiStreamConfig, MultiStreamCoordinator};
 pub use error::{
-    classify_error, ErrorContext, ErrorType, PipeWireError, RecoveryAction,
-    Result, RetryConfig,
+    classify_error, ErrorContext, ErrorType, PipeWireError, RecoveryAction, Result, RetryConfig,
 };
 pub use format::{convert_format, PixelFormat};
 pub use frame::{FrameCallback, FrameFlags, FrameStats, VideoFrame};
@@ -114,15 +113,15 @@ pub fn deinit() {
 /// Get supported video formats in order of preference
 pub fn supported_formats() -> Vec<VideoFormat> {
     vec![
-        VideoFormat::BGRx,  // Preferred: no alpha channel overhead
-        VideoFormat::BGRA,  // Common format with alpha
-        VideoFormat::RGBx,  // Alternative without alpha
-        VideoFormat::RGBA,  // Alternative with alpha
-        VideoFormat::RGB,   // 24-bit fallback
-        VideoFormat::BGR,   // 24-bit fallback
-        VideoFormat::NV12,  // YUV 4:2:0 (compressed)
-        VideoFormat::YUY2,  // YUV 4:2:2 (compressed)
-        VideoFormat::I420,  // YUV 4:2:0 planar
+        VideoFormat::BGRx, // Preferred: no alpha channel overhead
+        VideoFormat::BGRA, // Common format with alpha
+        VideoFormat::RGBx, // Alternative without alpha
+        VideoFormat::RGBA, // Alternative with alpha
+        VideoFormat::RGB,  // 24-bit fallback
+        VideoFormat::BGR,  // 24-bit fallback
+        VideoFormat::NV12, // YUV 4:2:0 (compressed)
+        VideoFormat::YUY2, // YUV 4:2:2 (compressed)
+        VideoFormat::I420, // YUV 4:2:0 planar
     ]
 }
 
@@ -138,11 +137,7 @@ pub fn is_dmabuf_supported() -> bool {
         use std::fs;
         use std::path::Path;
 
-        let drm_paths = [
-            "/dev/dri/card0",
-            "/dev/dri/card1",
-            "/dev/dri/renderD128",
-        ];
+        let drm_paths = ["/dev/dri/card0", "/dev/dri/card1", "/dev/dri/renderD128"];
 
         drm_paths.iter().any(|path| Path::new(path).exists())
     }
@@ -156,10 +151,10 @@ pub fn is_dmabuf_supported() -> bool {
 /// Get recommended buffer count for a given refresh rate
 pub fn recommended_buffer_count(refresh_rate: u32) -> u32 {
     match refresh_rate {
-        0..=30 => 2,      // Low refresh: 2 buffers sufficient
-        31..=60 => 3,     // Standard: 3 buffers
-        61..=120 => 4,    // High refresh: 4 buffers
-        _ => 5,           // Very high refresh: 5 buffers
+        0..=30 => 2,   // Low refresh: 2 buffers sufficient
+        31..=60 => 3,  // Standard: 3 buffers
+        61..=120 => 4, // High refresh: 4 buffers
+        _ => 5,        // Very high refresh: 5 buffers
     }
 }
 

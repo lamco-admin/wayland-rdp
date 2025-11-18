@@ -124,3 +124,127 @@ pub struct LoggingConfig {
     /// Enable metrics collection
     pub metrics: bool,
 }
+
+/// Video pipeline configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoPipelineConfig {
+    /// Frame processor configuration
+    pub processor: ProcessorConfig,
+
+    /// Frame dispatcher configuration
+    pub dispatcher: DispatcherConfig,
+
+    /// Bitmap converter configuration
+    pub converter: ConverterConfig,
+}
+
+/// Frame processor configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessorConfig {
+    /// Target frame rate (FPS)
+    pub target_fps: u32,
+
+    /// Maximum frame queue depth
+    pub max_queue_depth: usize,
+
+    /// Enable adaptive quality
+    pub adaptive_quality: bool,
+
+    /// Damage tracking threshold (0.0-1.0)
+    pub damage_threshold: f32,
+
+    /// Drop frames when queue is full
+    pub drop_on_full_queue: bool,
+
+    /// Enable performance metrics
+    pub enable_metrics: bool,
+}
+
+/// Frame dispatcher configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DispatcherConfig {
+    /// Channel buffer size per stream
+    pub channel_size: usize,
+
+    /// Enable priority-based dispatch
+    pub priority_dispatch: bool,
+
+    /// Maximum frame age before drop (ms)
+    pub max_frame_age_ms: u64,
+
+    /// Enable backpressure handling
+    pub enable_backpressure: bool,
+
+    /// High water mark (0.0-1.0)
+    pub high_water_mark: f32,
+
+    /// Low water mark (0.0-1.0)
+    pub low_water_mark: f32,
+
+    /// Enable load balancing
+    pub load_balancing: bool,
+}
+
+/// Bitmap converter configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConverterConfig {
+    /// Buffer pool size
+    pub buffer_pool_size: usize,
+
+    /// Enable SIMD optimizations
+    pub enable_simd: bool,
+
+    /// Damage threshold for full update (0.0-1.0)
+    pub damage_threshold: f32,
+
+    /// Enable statistics collection
+    pub enable_statistics: bool,
+}
+
+impl Default for ProcessorConfig {
+    fn default() -> Self {
+        Self {
+            target_fps: 30,
+            max_queue_depth: 30,
+            adaptive_quality: true,
+            damage_threshold: 0.05,
+            drop_on_full_queue: true,
+            enable_metrics: true,
+        }
+    }
+}
+
+impl Default for DispatcherConfig {
+    fn default() -> Self {
+        Self {
+            channel_size: 30,
+            priority_dispatch: true,
+            max_frame_age_ms: 150,
+            enable_backpressure: true,
+            high_water_mark: 0.8,
+            low_water_mark: 0.5,
+            load_balancing: true,
+        }
+    }
+}
+
+impl Default for ConverterConfig {
+    fn default() -> Self {
+        Self {
+            buffer_pool_size: 8,
+            enable_simd: true,
+            damage_threshold: 0.75,
+            enable_statistics: true,
+        }
+    }
+}
+
+impl Default for VideoPipelineConfig {
+    fn default() -> Self {
+        Self {
+            processor: ProcessorConfig::default(),
+            dispatcher: DispatcherConfig::default(),
+            converter: ConverterConfig::default(),
+        }
+    }
+}
