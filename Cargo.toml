@@ -43,8 +43,9 @@ rustls-pemfile = "1.0"
 tokio-rustls = "0.24"
 
 # RDP protocol
-# Note: These will be implemented in future tasks
-# ironrdp and related crates are placeholders for now
+# BLOCKED: IronRDP has dependency issues - tracked in our analysis docs
+# Using PR #1028's approach with git dependencies
+ironrdp = { git = "https://github.com/allan2/IronRDP", branch = "update-sspi", default-features = false, features = ["server"] }
 
 # Video encoding
 # Note: These will be added when video encoding is implemented
