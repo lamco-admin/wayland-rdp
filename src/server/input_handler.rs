@@ -414,6 +414,7 @@ impl RdpServerInputHandler for WrdInputHandler {
         let keyboard_handler = Arc::clone(&self.keyboard_handler);
         let session = Arc::clone(&self.session);
         let primary_stream_id = self.primary_stream_id;
+        let coordinate_transformer = Arc::clone(&self.coordinate_transformer); // Clone for consistency
 
         // Spawn async task to handle the event
         // We spawn a task because the trait method is synchronous but portal calls are async
@@ -423,9 +424,7 @@ impl RdpServerInputHandler for WrdInputHandler {
                 portal,
                 keyboard_handler,
                 mouse_handler: Arc::new(Mutex::new(MouseHandler::new())), // Not used for keyboard
-                coordinate_transformer: Arc::new(Mutex::new(
-                    CoordinateTransformer::new(vec![]).unwrap_or_else(|_| panic!("Invalid transformer"))
-                )), // Not used for keyboard
+                coordinate_transformer, // Use actual transformer
                 session,
                 primary_stream_id,
             };

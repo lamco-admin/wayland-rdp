@@ -167,13 +167,16 @@ impl RemoteDesktopManager {
         button: i32,
         pressed: bool,
     ) -> Result<()> {
+        debug!("Injecting pointer button: button={}, pressed={}", button, pressed);
         let proxy = RemoteDesktop::new().await?;
         let state = if pressed {
             KeyState::Pressed
         } else {
             KeyState::Released
         };
-        proxy.notify_pointer_button(session, button, state).await?;
+        proxy.notify_pointer_button(session, button, state).await
+            .context("Portal notify_pointer_button failed")?;
+        debug!("Pointer button injected successfully");
         Ok(())
     }
 
