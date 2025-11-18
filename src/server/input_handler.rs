@@ -285,7 +285,7 @@ impl WrdInputHandler {
                 debug!("Left mouse button pressed");
                 mouse.handle_button_down(MouseButton::Left)?;
                 self.portal
-                    .notify_pointer_button(&session, 1, true) // BTN_LEFT = 1
+                    .notify_pointer_button(&session, 272, true) // BTN_LEFT = 0x110 = 272 (evdev code)
                     .await
                     .map_err(|e| InputError::PortalError(format!("Failed to inject left press: {}", e)))?;
             }
@@ -294,7 +294,7 @@ impl WrdInputHandler {
                 debug!("Left mouse button released");
                 mouse.handle_button_up(MouseButton::Left)?;
                 self.portal
-                    .notify_pointer_button(&session, 1, false)
+                    .notify_pointer_button(&session, 272, false) // BTN_LEFT = 0x110 = 272
                     .await
                     .map_err(|e| InputError::PortalError(format!("Failed to inject left release: {}", e)))?;
             }
@@ -303,7 +303,7 @@ impl WrdInputHandler {
                 debug!("Right mouse button pressed");
                 mouse.handle_button_down(MouseButton::Right)?;
                 self.portal
-                    .notify_pointer_button(&session, 3, true) // BTN_RIGHT = 3
+                    .notify_pointer_button(&session, 273, true) // BTN_RIGHT = 0x111 = 273
                     .await
                     .map_err(|e| InputError::PortalError(format!("Failed to inject right press: {}", e)))?;
             }
@@ -312,7 +312,7 @@ impl WrdInputHandler {
                 debug!("Right mouse button released");
                 mouse.handle_button_up(MouseButton::Right)?;
                 self.portal
-                    .notify_pointer_button(&session, 3, false)
+                    .notify_pointer_button(&session, 273, false) // BTN_RIGHT = 0x111 = 273
                     .await
                     .map_err(|e| InputError::PortalError(format!("Failed to inject right release: {}", e)))?;
             }
@@ -321,7 +321,7 @@ impl WrdInputHandler {
                 debug!("Middle mouse button pressed");
                 mouse.handle_button_down(MouseButton::Middle)?;
                 self.portal
-                    .notify_pointer_button(&session, 2, true) // BTN_MIDDLE = 2
+                    .notify_pointer_button(&session, 274, true) // BTN_MIDDLE = 0x112 = 274
                     .await
                     .map_err(|e| InputError::PortalError(format!("Failed to inject middle press: {}", e)))?;
             }
@@ -330,7 +330,7 @@ impl WrdInputHandler {
                 debug!("Middle mouse button released");
                 mouse.handle_button_up(MouseButton::Middle)?;
                 self.portal
-                    .notify_pointer_button(&session, 2, false)
+                    .notify_pointer_button(&session, 274, false) // BTN_MIDDLE = 0x112 = 274
                     .await
                     .map_err(|e| InputError::PortalError(format!("Failed to inject middle release: {}", e)))?;
             }
@@ -339,7 +339,7 @@ impl WrdInputHandler {
                 debug!("Mouse button 4 pressed");
                 mouse.handle_button_down(MouseButton::Extra1)?;
                 self.portal
-                    .notify_pointer_button(&session, 8, true) // BTN_SIDE = 8
+                    .notify_pointer_button(&session, 275, true) // BTN_SIDE = 8
                     .await
                     .map_err(|e| InputError::PortalError(format!("Failed to inject button4 press: {}", e)))?;
             }
@@ -348,7 +348,7 @@ impl WrdInputHandler {
                 debug!("Mouse button 4 released");
                 mouse.handle_button_up(MouseButton::Extra1)?;
                 self.portal
-                    .notify_pointer_button(&session, 8, false)
+                    .notify_pointer_button(&session, 275, false)
                     .await
                     .map_err(|e| InputError::PortalError(format!("Failed to inject button4 release: {}", e)))?;
             }
@@ -357,7 +357,7 @@ impl WrdInputHandler {
                 debug!("Mouse button 5 pressed");
                 mouse.handle_button_down(MouseButton::Extra2)?;
                 self.portal
-                    .notify_pointer_button(&session, 9, true) // BTN_EXTRA = 9
+                    .notify_pointer_button(&session, 276, true) // BTN_EXTRA = 9
                     .await
                     .map_err(|e| InputError::PortalError(format!("Failed to inject button5 press: {}", e)))?;
             }
@@ -366,7 +366,7 @@ impl WrdInputHandler {
                 debug!("Mouse button 5 released");
                 mouse.handle_button_up(MouseButton::Extra2)?;
                 self.portal
-                    .notify_pointer_button(&session, 9, false)
+                    .notify_pointer_button(&session, 276, false)
                     .await
                     .map_err(|e| InputError::PortalError(format!("Failed to inject button5 release: {}", e)))?;
             }
