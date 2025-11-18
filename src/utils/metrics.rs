@@ -231,7 +231,7 @@ fn percentile(sorted_values: &[f64], p: f64) -> f64 {
 }
 
 /// Histogram statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct HistogramStats {
     pub count: u64,
     pub sum: f64,
