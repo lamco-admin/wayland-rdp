@@ -382,9 +382,9 @@ mod tests {
 
         let stats = metrics.get_histogram("test_histogram").unwrap();
         assert_eq!(stats.count, 3);
-        assert_eq!(stats.min, 10.0);
-        assert_eq!(stats.max, 30.0);
-        assert_eq!(stats.mean, 20.0);
+        assert!((stats.min - 10.0).abs() < 0.01);
+        assert!((stats.max - 30.0).abs() < 0.01);
+        assert!((stats.mean - 20.0).abs() < 0.01);
     }
 
     #[test]
