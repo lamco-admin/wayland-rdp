@@ -121,8 +121,8 @@ impl From<DamageRegion> for Rectangle {
         Self {
             left: damage.x as u16,
             top: damage.y as u16,
-            right: (damage.x + damage.width) as u16,
-            bottom: (damage.y + damage.height) as u16,
+            right: ((damage.x as u32) + damage.width) as u16,
+            bottom: ((damage.y as u32) + damage.height) as u16,
         }
     }
 }
