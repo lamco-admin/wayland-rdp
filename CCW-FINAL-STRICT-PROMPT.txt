@@ -1,0 +1,118 @@
+Repository: https://github.com/lamco-admin/wayland-rdp
+
+⚠️ CRITICAL VERSION CORRECTION ⚠️
+
+YOU ATTEMPTED TO USE ironrdp-server 0.13 - THIS VERSION DOES NOT EXIST!
+
+READ THIS: IRONRDP-DEPENDENCY-RESOLUTION-AUTHORITATIVE.md
+
+VERIFIED FACTS FROM CRATES.IO:
+- Latest ironrdp-server version: 0.9.0 (Sept 2025)
+- Version 0.13 DOES NOT EXIST
+- Versions go: 0.1.0 → 0.9.0 (no 0.10, 0.11, 0.12, 0.13)
+
+YOUR DEPENDENCY CONFLICTS ARE BECAUSE YOU USED A NON-EXISTENT VERSION!
+
+═══════════════════════════════════════════════════════════════════
+
+STRICT INSTRUCTIONS - DO NOT DEVIATE:
+
+1. UPDATE CARGO.TOML WITH EXACT VERSIONS (NO "latest", NO guessing):
+
+[dependencies]
+# RDP - Use EXACTLY 0.9.0 (verified on crates.io)
+ironrdp-server = { version = "=0.9.0", features = ["helper"] }
+
+# Async - Compatible with ironrdp 0.9.0
+tokio = { version = "1.40", features = ["full", "tracing"] }
+tokio-util = { version = "0.7.12", features = ["codec"] }
+tokio-rustls = "0.26.0"
+async-trait = "0.1.80"
+
+# TLS - Compatible versions
+rustls = "0.23.12"
+rustls-pemfile = "2.1.2"
+
+# Portal
+ashpd = { version = "0.12.0", features = ["tokio"] }
+zbus = "4.4.0"
+
+# PipeWire
+pipewire = { version = "0.9.2", features = ["v0_3_77"] }
+libspa = "0.9.2"
+libspa-sys = "0.9.2"
+
+# Image
+image = "0.25.0"
+bytes = "1.7"
+
+# Utils
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+clap = { version = "4.5", features = ["derive"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+
+# Auth
+pam = { version = "0.7.0", optional = true }
+rcgen = "0.13.1"
+time = "0.3.36"
+nix = "0.29.0"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[features]
+default = ["pam-auth"]
+pam-auth = ["pam"]
+
+COPY THIS EXACTLY! DO NOT modify versions!
+
+2. DELETE Cargo.lock
+rm Cargo.lock
+
+3. VERIFY
+cargo clean
+cargo check
+
+Expected: ✅ Success with NO conflicts
+
+4. IF YOU STILL SEE CONFLICTS:
+Stop and report the EXACT error message.
+DO NOT try other versions.
+DO NOT try to "fix" dependencies.
+
+═══════════════════════════════════════════════════════════════════
+
+AFTER CARGO.TOML IS FIXED:
+
+Implement P1-04: PipeWire Integration
+
+Read COMPLETE spec: phase1-tasks/TASK-P1-04-PIPEWIRE-COMPLETE.md
+
+Create:
+- src/pipewire/mod.rs
+- src/pipewire/stream.rs
+- src/pipewire/format.rs
+- src/pipewire/receiver.rs
+- examples/pipewire_frames.rs
+- tests/integration/pipewire_test.rs
+
+Follow spec exactly. It has complete code.
+
+═══════════════════════════════════════════════════════════════════
+
+STRICT RULES:
+1. DO NOT modify dependency versions
+2. DO NOT use "latest" or version ranges
+3. DO NOT add dependencies not in this list
+4. USE EXACT VERSIONS with "=" prefix
+5. If error, STOP and report, DO NOT guess
+
+Work overnight. Fix Cargo.toml first. Then implement PipeWire.
+
+🌙
