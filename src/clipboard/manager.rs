@@ -120,7 +120,7 @@ impl ClipboardManager {
 
         let (event_tx, event_rx) = mpsc::channel(100);
 
-        let manager = Self {
+        let mut manager = Self {
             config,
             converter,
             transfer_engine,
@@ -398,7 +398,7 @@ mod tests {
     #[tokio::test]
     async fn test_clipboard_manager_creation() {
         let config = ClipboardConfig::default();
-        let manager = ClipboardManager::new(config).await.unwrap();
+        let mut manager = ClipboardManager::new(config).await.unwrap();
 
         assert!(manager.event_tx.capacity() > 0);
     }
@@ -406,7 +406,7 @@ mod tests {
     #[tokio::test]
     async fn test_rdp_format_list_handling() {
         let config = ClipboardConfig::default();
-        let manager = ClipboardManager::new(config).await.unwrap();
+        let mut manager = ClipboardManager::new(config).await.unwrap();
 
         let formats = vec![ClipboardFormat {
             format_id: 13,
@@ -423,7 +423,7 @@ mod tests {
     #[tokio::test]
     async fn test_portal_format_list_handling() {
         let config = ClipboardConfig::default();
-        let manager = ClipboardManager::new(config).await.unwrap();
+        let mut manager = ClipboardManager::new(config).await.unwrap();
 
         let mime_types = vec!["text/plain".to_string()];
 
@@ -440,7 +440,7 @@ mod tests {
             loop_detection_window_ms: 1000,
             ..Default::default()
         };
-        let manager = ClipboardManager::new(config).await.unwrap();
+        let mut manager = ClipboardManager::new(config).await.unwrap();
 
         let formats = vec![ClipboardFormat {
             format_id: 13,
@@ -491,7 +491,7 @@ mod tests {
             max_data_size: 1024,
             ..Default::default()
         };
-        let manager = ClipboardManager::new(config).await.unwrap();
+        let mut manager = ClipboardManager::new(config).await.unwrap();
 
         // Send data within limit
         let data = vec![0u8; 512];
