@@ -67,7 +67,7 @@ pub use input_handler::WrdInputHandler;
 
 use anyhow::{Context, Result};
 use ironrdp_pdu::rdp::capability_sets::server_codecs_capabilities;
-use ironrdp_server::RdpServer;
+use ironrdp_server::{Credentials, RdpServer};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -247,6 +247,23 @@ impl WrdServer {
 
         info!("Server is ready and listening for RDP connections");
         info!("Waiting for clients to connect...");
+
+        // Set credentials for RDP authentication
+        // Even with auth_method="none", we need to set empty/test credentials
+        // for IronRDP to complete the protocol handshake properly
+        let credentials = if self.config.security.auth_method == "none" {
+            Some(Credentials {
+                username: String::new(),
+                password: String::new(),
+                domain: None,
+            })
+        } else {
+            // For future authentication support
+            None
+        };
+
+        self.rdp_server.set_credentials(credentials);
+        info!("Authentication configured: {}", self.config.security.auth_method);
 
         // Run the IronRDP server
         let result = self.rdp_server
