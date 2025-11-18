@@ -1,0 +1,67 @@
+[server]
+listen_addr = "0.0.0.0:3389"
+max_connections = 5
+session_timeout = 0
+use_portals = true
+
+[security]
+cert_path = "certs/cert.pem"
+key_path = "certs/key.pem"
+enable_nla = false
+auth_method = "none"
+require_tls_13 = false
+
+[video]
+encoder = "auto"
+vaapi_device = "/dev/dri/renderD128"
+target_fps = 30
+bitrate = 4000
+damage_tracking = true
+cursor_mode = "metadata"
+
+[video_pipeline.processor]
+target_fps = 30
+max_queue_depth = 30
+adaptive_quality = true
+damage_threshold = 0.05
+drop_on_full_queue = true
+enable_metrics = true
+
+[video_pipeline.dispatcher]
+channel_size = 30
+priority_dispatch = true
+max_frame_age_ms = 150
+enable_backpressure = true
+high_water_mark = 0.8
+low_water_mark = 0.5
+load_balancing = true
+
+[video_pipeline.converter]
+buffer_pool_size = 8
+enable_simd = true
+damage_threshold = 0.75
+enable_statistics = true
+
+[input]
+use_libei = true
+keyboard_layout = "auto"
+enable_touch = false
+
+[clipboard]
+enabled = true
+max_size = 10485760
+allowed_types = []
+
+[multimon]
+enabled = true
+max_monitors = 4
+
+[performance]
+encoder_threads = 0
+network_threads = 0
+buffer_pool_size = 16
+zero_copy = true
+
+[logging]
+level = "info"
+metrics = true
