@@ -41,8 +41,8 @@ This document provides the complete system architecture for the Wayland Remote D
 └───────┬──────────────┬────────────┬──────────────┬─────────┘
         │              │            │              │
         │              │            │              │
-     Video          Input      Clipboard        Audio
-     Stream         Events      Data            Stream
+     Bitmap         Input      Clipboard        Audio
+     Updates        Events      Data            Stream
         │              │            │              │
         │              │            │              │
         └──────────────┴────────────┴──────────────┘
@@ -55,34 +55,35 @@ This document provides the complete system architecture for the Wayland Remote D
 │                  WRD-SERVER (Rust Binary)                     │
 │                                                               │
 │  ┌─────────────────────────────────────────────────────────┐ │
-│  │           CONNECTION MANAGER LAYER                       │ │
-│  │  • TLS Termination                                       │ │
-│  │  • NLA Authentication                                    │ │
-│  │  • Session Management                                    │ │
-│  │  • Resource Tracking                                     │ │
+│  │              IRONRDP SERVER LAYER                        │ │
+│  │  • TLS Termination & NLA Authentication                 │ │
+│  │  • Protocol State Machine                                │ │
+│  │  • Capability Negotiation                                │ │
+│  │  • Channel Management (Graphics, Input, Clipboard)       │ │
+│  │  • Bitmap Encoding & Compression                         │ │
 │  └────────┬──────────────────────────────────┬──────────────┘ │
 │           │                                  │                │
 │  ┌────────▼──────────────────────────────────▼──────────────┐ │
-│  │         RDP PROTOCOL HANDLER LAYER                       │ │
-│  │  • Protocol State Machine                                │ │
-│  │  • Capability Negotiation                                │ │
-│  │  • Channel Multiplexing                                  │ │
-│  │  • PDU Encoding/Decoding                                 │ │
-│  └─┬──────────┬─────────────┬──────────┬────────────┬───────┘ │
-│    │          │             │          │            │         │
-│ ┌──▼────┐ ┌──▼────┐ ┌──────▼───┐ ┌────▼──────┐ ┌──▼──────┐  │
-│ │Video  │ │Input  │ │Clipboard │ │Multi-Mon  │ │Audio    │  │
-│ │Channel│ │Channel│ │ Channel  │ │ Manager   │ │(Phase2) │  │
-│ └──┬────┘ └──┬────┘ └──────┬───┘ └────┬──────┘ └──┬──────┘  │
-│    │         │             │          │            │         │
-│ ┌──▼──────┐ ┌▼────────┐ ┌─▼──────┐ ┌─▼─────┐   ┌─▼──────┐  │
-│ │ Video   │ │ Input   │ │Clipbrd │ │Monitor│   │ Audio  │  │
-│ │Pipeline │ │ Handler │ │Manager │ │Manager│   │Pipeline│  │
-│ └──┬──────┘ └──┬──────┘ └─┬──────┘ └───────┘   └────────┘  │
-│    │           │           │                                 │
-└────┼───────────┼───────────┼─────────────────────────────────┘
-     │           │           │
-┌────▼───────────▼───────────▼─────────────────────────────────┐
+│  │            TRAIT IMPLEMENTATION LAYER                    │ │
+│  │  • DisplayUpdateHandler (frame processing)               │ │
+│  │  • InputHandler (keyboard/mouse events)                  │ │
+│  │  • ClipboardHandler (cliprdr protocol)                   │ │
+│  │  • SessionHandler (connection lifecycle)                 │ │
+│  └─┬──────────┬─────────────┬──────────┬────────────────────┘ │
+│    │          │             │          │                     │
+│ ┌──▼────────┐ ┌▼──────────┐ ┌─▼──────────┐ ┌──────────────┐ │
+│ │  Bitmap   │ │  Input    │ │ Clipboard  │ │Multi-Monitor │ │
+│ │ Converter │ │ Forwarder │ │  Manager   │ │  Manager     │ │
+│ └──┬────────┘ └──┬────────┘ └──────┬─────┘ └──────┬───────┘ │
+│    │            │                  │               │         │
+│ ┌──▼──────────┐ ┌▼──────────┐ ┌───▼──────┐ ┌─────▼────────┐ │
+│ │ PipeWire    │ │Portal     │ │Clipboard │ │ Monitor      │ │
+│ │ Receiver    │ │Interface  │ │ Portal   │ │ Discovery    │ │
+│ └──┬──────────┘ └──┬────────┘ └────┬─────┘ └──────────────┘ │
+│    │               │               │                        │
+└────┼───────────────┼───────────────┼────────────────────────┘
+     │               │               │
+┌────▼───────────────▼───────────────▼─────────────────────────┐
 │              XDG-DESKTOP-PORTAL (D-Bus)                       │
 │                                                               │
 │  ┌────────────────┐  ┌──────────────────┐  ┌──────────────┐ │
@@ -110,11 +111,10 @@ This document provides the complete system architecture for the Wayland Remote D
 ### Key Architectural Layers
 
 1. **Network Layer:** TLS-encrypted TCP connections
-2. **Protocol Layer:** RDP 10.x protocol handling
-3. **Channel Layer:** Multiplexed data channels (video, input, clipboard, audio)
-4. **Processing Layer:** Video encoding, input translation, clipboard conversion
-5. **Integration Layer:** Portal-based access to compositor resources
-6. **System Layer:** Wayland compositor, PipeWire, libei
+2. **IronRDP Server Layer:** Complete RDP protocol implementation
+3. **Trait Implementation Layer:** Bridge between IronRDP and system
+4. **Portal Integration Layer:** Access to compositor resources
+5. **System Layer:** Wayland compositor, PipeWire, libei
 
 ---
 
@@ -122,126 +122,154 @@ This document provides the complete system architecture for the Wayland Remote D
 
 ### Core Components
 
-#### 1. Server Component
+#### 1. IronRDP Server Component
 **Location:** `src/server/`
 
 **Responsibilities:**
-- Accept TCP connections
-- Manage server lifecycle
-- Coordinate all subsystems
-- Handle graceful shutdown
+- Accept TCP connections on port 3389
+- Manage IronRDP server lifecycle
+- Handle protocol state machine
+- Coordinate trait implementations
 
 **Sub-components:**
-- **ConnectionManager:** Manages all active connections
-- **SessionManager:** Tracks session state per connection
-- **ResourceTracker:** Monitors resource usage
+- **IronRdpServer:** Main RDP server (from ironrdp-server crate)
+- **SessionManager:** Tracks active RDP sessions
+- **CapabilityManager:** Negotiate client capabilities
 
 **Interfaces:**
 ```rust
-pub struct Server {
-    config: Arc<Config>,
-    listener: TcpListener,
-    connection_manager: Arc<ConnectionManager>,
-    portal_manager: Arc<PortalManager>,
-    security_manager: Arc<SecurityManager>,
-    shutdown_tx: broadcast::Sender<()>,
+pub struct WrdServer {
+    iron_server: ironrdp_server::Server,
+    display_handler: Arc<DisplayUpdateHandler>,
+    input_handler: Arc<InputHandler>,
+    clipboard_handler: Arc<ClipboardHandler>,
+    session_handler: Arc<SessionHandler>,
 }
 
-impl Server {
+impl WrdServer {
     pub async fn new(config: Config) -> Result<Self>;
     pub async fn run(self) -> Result<()>;
-    async fn shutdown(&self) -> Result<()>;
+    pub async fn handle_connection(stream: TcpStream) -> Result<()>;
 }
 ```
 
-#### 2. Security Component
-**Location:** `src/security/`
+#### 2. Display Update Handler
+**Location:** `src/display/`
 
 **Responsibilities:**
-- TLS configuration and termination
-- Certificate management
-- User authentication (PAM)
-- Credential validation
+- Implement IronRDP's DisplayUpdateHandler trait
+- Convert PipeWire frames to RDP bitmaps
+- Manage surface updates and damage tracking
+- Handle cursor updates
 
 **Sub-components:**
-- **TlsManager:** TLS 1.3 configuration
-- **CertificateManager:** Certificate loading and generation
-- **Authenticator:** PAM-based authentication
-- **TokenManager:** Session token generation
+- **BitmapConverter:** Convert BGRA/RGB to RDP bitmap format
+- **DamageTracker:** Track changed regions
+- **CursorManager:** Extract and send cursor metadata
 
 **Interfaces:**
 ```rust
-pub struct SecurityManager {
-    tls_config: Arc<TlsConfig>,
-    cert_manager: CertificateManager,
-    authenticator: Authenticator,
+pub struct DisplayUpdateHandler {
+    pipewire_receiver: Arc<PipeWireReceiver>,
+    bitmap_converter: BitmapConverter,
+    damage_tracker: DamageTracker,
+    cursor_manager: CursorManager,
 }
 
-impl SecurityManager {
-    pub async fn new(config: &Config) -> Result<Self>;
-    pub fn create_acceptor(&self) -> Result<TlsAcceptor>;
-    pub async fn authenticate(&self, username: &str, password: &str) -> Result<bool>;
+#[async_trait]
+impl ironrdp_server::DisplayUpdateHandler for DisplayUpdateHandler {
+    async fn handle_update(&mut self, surface_id: u32) -> Result<UpdatePdu>;
+    async fn get_cursor_update(&mut self) -> Result<Option<CursorPdu>>;
 }
 ```
 
-#### 3. RDP Protocol Component
-**Location:** `src/rdp/`
+#### 3. Input Handler Component
+**Location:** `src/input/`
 
 **Responsibilities:**
-- RDP protocol state machine
-- Capability negotiation
-- Channel management
-- PDU encoding/decoding
+- Implement IronRDP's InputHandler trait
+- Forward input events to portal
+- Translate RDP input to Wayland events
+- Handle keyboard and mouse events
 
 **Sub-components:**
-- **RdpServer:** Main protocol handler (wraps IronRDP)
-- **CapabilityNegotiator:** Advertise and negotiate capabilities
-- **ChannelManager:** Multiplex data channels
+- **InputForwarder:** Send events via RemoteDesktop portal
+- **KeyboardTranslator:** RDP scancode to keysym conversion
+- **PointerTranslator:** Mouse coordinate transformation
 
 **Interfaces:**
 ```rust
-pub struct RdpServer {
-    session_id: SessionId,
-    state: RdpState,
-    channels: HashMap<ChannelId, Box<dyn Channel>>,
-    encoder_tx: mpsc::Sender<EncodedFrame>,
-    input_rx: mpsc::Receiver<RdpInputEvent>,
+pub struct InputHandler {
+    portal: Arc<RemoteDesktopPortal>,
+    keyboard_translator: KeyboardTranslator,
+    pointer_translator: PointerTranslator,
 }
 
-impl RdpServer {
-    pub async fn new(stream: TlsStream) -> Result<Self>;
-    pub async fn run(&mut self) -> Result<()>;
-    pub async fn send_frame(&mut self, frame: EncodedFrame) -> Result<()>;
+#[async_trait]
+impl ironrdp_server::InputHandler for InputHandler {
+    async fn handle_keyboard(&mut self, event: KeyboardEvent) -> Result<()>;
+    async fn handle_mouse(&mut self, event: MouseEvent) -> Result<()>;
+    async fn handle_sync(&mut self, flags: SyncFlags) -> Result<()>;
 }
 ```
 
-#### 4. Portal Integration Component
+#### 4. Clipboard Handler Component
+**Location:** `src/clipboard/`
+
+**Responsibilities:**
+- Implement IronRDP's ClipboardHandler trait
+- Handle CLIPRDR channel protocol
+- Bidirectional clipboard synchronization
+- Format conversion between RDP and MIME types
+
+**Sub-components:**
+- **ClipboardManager:** Manage clipboard state
+- **FormatMapper:** Map RDP formats to MIME types
+- **ClipboardPortal:** Interface with clipboard portal
+
+**Interfaces:**
+```rust
+pub struct ClipboardHandler {
+    portal: Arc<ClipboardPortal>,
+    format_mapper: FormatMapper,
+    state: Arc<RwLock<ClipboardState>>,
+}
+
+#[async_trait]
+impl ironrdp_server::ClipboardHandler for ClipboardHandler {
+    async fn handle_format_list(&mut self, formats: Vec<ClipboardFormat>) -> Result<()>;
+    async fn handle_data_request(&mut self, format_id: u32) -> Result<Vec<u8>>;
+    async fn handle_data_response(&mut self, data: Vec<u8>) -> Result<()>;
+}
+```
+
+#### 5. Portal Integration Component
 **Location:** `src/portal/`
 
 **Responsibilities:**
 - D-Bus connection management
-- ScreenCast portal interaction
-- RemoteDesktop portal interaction
-- Clipboard portal interaction
+- ScreenCast portal for video capture
+- RemoteDesktop portal for input injection
+- Clipboard portal for clipboard access
 - Session lifecycle management
 
 **Sub-components:**
-- **ScreenCastManager:** Video stream acquisition
-- **RemoteDesktopManager:** Input injection + video
-- **ClipboardManager:** Clipboard access
+- **ScreenCastPortal:** Video stream acquisition
+- **RemoteDesktopPortal:** Input injection + video
+- **ClipboardPortal:** Clipboard data access
 - **SessionManager:** Portal session lifecycle
 
 **Interfaces:**
 ```rust
 pub struct PortalManager {
     connection: zbus::Connection,
-    screencast: Arc<ScreenCastManager>,
-    remote_desktop: Arc<RemoteDesktopManager>,
-    clipboard: Arc<ClipboardManager>,
+    screencast: Arc<ScreenCastPortal>,
+    remote_desktop: Arc<RemoteDesktopPortal>,
+    clipboard: Arc<ClipboardPortal>,
 }
 
 impl PortalManager {
-    pub async fn new(config: &Arc<Config>) -> Result<Self>;
+    pub async fn new(config: &Config) -> Result<Self>;
     pub async fn create_session(&self) -> Result<PortalSessionHandle>;
 }
 
@@ -252,135 +280,66 @@ pub struct PortalSessionHandle {
 }
 ```
 
-#### 5. PipeWire Component
+#### 6. PipeWire Receiver Component
 **Location:** `src/pipewire/`
 
 **Responsibilities:**
 - PipeWire connection using FD from portal
-- Stream negotiation (format, resolution)
+- Stream negotiation (BGRA/RGB format)
 - Frame reception and buffering
-- DMA-BUF handling (zero-copy)
+- DMA-BUF handling for zero-copy
 
 **Sub-components:**
-- **StreamManager:** PipeWire stream lifecycle
-- **FrameReceiver:** Async frame reception
+- **StreamReceiver:** PipeWire stream management
+- **FrameBuffer:** Frame queue management
 - **FormatNegotiator:** Video format selection
 
 **Interfaces:**
 ```rust
-pub struct PipeWireStream {
+pub struct PipeWireReceiver {
     fd: RawFd,
     stream_id: u32,
     format: VideoFormat,
-    frame_tx: mpsc::Sender<VideoFrame>,
+    frame_queue: Arc<Mutex<VecDeque<VideoFrame>>>,
 }
 
-impl PipeWireStream {
+impl PipeWireReceiver {
     pub async fn new(fd: RawFd, stream_info: &StreamInfo) -> Result<Self>;
     pub async fn start(&mut self) -> Result<()>;
-    pub async fn receive_frames(&mut self) -> Result<()>;
+    pub async fn get_frame(&mut self) -> Result<VideoFrame>;
 }
 ```
 
-#### 6. Video Processing Component
-**Location:** `src/video/`
+#### 7. Bitmap Converter Component
+**Location:** `src/bitmap/`
 
 **Responsibilities:**
-- Video encoding pipeline orchestration
-- Encoder selection and management
-- Damage tracking
-- Cursor extraction
-- Format conversion
-- Frame scaling
+- Convert PipeWire frames to RDP bitmap format
+- Handle pixel format conversion (BGRA → RGB)
+- Apply compression (RLE, JPEG, etc.)
+- Manage bitmap cache
 
 **Sub-components:**
-- **VideoPipeline:** Pipeline orchestrator
-- **EncoderManager:** H.264 encoder (VA-API or OpenH264)
-- **DamageTracker:** Incremental update tracking
-- **CursorManager:** Cursor metadata handling
-- **FormatConverter:** Pixel format conversion
-- **FrameScaler:** Resolution scaling
+- **PixelConverter:** BGRA/RGB format conversion
+- **Compressor:** RDP bitmap compression
+- **BitmapCache:** Cache frequently used bitmaps
 
 **Interfaces:**
 ```rust
-pub struct VideoPipeline {
-    encoder: Box<dyn VideoEncoder>,
-    damage_tracker: DamageTracker,
-    cursor_manager: CursorManager,
-    frame_rx: mpsc::Receiver<VideoFrame>,
-    encoded_tx: mpsc::Sender<EncodedFrame>,
+pub struct BitmapConverter {
+    pixel_converter: PixelConverter,
+    compressor: Compressor,
+    cache: BitmapCache,
 }
 
-#[async_trait]
-pub trait VideoEncoder: Send + Sync {
-    async fn encode(&mut self, frame: &VideoFrame) -> Result<EncodedFrame>;
-    async fn flush(&mut self) -> Result<Vec<EncodedFrame>>;
-    fn set_bitrate(&mut self, kbps: u32) -> Result<()>;
+impl BitmapConverter {
+    pub fn convert_frame(&mut self, frame: &VideoFrame) -> Result<RdpBitmap>;
+    pub fn apply_compression(&mut self, bitmap: &mut RdpBitmap) -> Result<()>;
+    pub fn cache_bitmap(&mut self, id: u32, bitmap: RdpBitmap) -> Result<()>;
 }
 ```
 
-#### 7. Input Handling Component
-**Location:** `src/input/`
-
-**Responsibilities:**
-- RDP input event translation
-- Keyboard event injection
-- Pointer event injection
-- Touch event injection (future)
-- Coordinate transformation
-
-**Sub-components:**
-- **InputTranslator:** RDP ↔ Wayland translation
-- **KeyboardHandler:** Keyboard events via portal/libei
-- **PointerHandler:** Mouse events via portal/libei
-- **TouchHandler:** Touch events (Phase 2 or future)
-
-**Interfaces:**
-```rust
-pub struct InputManager {
-    translator: Arc<InputTranslator>,
-    keyboard: Arc<KeyboardHandler>,
-    pointer: Arc<PointerHandler>,
-}
-
-impl InputManager {
-    pub async fn new(
-        config: Arc<Config>,
-        remote_desktop: Arc<RemoteDesktopManager>,
-    ) -> Result<Self>;
-
-    pub async fn handle_event(&self, event: RdpInputEvent) -> Result<()>;
-}
-```
-
-#### 8. Clipboard Component
-**Location:** `src/clipboard/`
-
-**Responsibilities:**
-- Bidirectional clipboard synchronization
-- Format conversion (RDP ↔ MIME types)
-- Size validation
-- Type filtering
-
-**Sub-components:**
-- **ClipboardSyncManager:** Sync orchestrator
-- **FormatConverter:** RDP format ↔ MIME type conversion
-
-**Interfaces:**
-```rust
-pub struct ClipboardManager {
-    rdp_channel: Arc<ClipboardChannel>,
-    portal: Arc<ClipboardPortal>,
-    sync_state: Arc<RwLock<ClipboardState>>,
-}
-
-impl ClipboardManager {
-    pub async fn sync_to_server(&mut self, data: Vec<u8>, format: u32) -> Result<()>;
-    pub async fn sync_to_client(&mut self, mime_type: &str) -> Result<()>;
-}
-```
-
-#### 9. Multi-Monitor Component
+#### 8. Multi-Monitor Component
 **Location:** `src/multimon/`
 
 **Responsibilities:**
@@ -431,47 +390,48 @@ impl MultiMonitorManager {
          │ (DMA-BUF or SHM)
          ▼
 ┌─────────────────┐
-│  Frame Receiver │
-│  (PipeWire API) │
+│ PipeWire        │
+│ Receiver        │
 └────────┬────────┘
          │
          │ VideoFrame
-         │ (BGRA/NV12)
+         │ (BGRA/RGB)
+         ▼
+┌─────────────────┐
+│Display Update   │
+│Handler (Trait)  │
+└────────┬────────┘
+         │
+         │ Frame Processing
          ▼
 ┌─────────────────┐
 │ Damage Tracker  │
 │ (Detect changes)│
 └────────┬────────┘
          │
-         │ VideoFrame + DamageRects
+         │ Changed Regions
          ▼
 ┌─────────────────┐
-│Format Converter │
-│  (BGRA→NV12)    │
+│Bitmap Converter │
+│  (BGRA→RGB)     │
 └────────┬────────┘
          │
-         │ VideoFrame (NV12)
+         │ RDP Bitmap
          ▼
 ┌─────────────────┐
 │ Cursor Manager  │
 │ (Extract cursor)│
 └────────┬────────┘
          │
-         │ VideoFrame + CursorInfo
+         │ Bitmap + Cursor
          ▼
 ┌─────────────────┐
-│  H.264 Encoder  │
-│ (VA-API/OpenH264│
-└────────┬────────┘
-         │
-         │ EncodedFrame (NAL units)
-         ▼
-┌─────────────────┐
-│ RDP Graphics    │
-│    Channel      │
+│ IronRDP Server  │
+│ (Encode & Send) │
 └────────┬────────┘
          │
          │ RDP PDUs
+         │ (Compressed bitmaps)
          ▼
 ┌─────────────────┐
 │  TLS Stream     │
@@ -502,25 +462,25 @@ impl MultiMonitorManager {
          │ RDP PDU
          ▼
 ┌─────────────────┐
-│  RDP Input      │
-│   Channel       │
+│ IronRDP Server  │
+│ (Decode PDU)    │
 └────────┬────────┘
          │
-         │ RdpInputEvent
+         │ Input Event
          ▼
 ┌─────────────────┐
-│ Input Translator│
-│ (RDP→Wayland)   │
+│  Input Handler  │
+│    (Trait)      │
 └────────┬────────┘
          │
-         │ Translated Event
+         │ Keyboard/Mouse
          ▼
 ┌─────────────────┐
-│ Input Handler   │
-│(Keyboard/Pointer│
+│Input Forwarder  │
+│ (Translate)     │
 └────────┬────────┘
          │
-         │ (Portal API)
+         │ Portal Events
          ▼
 ┌─────────────────┐
 │RemoteDesktop    │
@@ -552,25 +512,18 @@ CLIENT→SERVER (Copy from client)
 │   (Ctrl+C)      │
 └────────┬────────┘
          │
-         │ Clipboard Format List
+         │ CLIPRDR Format List
          ▼
 ┌─────────────────┐
-│  Clipboard      │
-│   Channel       │
+│ IronRDP Server  │
+│ (CLIPRDR Proto) │
 └────────┬────────┘
          │
-         │ Format Request
+         │ Format List Event
          ▼
 ┌─────────────────┐
-│   RDP Client    │
-│ (Clipboard Data)│
-└────────┬────────┘
-         │
-         │ Clipboard Data PDU
-         ▼
-┌─────────────────┐
-│ Clipboard       │
-│   Manager       │
+│Clipboard Handler│
+│    (Trait)      │
 └────────┬────────┘
          │
          │ Format Conversion
@@ -613,17 +566,16 @@ SERVER→CLIENT (Copy from server)
          │ Change notification
          ▼
 ┌─────────────────┐
-│ Clipboard       │
-│   Manager       │
+│Clipboard Handler│
+│    (Trait)      │
 └────────┬────────┘
          │
-         │ Read clipboard
          │ Format Conversion
          │ (text/plain → CF_UNICODETEXT)
          ▼
 ┌─────────────────┐
-│  Clipboard      │
-│   Channel       │
+│ IronRDP Server  │
+│ (CLIPRDR Proto) │
 └────────┬────────┘
          │
          │ Format List PDU
@@ -642,43 +594,38 @@ SERVER→CLIENT (Copy from server)
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│              TOKIO ASYNC RUNTIME                         │
-│          (Multi-threaded work-stealing)                  │
-└────┬──────────────┬──────────────┬──────────────┬────────┘
-     │              │              │              │
-     │              │              │              │
-┌────▼─────┐  ┌────▼─────┐  ┌────▼─────┐  ┌────▼─────┐
-│ Network  │  │ Network  │  │ Network  │  │ Network  │
-│ Worker 1 │  │ Worker 2 │  │ Worker 3 │  │ Worker 4 │
-└──────────┘  └──────────┘  └──────────┘  └──────────┘
-     │              │              │              │
-     │   Handle RDP Protocol I/O                  │
-     │   TLS operations                            │
-     │   Channel multiplexing                      │
-     └──────────────┴──────────────┴──────────────┘
+│              IRONRDP SERVER RUNTIME                      │
+│          (Manages its own threading)                     │
+└────┬──────────────┬──────────────┬──────────────────────┘
+     │              │              │
+     │              │              │
+┌────▼─────┐  ┌────▼─────┐  ┌────▼─────┐
+│ IronRDP  │  │ IronRDP  │  │ IronRDP  │
+│ Worker 1 │  │ Worker 2 │  │ Worker 3 │
+└──────────┘  └──────────┘  └──────────┘
+     │              │              │
+     │   Handle RDP Protocol       │
+     │   TLS operations            │
+     │   Channel multiplexing      │
+     │   Bitmap encoding           │
+     └──────────────┴──────────────┘
                     │
-                    │ Async channels
+                    │ Trait callbacks
                     ▼
 ┌──────────────────────────────────────────────────────────┐
-│         DEDICATED ENCODING THREAD POOL                   │
-│         (Blocking operations, configurable size)         │
+│              TOKIO ASYNC RUNTIME                         │
+│          (For portal and PipeWire)                       │
 └────┬──────────────┬──────────────┬──────────────────────┘
      │              │              │
 ┌────▼─────┐  ┌────▼─────┐  ┌────▼─────┐
-│ Encoder  │  │ Encoder  │  │ Encoder  │
-│ Thread 1 │  │ Thread 2 │  │ Thread 3 │
-│(Monitor1)│  │(Monitor2)│  │ (Spare)  │
+│ Portal   │  │ PipeWire │  │ Clipboard│
+│ Worker   │  │ Worker   │  │  Worker  │
 └──────────┘  └──────────┘  └──────────┘
      │              │              │
-     │   H.264 encoding (VA-API or OpenH264)
-     │   Format conversion
-     │   CPU/GPU intensive work
+     │   D-Bus operations          │
+     │   Frame reception           │
+     │   Clipboard sync            │
      └──────────────┴──────────────┘
-                    │
-                    │ Crossbeam channels
-                    ▼
-            Network Workers
-            (send to RDP client)
 ```
 
 ### Concurrency Primitives
@@ -686,24 +633,24 @@ SERVER→CLIENT (Copy from server)
 #### Async Channels (tokio::sync::mpsc)
 **Use for:** Inter-task communication within async context
 ```rust
-// Video frames from PipeWire to encoder
+// Video frames from PipeWire to display handler
 let (frame_tx, frame_rx) = mpsc::channel::<VideoFrame>(16);
 
-// Encoded frames from encoder to RDP
-let (encoded_tx, encoded_rx) = mpsc::channel::<EncodedFrame>(32);
+// Clipboard events between handler and portal
+let (clipboard_tx, clipboard_rx) = mpsc::channel::<ClipboardEvent>(32);
 
-// Input events from RDP to input handler
-let (input_tx, input_rx) = mpsc::channel::<RdpInputEvent>(64);
+// Portal events to IronRDP trait implementations
+let (portal_tx, portal_rx) = mpsc::channel::<PortalEvent>(64);
 ```
 
 #### Sync Channels (crossbeam_channel)
-**Use for:** Communication between async and sync (blocking) threads
+**Use for:** Communication between IronRDP threads and async tasks
 ```rust
-// Frames to blocking encoder threads
-let (encoder_tx, encoder_rx) = bounded::<VideoFrame>(8);
+// Frames from async PipeWire to IronRDP display handler
+let (frame_tx, frame_rx) = bounded::<VideoFrame>(8);
 
-// Encoded frames from blocking threads
-let (encoded_tx, encoded_rx) = bounded::<EncodedFrame>(16);
+// Input events from IronRDP to async portal
+let (input_tx, input_rx) = bounded::<InputEvent>(16);
 ```
 
 #### Shared State (Arc<RwLock<T>>)
@@ -744,32 +691,38 @@ AtomicBool
 
 ### Task Spawning Strategy
 
-#### Long-Lived Tasks
+#### IronRDP Server Task
 ```rust
-// Spawn once at startup, run until shutdown
+// IronRDP manages its own thread pool
+ironrdp_server::Server::new(config)
+    .with_display_handler(display_handler)
+    .with_input_handler(input_handler)
+    .with_clipboard_handler(clipboard_handler)
+    .run(listener)
+    .await?;
+```
+
+#### Portal Tasks
+```rust
+// Spawn once at startup for portal communication
 tokio::spawn(async move {
-    portal_session.run().await
+    portal_manager.run().await
 });
 
 tokio::spawn(async move {
-    video_pipeline.run().await
+    pipewire_receiver.run().await
 });
 ```
 
-#### Per-Connection Tasks
+#### Per-Connection Trait Implementations
 ```rust
-// Spawn per client connection
-tokio::spawn(async move {
-    rdp_server.handle_session(stream).await
-});
-```
-
-#### Blocking Operations
-```rust
-// Offload to dedicated thread pool
-tokio::task::spawn_blocking(move || {
-    encoder.encode_sync(frame)
-}).await?;
+// IronRDP calls trait methods per connection
+// No manual spawning needed - IronRDP handles it
+impl DisplayUpdateHandler for MyHandler {
+    async fn handle_update(&mut self, surface_id: u32) -> Result<UpdatePdu> {
+        // Called by IronRDP when needed
+    }
+}
 ```
 
 ---
@@ -829,7 +782,7 @@ tokio::task::spawn_blocking(move || {
 
 ```
 ┌────────────────────────────────────────────────┐
-│         RDP Connection                         │
+│         IronRDP Server Connection              │
 └───┬────────────┬────────────┬──────────────┬───┘
     │            │            │              │
 ┌───▼──────┐ ┌──▼──────┐ ┌───▼────────┐ ┌───▼──────────┐
@@ -838,8 +791,8 @@ tokio::task::spawn_blocking(move || {
 │(RDPGFX)  │ │(RDPEI)  │ │ (CLIPRDR)  │ │ (RDPSND)     │
 └──────────┘ └─────────┘ └────────────┘ └──────────────┘
     │            │            │              │
-    │ H.264      │ Keyboard   │ Text/Image   │ Opus
-    │ Frames     │ Mouse      │ Data         │ Audio
+    │ Bitmap     │ Keyboard   │ Text/Image   │ Opus
+    │ Updates    │ Mouse      │ Data         │ Audio
     │            │ Touch      │              │
 ```
 
@@ -910,7 +863,7 @@ tokio::task::spawn_blocking(move || {
 └─────────────┘
 ```
 
-### Video Pipeline State Machine
+### Display Pipeline State Machine
 
 ```
 ┌─────────┐
@@ -937,32 +890,32 @@ tokio::task::spawn_blocking(move || {
 │ NEGOTIATE   │
 └────┬────────┘
      │
-     │ Format Agreed
+     │ Format Agreed (BGRA/RGB)
      ▼
 ┌─────────────┐
-│ ENCODER_    │
-│   INIT      │
+│ READY       │
 └────┬────────┘
      │
-     │ Encoder Ready
+     │ Start Streaming
      ▼
 ┌─────────────┐
 │ STREAMING   │◄──────┐
 └────┬────────┘       │
      │                │
-     │ Process Frame  │ Next Frame
+     │ Frame Ready    │ Next Frame
      ▼                │
 ┌─────────────┐       │
-│ ENCODING    ├───────┘
+│ CONVERTING  │       │
+│ TO BITMAP   ├───────┘
 └────┬────────┘
      │
      │ Shutdown Signal
      ▼
 ┌─────────────┐
-│ FLUSHING    │
+│ STOPPING    │
 └────┬────────┘
      │
-     │ Flush Complete
+     │ Resources Released
      ▼
 ┌─────────────┐
 │ STOPPED     │
@@ -989,19 +942,18 @@ tokio::task::spawn_blocking(move || {
 └────────────┬─────────────────────┘
              │
              ├──► ConfigError
-             ├──► SecurityError
+             ├──► IronRdpError
+             │    ├─► ProtocolError
              │    ├─► TlsError
              │    └─► AuthError
-             ├──► RdpError
-             │    ├─► ProtocolError
-             │    ├─► ChannelError
-             │    └─► CodecError
+             ├──► DisplayError
+             │    ├─► BitmapError
+             │    └─► FrameError
              ├──► PortalError
              │    ├─► DbusError
              │    └─► PermissionDenied
              ├──► PipeWireError
-             ├──► VideoError
-             │    └─► EncodingError
+             ├──► ClipboardError
              └──► InputError
 ```
 
@@ -1010,12 +962,12 @@ tokio::task::spawn_blocking(move || {
 ```rust
 // Library error types (thiserror)
 #[derive(Debug, thiserror::Error)]
-pub enum VideoError {
-    #[error("Encoder initialization failed: {0}")]
-    EncoderInit(String),
+pub enum DisplayError {
+    #[error("Bitmap conversion failed: {0}")]
+    BitmapConversion(String),
 
-    #[error("Encoding failed: {0}")]
-    EncodingFailed(String),
+    #[error("Frame processing failed: {0}")]
+    FrameProcessing(String),
 
     #[error("Unsupported format: {0}")]
     UnsupportedFormat(String),
@@ -1151,31 +1103,34 @@ pub async fn run_server(config: Config) -> Result<()> {
 
 ```
 main.rs
-  └─► Server
+  └─► WrdServer
        ├─► Config
-       ├─► SecurityManager
-       │    ├─► TlsConfig
-       │    ├─► Authenticator (PAM)
-       │    └─► CertificateManager
-       ├─► ConnectionManager
-       │    └─► RdpServer (IronRDP)
-       │         ├─► GraphicsChannel
-       │         │    └─► VideoPipeline
-       │         │         ├─► VideoEncoder (VA-API/OpenH264)
-       │         │         ├─► DamageTracker
-       │         │         └─► CursorManager
-       │         ├─► InputChannel
-       │         │    └─► InputManager
-       │         │         ├─► KeyboardHandler
-       │         │         └─► PointerHandler
-       │         └─► ClipboardChannel
-       │              └─► ClipboardManager
+       ├─► IronRdpServer (ironrdp-server crate)
+       │    ├─► TLS/NLA (built-in)
+       │    ├─► Protocol State Machine (built-in)
+       │    ├─► Channel Management (built-in)
+       │    └─► Bitmap Encoding (built-in)
+       ├─► DisplayUpdateHandler (trait impl)
+       │    ├─► PipeWireReceiver
+       │    ├─► BitmapConverter
+       │    │    ├─► PixelConverter
+       │    │    └─► Compressor
+       │    ├─► DamageTracker
+       │    └─► CursorManager
+       ├─► InputHandler (trait impl)
+       │    ├─► InputForwarder
+       │    ├─► KeyboardTranslator
+       │    └─► PointerTranslator
+       ├─► ClipboardHandler (trait impl)
+       │    ├─► ClipboardManager
+       │    ├─► FormatMapper
+       │    └─► ClipboardPortal
        └─► PortalManager
-            ├─► ScreenCastManager
-            ├─► RemoteDesktopManager
+            ├─► ScreenCastPortal
+            ├─► RemoteDesktopPortal
             └─► ClipboardPortal
-                 └─► PipeWireStream
-                      └─► FrameReceiver
+                 └─► PipeWireReceiver
+                      └─► FrameBuffer
 ```
 
 ---

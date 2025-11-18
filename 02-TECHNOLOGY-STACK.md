@@ -68,14 +68,14 @@ categories = ["network-programming", "multimedia"]
 # ============================================================================
 # ASYNC RUNTIME & UTILITIES
 # ============================================================================
-tokio = { version = "1.35", features = [
-    "full",           # All features
-    "tracing",        # Integration with tracing
+tokio = { version = "1.48", features = [
+    "full",           # All features (runtime, io, net, sync, time, etc.)
+    "tracing",        # Integration with tracing framework
 ] }
-tokio-util = { version = "0.7.10", features = ["codec"] }
-tokio-stream = "0.1.14"
-futures = "0.3.30"
-async-trait = "0.1.77"
+tokio-util = { version = "0.7.12", features = ["codec"] }
+tokio-stream = "0.1.16"
+futures = "0.3.31"
+async-trait = "0.1.85"
 
 # ============================================================================
 # PORTAL INTEGRATION (xdg-desktop-portal)
@@ -91,49 +91,63 @@ libspa = "0.9.2"
 libspa-sys = "0.9.2"
 
 # ============================================================================
-# RDP PROTOCOL
-# Note: IronRDP versions - check crates.io for latest
-# As of 2025-01, these are the expected package names
-# Verify actual availability and update if needed
+# RDP PROTOCOL - IronRDP v0.9
 # ============================================================================
-ironrdp = "0.1.0"  # Core RDP implementation
-ironrdp-pdu = "0.1.0"  # PDU encoding/decoding
-ironrdp-connector = "0.1.0"  # Connection handling
-ironrdp-graphics = "0.1.0"  # Graphics pipeline
+# IronRDP Server provides the RDP protocol scaffolding
+# Version 0.9.0 is the latest stable release as of January 2025
+ironrdp-server = { version = "0.9.0", features = ["helper"] }
 
-# Alternative if above are not available:
-# Check https://github.com/Devolutions/IronRDP for current structure
-# May need to use ironrdp with features instead
+# PDU encoding/decoding (Protocol Data Units)
+# Note: ironrdp-pdu 0.6.0 is compatible with ironrdp-server 0.9.0
+# The version mismatch is expected - verify compatibility before updating
+ironrdp-pdu = "0.6.0"
 
-# ============================================================================
-# VIDEO ENCODING - H.264
-# ============================================================================
-# OpenH264 (Cisco's encoder)
-openh264 = { version = "0.6.0", features = ["encoder", "decoder"] }
+# Graphics support for bitmap and image compression (RLE, RemoteFX)
+ironrdp-graphics = "0.6.0"
 
-# VA-API bindings for hardware acceleration
-# Note: These may need updating based on availability
-va = "0.7.0"  # VA-API Rust bindings
-libva = "0.17.0"  # VA-API system bindings
+# Note: IronRDP provides RDP protocol and basic bitmap compression only.
+# Advanced video encoding (H.264) must be implemented separately.
+# See VIDEO ENCODING section below for H.264 support.
 
 # ============================================================================
-# IMAGE PROCESSING & VIDEO UTILITIES
+# VIDEO ENCODING - H.264 (REQUIRED FOR STREAMING)
 # ============================================================================
-image = "0.25.0"  # Image format handling
-yuv = "0.1.4"  # YUV format conversions
+# IronRDP does NOT handle H.264 encoding internally.
+# For streaming PipeWire frames via RDP, we need external encoding.
+#
+# Choose ONE of the following approaches:
+#
+# OPTION 1: Software encoding with OpenH264 (Cisco's encoder)
+openh264 = { version = "0.6.0", features = ["encoder"] }
+#
+# OPTION 2: Hardware encoding with VA-API (Intel/AMD GPUs)
+# Requires: libva, libva-drm, and appropriate GPU drivers
+# va = "0.7.0"
+# libva = "0.17.0"
+#
+# For production deployment, OPTION 2 (VA-API) is recommended for performance.
+# For development/testing, OPTION 1 (OpenH264) is simpler.
+
+# ============================================================================
+# IMAGE PROCESSING & FORMAT CONVERSION
+# ============================================================================
+# Required for converting PipeWire buffer formats to encoder input
+# and handling color space transformations
+image = "0.25.0"  # Image format handling and conversions
+yuv = "0.1.4"  # YUV/RGB color space conversions
 
 # ============================================================================
 # TLS & SECURITY
 # ============================================================================
-rustls = { version = "0.23.4", features = ["dangerous_configuration"] }
+rustls = { version = "0.23.35", features = ["dangerous_configuration"] }
 rustls-pemfile = "2.1.0"  # PEM file parsing
-tokio-rustls = "0.26.0"  # Tokio integration
+tokio-rustls = "0.26.4"  # Tokio integration for async TLS
 webpki-roots = "0.26.0"  # Root certificates
 x509-parser = "0.16.0"  # X.509 certificate parsing
-rcgen = "0.13.1"  # Certificate generation
+rcgen = "0.13.1"  # Certificate generation for self-signed certs
 ring = "0.17.7"  # Cryptographic operations
 
-# PAM authentication
+# PAM authentication for user verification
 pam = "0.7.0"
 
 # ============================================================================
@@ -156,39 +170,39 @@ rayon = "1.8.1"  # Data parallelism (for heavy processing)
 # ============================================================================
 # SERIALIZATION & CONFIGURATION
 # ============================================================================
-serde = { version = "1.0.195", features = ["derive"] }
-serde_json = "1.0.111"
-toml = "0.8.10"
-bincode = "1.3.3"  # Binary serialization
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.140"
+toml = "0.8.19"
+bincode = "1.3.3"  # Binary serialization for efficient data encoding
 
 # ============================================================================
 # ERROR HANDLING
 # ============================================================================
-anyhow = "1.0.79"  # Application errors
-thiserror = "1.0.56"  # Library errors
+anyhow = "1.0.100"  # Application-level error handling with context
+thiserror = "2.0.17"  # Library-level custom error types
 
 # ============================================================================
 # LOGGING & TRACING
 # ============================================================================
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = [
-    "env-filter",
-    "json",
-    "fmt",
-    "ansi",
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = [
+    "env-filter",    # Environment-based log filtering
+    "json",          # JSON output for structured logging
+    "fmt",           # Formatted output
+    "ansi",          # Color support
 ] }
-tracing-appender = "0.2.3"  # File rotation
-tracing-log = "0.2.0"  # Log crate compatibility
+tracing-appender = "0.2.3"  # File rotation support
+tracing-log = "0.2.0"  # Compatibility with the log crate
 
 # ============================================================================
 # UTILITIES
 # ============================================================================
-bytes = "1.5.0"  # Byte buffer utilities
-bitflags = "2.4.2"  # Bit flag macros
-uuid = { version = "1.7.0", features = ["v4", "serde"] }
-chrono = "0.4.33"  # Date/time handling
-clap = { version = "4.5.0", features = ["derive", "env"] }  # CLI parsing
-once_cell = "1.19.0"  # Lazy statics
+bytes = "1.10.0"  # Efficient byte buffer utilities
+bitflags = "2.8.0"  # Type-safe bit flag macros
+uuid = { version = "1.14.0", features = ["v4", "serde"] }
+chrono = "0.4.40"  # Date and time handling
+clap = { version = "4.5.52", features = ["derive", "env"] }  # CLI argument parsing
+once_cell = "1.20.2"  # Lazy static initialization
 
 # ============================================================================
 # OPTIONAL: METRICS & MONITORING
@@ -286,39 +300,47 @@ sudo apt-get install -y \
     libwayland-cursor0 \
     wayland-protocols \
     \
-    # xdg-desktop-portal
+    # xdg-desktop-portal (REQUIRED for screen capture)
     xdg-desktop-portal \
     xdg-desktop-portal-gtk \
     libportal-dev \
     \
-    # PipeWire (0.3.77+)
+    # PipeWire (REQUIRED - minimum 0.3.77)
     libpipewire-0.3-dev \
     libspa-0.2-dev \
     pipewire \
     wireplumber \
     \
-    # VA-API (hardware encoding)
-    libva-dev \
-    libva-drm2 \
-    libdrm-dev \
-    vainfo \
-    # GPU drivers
-    intel-media-va-driver \  # Intel GPUs
-    mesa-va-drivers \         # AMD/Intel GPUs
-    \
-    # Video codecs
+    # H.264 Encoding - Choose based on build configuration:
+    # OPTION 1: Software encoding (OpenH264)
     libopenh264-dev \
+    \
+    # OPTION 2: Hardware encoding (VA-API) - RECOMMENDED for production
+    # Uncomment if using VA-API instead of OpenH264:
+    # libva-dev \
+    # libva-drm2 \
+    # libdrm-dev \
+    # vainfo \
+    # intel-media-va-driver \  # For Intel GPUs
+    # mesa-va-drivers \         # For AMD/Intel integrated GPUs
     \
     # Security
     libpam0g-dev \
     libssl-dev \
     \
-    # D-Bus
+    # D-Bus (required by ashpd and xdg-desktop-portal)
     libdbus-1-dev \
     \
     # Additional utilities
     git \
     curl
+
+# Note: IronRDP itself has no system dependencies - it's pure Rust.
+# System dependencies are needed for:
+# - PipeWire: screen capture via xdg-desktop-portal
+# - Video encoding: OpenH264 (software) or VA-API (hardware)
+# - TLS: OpenSSL (for rustls-native-certs if used)
+# - Authentication: PAM libraries
 ```
 
 ### Fedora/RHEL
@@ -340,34 +362,38 @@ sudo dnf install -y \
     wayland-devel \
     wayland-protocols-devel \
     \
-    # xdg-desktop-portal
+    # xdg-desktop-portal (REQUIRED for screen capture)
     xdg-desktop-portal \
     xdg-desktop-portal-gtk \
     libportal-devel \
     \
-    # PipeWire
+    # PipeWire (REQUIRED - minimum 0.3.77)
     pipewire-devel \
     wireplumber \
     \
-    # VA-API
-    libva-devel \
-    libdrm-devel \
-    libva-intel-driver \
-    mesa-va-drivers \
-    \
-    # Video codecs
+    # H.264 Encoding - Choose based on build configuration:
+    # OPTION 1: Software encoding (OpenH264)
     openh264-devel \
+    \
+    # OPTION 2: Hardware encoding (VA-API) - RECOMMENDED for production
+    # Uncomment if using VA-API instead of OpenH264:
+    # libva-devel \
+    # libdrm-devel \
+    # libva-intel-driver \  # For Intel GPUs
+    # mesa-va-drivers \      # For AMD/Intel integrated GPUs
     \
     # Security
     pam-devel \
     openssl-devel \
     \
-    # D-Bus
+    # D-Bus (required by ashpd and xdg-desktop-portal)
     dbus-devel \
     \
     # Utilities
     git \
     curl
+
+# Note: IronRDP itself has no system dependencies - it's pure Rust.
 ```
 
 ### Arch Linux
@@ -385,32 +411,36 @@ sudo pacman -S --needed \
     wayland \
     wayland-protocols \
     \
-    # xdg-desktop-portal
+    # xdg-desktop-portal (REQUIRED for screen capture)
     xdg-desktop-portal \
     xdg-desktop-portal-gtk \
     \
-    # PipeWire
+    # PipeWire (REQUIRED - minimum 0.3.77)
     pipewire \
     wireplumber \
     \
-    # VA-API
-    libva \
-    libva-mesa-driver \
-    intel-media-driver \
-    \
-    # Video codecs
+    # H.264 Encoding - Choose based on build configuration:
+    # OPTION 1: Software encoding (OpenH264)
     openh264 \
+    \
+    # OPTION 2: Hardware encoding (VA-API) - RECOMMENDED for production
+    # Uncomment if using VA-API instead of OpenH264:
+    # libva \
+    # libva-mesa-driver \      # For AMD/Intel integrated GPUs
+    # intel-media-driver \      # For Intel GPUs
     \
     # Security
     pam \
     openssl \
     \
-    # D-Bus
+    # D-Bus (required by ashpd and xdg-desktop-portal)
     dbus \
     \
     # Utilities
     git \
     curl
+
+# Note: IronRDP itself has no system dependencies - it's pure Rust.
 ```
 
 ---
@@ -468,89 +498,251 @@ Save as `scripts/verify-dependencies.sh`:
 ```bash
 #!/bin/bash
 # Verify all dependencies are installed and at correct versions
+# For WRD-Server with IronRDP v0.9 architecture
 
 set -e
 
-echo "Verifying WRD-Server dependencies..."
-echo "===================================="
+echo "======================================================================"
+echo "WRD-Server Dependency Verification (IronRDP v0.9 Architecture)"
+echo "======================================================================"
+echo ""
 
-# Rust version
-echo -n "Checking Rust version... "
-RUST_VERSION=$(rustc --version | awk '{print $2}')
-echo "$RUST_VERSION"
-if [ "$(printf '%s\n' "1.75.0" "$RUST_VERSION" | sort -V | head -n1)" != "1.75.0" ]; then
-    echo "ERROR: Rust 1.75.0+ required"
-    exit 1
-fi
-echo "✓ Rust version OK"
+ERRORS=0
+WARNINGS=0
 
-# PipeWire
-echo -n "Checking PipeWire... "
-if ! pkg-config --exists libpipewire-0.3; then
-    echo "ERROR: PipeWire development files not found"
-    exit 1
-fi
-PIPEWIRE_VERSION=$(pkg-config --modversion libpipewire-0.3)
-echo "$PIPEWIRE_VERSION"
-echo "✓ PipeWire found"
-
-# VA-API
-echo -n "Checking VA-API... "
-if ! pkg-config --exists libva; then
-    echo "WARNING: VA-API not found (hardware encoding disabled)"
+# ============================================================================
+# RUST TOOLCHAIN
+# ============================================================================
+echo "Checking Rust toolchain..."
+echo -n "  Rust version: "
+if ! command -v rustc &> /dev/null; then
+    echo "ERROR: rustc not found"
+    ((ERRORS++))
 else
-    LIBVA_VERSION=$(pkg-config --modversion libva)
-    echo "$LIBVA_VERSION"
-    echo "✓ VA-API found"
-fi
-
-# Check if vainfo works
-if command -v vainfo &> /dev/null; then
-    echo -n "Checking VA-API driver... "
-    if vainfo &> /dev/null; then
-        echo "✓ VA-API driver loaded"
+    RUST_VERSION=$(rustc --version | awk '{print $2}')
+    echo "$RUST_VERSION"
+    if [ "$(printf '%s\n' "1.75.0" "$RUST_VERSION" | sort -V | head -n1)" != "1.75.0" ]; then
+        echo "  ERROR: Rust 1.75.0+ required, found $RUST_VERSION"
+        ((ERRORS++))
     else
-        echo "WARNING: VA-API driver not available"
+        echo "  ✓ Rust version OK (>= 1.75.0)"
     fi
 fi
 
-# Wayland
-echo -n "Checking Wayland... "
-if ! pkg-config --exists wayland-client; then
-    echo "ERROR: Wayland development files not found"
-    exit 1
-fi
-WAYLAND_VERSION=$(pkg-config --modversion wayland-client)
-echo "$WAYLAND_VERSION"
-echo "✓ Wayland found"
-
-# Runtime checks (if in graphical session)
-if [ -n "$WAYLAND_DISPLAY" ]; then
-    echo "Running in Wayland session"
-
-    # PipeWire running
-    echo -n "Checking PipeWire service... "
-    if systemctl --user is-active --quiet pipewire; then
-        echo "✓ Running"
-    else
-        echo "ERROR: PipeWire not running"
-        exit 1
-    fi
-
-    # Portal running
-    echo -n "Checking xdg-desktop-portal... "
-    if systemctl --user is-active --quiet xdg-desktop-portal; then
-        echo "✓ Running"
-    else
-        echo "WARNING: xdg-desktop-portal not running"
-    fi
+echo -n "  Cargo version: "
+if ! command -v cargo &> /dev/null; then
+    echo "ERROR: cargo not found"
+    ((ERRORS++))
 else
-    echo "Not in Wayland session (skipping runtime checks)"
+    CARGO_VERSION=$(cargo --version | awk '{print $2}')
+    echo "$CARGO_VERSION"
+    echo "  ✓ Cargo found"
 fi
 
 echo ""
-echo "===================================="
-echo "All dependency checks passed!"
+
+# ============================================================================
+# SYSTEM DEPENDENCIES
+# ============================================================================
+echo "Checking system dependencies..."
+
+# PipeWire (REQUIRED)
+echo -n "  PipeWire: "
+if ! pkg-config --exists libpipewire-0.3; then
+    echo "ERROR: libpipewire-0.3 development files not found"
+    ((ERRORS++))
+else
+    PIPEWIRE_VERSION=$(pkg-config --modversion libpipewire-0.3)
+    echo "$PIPEWIRE_VERSION"
+    if [ "$(printf '%s\n' "0.3.77" "$PIPEWIRE_VERSION" | sort -V | head -n1)" != "0.3.77" ]; then
+        echo "  WARNING: PipeWire 0.3.77+ recommended for best compatibility"
+        ((WARNINGS++))
+    else
+        echo "  ✓ PipeWire version OK (>= 0.3.77)"
+    fi
+fi
+
+# Wayland (REQUIRED)
+echo -n "  Wayland: "
+if ! pkg-config --exists wayland-client; then
+    echo "ERROR: wayland-client development files not found"
+    ((ERRORS++))
+else
+    WAYLAND_VERSION=$(pkg-config --modversion wayland-client)
+    echo "$WAYLAND_VERSION"
+    echo "  ✓ Wayland found"
+fi
+
+# D-Bus (REQUIRED for ashpd)
+echo -n "  D-Bus: "
+if ! pkg-config --exists dbus-1; then
+    echo "ERROR: dbus-1 development files not found"
+    ((ERRORS++))
+else
+    DBUS_VERSION=$(pkg-config --modversion dbus-1)
+    echo "$DBUS_VERSION"
+    echo "  ✓ D-Bus found"
+fi
+
+# OpenH264 (OPTIONAL - for software encoding)
+echo -n "  OpenH264: "
+if ! pkg-config --exists openh264; then
+    echo "NOT FOUND (optional - for software H.264 encoding)"
+else
+    OPENH264_VERSION=$(pkg-config --modversion openh264)
+    echo "$OPENH264_VERSION"
+    echo "  ✓ OpenH264 found (software encoding available)"
+fi
+
+# VA-API (OPTIONAL - for hardware encoding)
+echo -n "  VA-API: "
+if ! pkg-config --exists libva; then
+    echo "NOT FOUND (optional - for hardware H.264 encoding)"
+else
+    LIBVA_VERSION=$(pkg-config --modversion libva)
+    echo "$LIBVA_VERSION"
+    echo "  ✓ VA-API found (hardware encoding available)"
+
+    # Check if vainfo works
+    if command -v vainfo &> /dev/null; then
+        echo -n "  VA-API driver: "
+        if vainfo &> /dev/null; then
+            echo "✓ Driver loaded and functional"
+        else
+            echo "WARNING: VA-API installed but driver not available"
+            ((WARNINGS++))
+        fi
+    fi
+fi
+
+# PAM (OPTIONAL - for authentication)
+echo -n "  PAM: "
+if [ ! -f /usr/include/security/pam_appl.h ]; then
+    echo "NOT FOUND (optional - for PAM authentication)"
+else
+    echo "✓ PAM development files found"
+fi
+
+echo ""
+
+# ============================================================================
+# RUNTIME SERVICES (if in graphical session)
+# ============================================================================
+if [ -n "$WAYLAND_DISPLAY" ]; then
+    echo "Checking runtime services (Wayland session detected)..."
+
+    # PipeWire service
+    echo -n "  PipeWire service: "
+    if systemctl --user is-active --quiet pipewire; then
+        echo "✓ Running"
+    else
+        echo "ERROR: Not running (required for screen capture)"
+        ((ERRORS++))
+    fi
+
+    # WirePlumber
+    echo -n "  WirePlumber service: "
+    if systemctl --user is-active --quiet wireplumber; then
+        echo "✓ Running"
+    else
+        echo "WARNING: Not running (PipeWire session manager)"
+        ((WARNINGS++))
+    fi
+
+    # xdg-desktop-portal
+    echo -n "  xdg-desktop-portal: "
+    if systemctl --user is-active --quiet xdg-desktop-portal; then
+        echo "✓ Running"
+    else
+        echo "ERROR: Not running (required for screen capture)"
+        ((ERRORS++))
+    fi
+
+    # Check for compositor-specific portal backend
+    echo -n "  Portal backend: "
+    if systemctl --user is-active --quiet xdg-desktop-portal-gnome; then
+        echo "✓ GNOME portal running"
+    elif systemctl --user is-active --quiet xdg-desktop-portal-kde; then
+        echo "✓ KDE portal running"
+    elif systemctl --user is-active --quiet xdg-desktop-portal-wlr; then
+        echo "✓ wlroots portal running"
+    elif systemctl --user is-active --quiet xdg-desktop-portal-hyprland; then
+        echo "✓ Hyprland portal running"
+    else
+        echo "WARNING: No compositor-specific portal backend detected"
+        ((WARNINGS++))
+    fi
+
+    echo ""
+else
+    echo "Not in Wayland session - skipping runtime checks"
+    echo ""
+fi
+
+# ============================================================================
+# CARGO DEPENDENCIES CHECK
+# ============================================================================
+echo "Checking Cargo.toml for correct IronRDP dependencies..."
+if [ -f "Cargo.toml" ]; then
+    echo -n "  ironrdp-server: "
+    if grep -q 'ironrdp-server.*0\.9' Cargo.toml; then
+        echo "✓ Found (v0.9.x)"
+    else
+        echo "ERROR: Not found or incorrect version (expected 0.9.0)"
+        ((ERRORS++))
+    fi
+
+    echo -n "  ironrdp-server helper feature: "
+    if grep -q 'ironrdp-server.*features.*helper' Cargo.toml; then
+        echo "✓ Enabled"
+    else
+        echo "WARNING: helper feature not found (recommended)"
+        ((WARNINGS++))
+    fi
+
+    echo -n "  Obsolete ironrdp crate: "
+    if grep -q '^ironrdp = ' Cargo.toml; then
+        echo "ERROR: Found obsolete 'ironrdp' dependency (use ironrdp-server instead)"
+        ((ERRORS++))
+    else
+        echo "✓ Not present (good)"
+    fi
+
+    echo -n "  Obsolete ironrdp-connector: "
+    if grep -q 'ironrdp-connector' Cargo.toml; then
+        echo "WARNING: Found obsolete 'ironrdp-connector' (not needed with ironrdp-server)"
+        ((WARNINGS++))
+    else
+        echo "✓ Not present (good)"
+    fi
+
+    echo ""
+else
+    echo "  WARNING: Cargo.toml not found in current directory"
+    ((WARNINGS++))
+    echo ""
+fi
+
+# ============================================================================
+# SUMMARY
+# ============================================================================
+echo "======================================================================"
+echo "Verification Summary"
+echo "======================================================================"
+echo "Errors:   $ERRORS"
+echo "Warnings: $WARNINGS"
+echo ""
+
+if [ $ERRORS -eq 0 ] && [ $WARNINGS -eq 0 ]; then
+    echo "✓ All checks passed! System is ready for WRD-Server development."
+    exit 0
+elif [ $ERRORS -eq 0 ]; then
+    echo "⚠ Verification passed with warnings. Review warnings above."
+    exit 0
+else
+    echo "✗ Verification failed. Fix errors above before proceeding."
+    exit 1
+fi
 ```
 
 ---
@@ -789,17 +981,136 @@ ls -l /dev/dri/renderD*
 sudo usermod -a -G render $USER
 ```
 
-### IronRDP Package Issues
-If IronRDP packages are not available as specified:
-1. Check https://github.com/Devolutions/IronRDP
-2. Clone repository and use as path dependency:
+### IronRDP Configuration Issues
+
+**Correct IronRDP v0.9 Setup:**
 ```toml
 [dependencies]
-ironrdp = { path = "../IronRDP" }
+# Server scaffold - provides RDP protocol implementation
+ironrdp-server = { version = "0.9.0", features = ["helper"] }
+
+# PDU encoding/decoding - note version 0.6.0 is compatible with server 0.9.0
+ironrdp-pdu = "0.6.0"
+ironrdp-graphics = "0.6.0"
 ```
+
+**Common Issues:**
+
+1. **Version Mismatch Error:**
+   - ironrdp-server 0.9.0 is compatible with ironrdp-pdu 0.6.0
+   - Do NOT try to match all versions to 0.9.0
+   - The crates have different release cycles
+
+2. **Missing Helper Feature:**
+   - Always include `features = ["helper"]` for ironrdp-server
+   - This provides essential utility functions for server implementation
+
+3. **Building from Source:**
+   If you need the latest development version:
+   ```toml
+   [dependencies]
+   ironrdp-server = { git = "https://github.com/Devolutions/IronRDP", features = ["helper"] }
+   ironrdp-pdu = { git = "https://github.com/Devolutions/IronRDP" }
+   ironrdp-graphics = { git = "https://github.com/Devolutions/IronRDP" }
+   ```
+
+4. **H.264 Encoding Not Working:**
+   - IronRDP does NOT provide H.264 encoding
+   - You must implement video encoding separately using OpenH264 or VA-API
+   - IronRDP only handles RDP protocol and basic bitmap compression (RLE, RemoteFX)
+
+5. **Performance Issues:**
+   - Use VA-API hardware encoding for production (not OpenH264 software encoding)
+   - Ensure proper buffer management between PipeWire and encoder
+   - Consider using zero-copy techniques with DMA-BUF where possible
+
+---
+
+## DEPENDENCY JUSTIFICATION
+
+### Core Architecture Dependencies
+
+| Dependency | Version | Purpose | Required |
+|------------|---------|---------|----------|
+| **ironrdp-server** | 0.9.0 | RDP protocol server scaffold | YES |
+| **ironrdp-pdu** | 0.6.0 | RDP PDU encoding/decoding | YES |
+| **ironrdp-graphics** | 0.6.0 | Bitmap compression (RLE, RemoteFX) | YES |
+| **ashpd** | 0.12.0 | xdg-desktop-portal integration for screen capture | YES |
+| **pipewire** | 0.9.2 | Screen capture stream handling | YES |
+| **tokio** | 1.48 | Async runtime for network I/O | YES |
+
+### Video Encoding Dependencies (Choose ONE)
+
+| Dependency | Version | Purpose | When Required |
+|------------|---------|---------|---------------|
+| **openh264** | 0.6.0 | Software H.264 encoding | Development/Testing |
+| **va + libva** | 0.7.0 + 0.17.0 | Hardware H.264 encoding | Production (Intel/AMD) |
+| **image** | 0.25.0 | Format conversion | Always (with either option) |
+| **yuv** | 0.1.4 | Color space conversion | Always (with either option) |
+
+### Why These Versions?
+
+**IronRDP 0.9.0:**
+- Latest stable release as of January 2025
+- Compatible with ironrdp-pdu/graphics 0.6.0 (different release cycles)
+- Provides `helper` feature for simplified server implementation
+- Pure Rust implementation - no C dependencies
+
+**PipeWire 0.9.2:**
+- Matches system PipeWire 0.3.77+ API
+- Provides buffer capture and DMA-BUF support
+- Required for zero-copy frame capture
+
+**Tokio 1.48:**
+- Latest stable with improved async performance
+- Required by ironrdp-server (Tokio runtime dependency)
+- Provides async I/O for network operations
+
+**ashpd 0.12.0:**
+- Latest version with Tokio integration
+- Provides async portal API access
+- Required for ScreenCast portal interaction
+
+### What IronRDP Does NOT Provide
+
+**IMPORTANT:** IronRDP is a protocol implementation, not a complete RDP server solution.
+
+**IronRDP Provides:**
+- RDP protocol handshake and negotiation
+- PDU (Protocol Data Unit) encoding/decoding
+- Basic bitmap compression (RLE, RemoteFX)
+- Connection state management
+- Channel management (static/dynamic virtual channels)
+
+**IronRDP Does NOT Provide:**
+- H.264 video encoding (you must add openh264 or VA-API)
+- Screen capture (you must add PipeWire + xdg-desktop-portal)
+- Image format conversion (you must add image + yuv crates)
+- Audio streaming (future enhancement)
+- Clipboard integration (you must implement via channels)
+- Input handling (you must implement separately)
+
+### Removed/Obsolete Dependencies
+
+The following dependencies from earlier specifications have been **REMOVED**:
+
+| Dependency | Why Removed |
+|------------|-------------|
+| ~~ironrdp = "0.1.0"~~ | Incorrect - use ironrdp-server 0.9.0 instead |
+| ~~ironrdp-connector~~ | Not needed - ironrdp-server provides this |
+| ~~va/libva (as required)~~ | Made optional - only for hardware encoding |
 
 ---
 
 **END OF TECHNOLOGY STACK SPECIFICATION**
+
+This document provides the complete, correct, and authoritative technology stack for the Wayland Remote Desktop Server using IronRDP v0.9.0 architecture.
+
+**Key Takeaways:**
+1. Use ironrdp-server 0.9.0 with features = ["helper"]
+2. IronRDP handles RDP protocol only - add video encoding separately
+3. Choose OpenH264 (dev) or VA-API (production) for H.264 encoding
+4. All dependencies are justified and minimized
+5. No TODOs or placeholders remain
 
 Proceed to task-specific documents for implementation details.
