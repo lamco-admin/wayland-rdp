@@ -17,8 +17,8 @@ use tokio::time::sleep;
 
 use wrd_server::config::Config;
 use wrd_server::pipewire::{
-    PipeWireConnection, StreamConfig, MultiStreamCoordinator,
-    MultiStreamConfig, MonitorInfo, VideoFrame,
+    MonitorInfo, MultiStreamConfig, MultiStreamCoordinator, PipeWireConnection, StreamConfig,
+    VideoFrame,
 };
 use wrd_server::portal::PortalManager;
 
@@ -51,7 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // List available streams
     for (i, stream_info) in session.streams().iter().enumerate() {
-        tracing::info!("  Stream {}: node_id={}, size={}x{}, pos=({},{})",
+        tracing::info!(
+            "  Stream {}: node_id={}, size={}x{}, pos=({},{})",
             i,
             stream_info.node_id,
             stream_info.size.0,
@@ -89,7 +90,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         tracing::info!("Creating stream for monitor: {}", monitor.name);
 
-        match coordinator.add_stream(monitor.clone(), &mut connection).await {
+        match coordinator
+            .add_stream(monitor.clone(), &mut connection)
+            .await
+        {
             Ok(stream_id) => {
                 tracing::info!("  Stream {} created successfully", stream_id);
 
@@ -169,10 +173,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Capturing frames for 15 seconds...");
 
     let capture_duration = Duration::from_secs(15);
-    let timeout_result = tokio::time::timeout(
-        capture_duration,
-        futures::future::join_all(tasks)
-    ).await;
+    let timeout_result =
+        tokio::time::timeout(capture_duration, futures::future::join_all(tasks)).await;
 
     match timeout_result {
         Ok(_) => tracing::info!("All capture tasks completed"),

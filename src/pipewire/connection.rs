@@ -2,11 +2,11 @@
 //!
 //! Handles connection to PipeWire daemon via portal file descriptor.
 
+use pipewire::{context::Context, core::Core, main_loop::MainLoop};
+use std::collections::HashMap;
 use std::os::fd::RawFd;
 use std::sync::Arc;
-use std::collections::HashMap;
 use tokio::sync::{mpsc, Mutex};
-use pipewire::{context::Context, core::Core, main_loop::MainLoop};
 
 use crate::pipewire::error::{PipeWireError, Result};
 use crate::pipewire::stream::{PipeWireStream, StreamConfig};
@@ -172,14 +172,10 @@ impl PipeWireConnection {
     }
 
     /// Create a new stream
-    pub async fn create_stream(
-        &mut self,
-        config: StreamConfig,
-        node_id: u32,
-    ) -> Result<u32> {
+    pub async fn create_stream(&mut self, config: StreamConfig, node_id: u32) -> Result<u32> {
         if !self.is_connected().await {
             return Err(PipeWireError::ConnectionFailed(
-                "Not connected to PipeWire".to_string()
+                "Not connected to PipeWire".to_string(),
             ));
         }
 
@@ -203,7 +199,10 @@ impl PipeWireConnection {
         stream.start().await?;
 
         // Store stream
-        self.streams.lock().await.insert(stream_id, Arc::new(Mutex::new(stream)));
+        self.streams
+            .lock()
+            .await
+            .insert(stream_id, Arc::new(Mutex::new(stream)));
 
         // Update stats
         self.stats.lock().await.streams_created += 1;

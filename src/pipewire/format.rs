@@ -124,9 +124,7 @@ pub fn convert_format(
         }
 
         // NV12 to BGRA
-        (PixelFormat::NV12, PixelFormat::BGRA) => {
-            convert_nv12_to_bgra(src, dst, width, height)
-        }
+        (PixelFormat::NV12, PixelFormat::BGRA) => convert_nv12_to_bgra(src, dst, width, height),
 
         // YUY2 to BGRA
         (PixelFormat::YUY2, PixelFormat::BGRA) => {
@@ -134,15 +132,12 @@ pub fn convert_format(
         }
 
         // I420 to BGRA
-        (PixelFormat::I420, PixelFormat::BGRA) => {
-            convert_i420_to_bgra(src, dst, width, height)
-        }
+        (PixelFormat::I420, PixelFormat::BGRA) => convert_i420_to_bgra(src, dst, width, height),
 
-        _ => {
-            Err(PipeWireError::FormatConversionFailed(
-                format!("Unsupported conversion: {:?} -> {:?}", src_format, dst_format)
-            ))
-        }
+        _ => Err(PipeWireError::FormatConversionFailed(format!(
+            "Unsupported conversion: {:?} -> {:?}",
+            src_format, dst_format
+        ))),
     }
 }
 
@@ -163,10 +158,10 @@ fn convert_rgb_to_bgra(
             let src_idx = x * 3;
             let dst_idx = x * 4;
 
-            dst_row[dst_idx] = src_row[src_idx + 2];     // B
+            dst_row[dst_idx] = src_row[src_idx + 2]; // B
             dst_row[dst_idx + 1] = src_row[src_idx + 1]; // G
-            dst_row[dst_idx + 2] = src_row[src_idx];     // R
-            dst_row[dst_idx + 3] = 255;                   // A
+            dst_row[dst_idx + 2] = src_row[src_idx]; // R
+            dst_row[dst_idx + 3] = 255; // A
         }
     }
     Ok(())
@@ -189,9 +184,9 @@ fn convert_rgba_to_bgra(
             let src_idx = x * 4;
             let dst_idx = x * 4;
 
-            dst_row[dst_idx] = src_row[src_idx + 2];     // B
+            dst_row[dst_idx] = src_row[src_idx + 2]; // B
             dst_row[dst_idx + 1] = src_row[src_idx + 1]; // G
-            dst_row[dst_idx + 2] = src_row[src_idx];     // R
+            dst_row[dst_idx + 2] = src_row[src_idx]; // R
             dst_row[dst_idx + 3] = src_row[src_idx + 3]; // A
         }
     }
@@ -215,22 +210,17 @@ fn convert_bgr_to_bgra(
             let src_idx = x * 3;
             let dst_idx = x * 4;
 
-            dst_row[dst_idx] = src_row[src_idx];         // B
+            dst_row[dst_idx] = src_row[src_idx]; // B
             dst_row[dst_idx + 1] = src_row[src_idx + 1]; // G
             dst_row[dst_idx + 2] = src_row[src_idx + 2]; // R
-            dst_row[dst_idx + 3] = 255;                   // A
+            dst_row[dst_idx + 3] = 255; // A
         }
     }
     Ok(())
 }
 
 /// Convert NV12 to BGRA
-fn convert_nv12_to_bgra(
-    src: &[u8],
-    dst: &mut [u8],
-    width: u32,
-    height: u32,
-) -> Result<()> {
+fn convert_nv12_to_bgra(src: &[u8], dst: &mut [u8], width: u32, height: u32) -> Result<()> {
     let y_plane = &src[0..(width * height) as usize];
     let uv_plane = &src[(width * height) as usize..];
 
@@ -310,12 +300,7 @@ fn convert_yuy2_to_bgra(
 }
 
 /// Convert I420 to BGRA
-fn convert_i420_to_bgra(
-    src: &[u8],
-    dst: &mut [u8],
-    width: u32,
-    height: u32,
-) -> Result<()> {
+fn convert_i420_to_bgra(src: &[u8], dst: &mut [u8], width: u32, height: u32) -> Result<()> {
     let y_plane_size = (width * height) as usize;
     let uv_plane_size = y_plane_size / 4;
 
@@ -389,39 +374,36 @@ mod tests {
             PixelFormat::from_spa(VideoFormat::BGRA),
             Some(PixelFormat::BGRA)
         );
-        assert_eq!(
-            PixelFormat::BGRA.to_spa(),
-            VideoFormat::BGRA
-        );
+        assert_eq!(PixelFormat::BGRA.to_spa(), VideoFormat::BGRA);
     }
 
     #[test]
     fn test_rgb_to_bgra_conversion() {
         let src = vec![
-            255, 0, 0,    // Red pixel
-            0, 255, 0,    // Green pixel
-            0, 0, 255,    // Blue pixel
+            255, 0, 0, // Red pixel
+            0, 255, 0, // Green pixel
+            0, 0, 255, // Blue pixel
         ];
         let mut dst = vec![0u8; 12]; // 3 pixels * 4 bytes
 
         convert_rgb_to_bgra(&src, &mut dst, 3, 1, 9, 12).unwrap();
 
         // Red pixel (RGB 255,0,0 -> BGRA 0,0,255,255)
-        assert_eq!(dst[0], 0);   // B
-        assert_eq!(dst[1], 0);   // G
+        assert_eq!(dst[0], 0); // B
+        assert_eq!(dst[1], 0); // G
         assert_eq!(dst[2], 255); // R
         assert_eq!(dst[3], 255); // A
 
         // Green pixel (RGB 0,255,0 -> BGRA 0,255,0,255)
-        assert_eq!(dst[4], 0);   // B
+        assert_eq!(dst[4], 0); // B
         assert_eq!(dst[5], 255); // G
-        assert_eq!(dst[6], 0);   // R
+        assert_eq!(dst[6], 0); // R
         assert_eq!(dst[7], 255); // A
 
         // Blue pixel (RGB 0,0,255 -> BGRA 255,0,0,255)
         assert_eq!(dst[8], 255); // B
-        assert_eq!(dst[9], 0);   // G
-        assert_eq!(dst[10], 0);  // R
+        assert_eq!(dst[9], 0); // G
+        assert_eq!(dst[10], 0); // R
         assert_eq!(dst[11], 255); // A
     }
 

@@ -5,17 +5,15 @@
 //!
 //! Run with: cargo run --example portal_info
 
-use wrd_server::portal::PortalManager;
-use wrd_server::config::Config;
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
+use wrd_server::config::Config;
+use wrd_server::portal::PortalManager;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     println!("=================================");
     println!("WRD-Server Portal Information");
@@ -43,7 +41,10 @@ async fn main() -> Result<()> {
         println!("\n  Stream {}:", i);
         println!("    Node ID: {}", stream.node_id);
         println!("    Size: {}x{}", stream.size.0, stream.size.1);
-        println!("    Position: ({}, {})", stream.position.0, stream.position.1);
+        println!(
+            "    Position: ({}, {})",
+            stream.position.0, stream.position.1
+        );
         println!("    Type: {:?}", stream.source_type);
     }
 

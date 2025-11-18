@@ -24,6 +24,8 @@ pub struct Config {
     pub security: SecurityConfig,
     /// Video configuration
     pub video: VideoConfig,
+    /// Video pipeline configuration
+    pub video_pipeline: VideoPipelineConfig,
     /// Input configuration
     pub input: InputConfig,
     /// Clipboard configuration
@@ -72,6 +74,7 @@ impl Config {
                 damage_tracking: true,
                 cursor_mode: "metadata".to_string(),
             },
+            video_pipeline: VideoPipelineConfig::default(),
             input: InputConfig {
                 use_libei: true,
                 keyboard_layout: "auto".to_string(),

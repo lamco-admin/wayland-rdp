@@ -5,14 +5,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock};
 use tokio::sync::Mutex;
+use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 
-use crate::pipewire::error::{PipeWireError, Result};
 use crate::pipewire::connection::PipeWireConnection;
-use crate::pipewire::stream::{PipeWireStream, StreamConfig, PwStreamState};
+use crate::pipewire::error::{PipeWireError, Result};
 use crate::pipewire::frame::VideoFrame;
+use crate::pipewire::stream::{PipeWireStream, PwStreamState, StreamConfig};
 use crate::portal::session::StreamInfo;
 
 /// Monitor information
@@ -198,7 +198,9 @@ impl MultiStreamCoordinator {
             .with_framerate(monitor.refresh_rate);
 
         // Create PipeWire stream via connection
-        let stream_id = connection.create_stream(stream_config, monitor.node_id).await?;
+        let stream_id = connection
+            .create_stream(stream_config, monitor.node_id)
+            .await?;
 
         // Get the stream
         if let Some(stream_arc) = connection.get_stream(stream_id).await {
@@ -235,7 +237,7 @@ impl MultiStreamCoordinator {
             Ok(stream_id)
         } else {
             Err(PipeWireError::StreamCreationFailed(
-                "Stream not found after creation".to_string()
+                "Stream not found after creation".to_string(),
             ))
         }
     }
@@ -300,7 +302,11 @@ impl MultiStreamCoordinator {
 
     /// Get stream by monitor ID
     pub async fn get_stream(&self, monitor_id: u32) -> Option<Arc<Mutex<PipeWireStream>>> {
-        self.streams.read().await.get(&monitor_id).map(|h| h.stream.clone())
+        self.streams
+            .read()
+            .await
+            .get(&monitor_id)
+            .map(|h| h.stream.clone())
     }
 
     /// Get frame receiver for a monitor
@@ -440,8 +446,8 @@ mod tests {
         let mut rx = dispatcher.register_receiver(1).await.unwrap();
 
         // Create and dispatch a frame
-        use crate::pipewire::frame::VideoFrame;
         use crate::pipewire::format::PixelFormat;
+        use crate::pipewire::frame::VideoFrame;
 
         let frame = VideoFrame::new(1, 100, 100, 400, PixelFormat::BGRA, 1);
 
@@ -451,10 +457,7 @@ mod tests {
         });
 
         // Should receive the frame
-        let received = tokio::time::timeout(
-            Duration::from_millis(100),
-            rx.recv()
-        ).await;
+        let received = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await;
 
         assert!(received.is_ok());
     }

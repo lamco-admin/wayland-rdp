@@ -2,20 +2,20 @@
 //!
 //! Handles individual PipeWire streams for screen capture.
 
+use libspa::param::video::VideoFormat;
+use pipewire::spa::utils::{Direction, Fraction, Rectangle};
+use pipewire::stream::{Stream, StreamFlags, StreamState};
 use std::os::fd::RawFd;
 use std::ptr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
-use pipewire::stream::{Stream, StreamFlags, StreamState};
-use pipewire::spa::utils::{Direction, Fraction, Rectangle};
-use libspa::param::video::VideoFormat;
 
-use crate::pipewire::error::{PipeWireError, Result};
 use crate::pipewire::buffer::{BufferManager, BufferType, SharedBufferManager};
-use crate::pipewire::frame::{VideoFrame, FrameCallback, FrameStats};
-use crate::pipewire::format::PixelFormat;
+use crate::pipewire::error::{PipeWireError, Result};
 use crate::pipewire::ffi::{self, SpaDataType};
+use crate::pipewire::format::PixelFormat;
+use crate::pipewire::frame::{FrameCallback, FrameStats, VideoFrame};
 
 /// Stream configuration
 #[derive(Debug, Clone)]
@@ -239,7 +239,7 @@ impl PipeWireStream {
         // stream builder with proper parameter construction
         // For now, we return an error indicating this needs PipeWire runtime
         Err(PipeWireError::StreamCreationFailed(
-            "Stream connection requires PipeWire runtime - use integration tests".to_string()
+            "Stream connection requires PipeWire runtime - use integration tests".to_string(),
         ))
     }
 
@@ -279,14 +279,15 @@ impl PipeWireStream {
     /// Process a frame from PipeWire
     async fn process_frame(&self, buffer_id: u32, pts: u64) -> Result<()> {
         // Get buffer
-        let buffer_opt = self.buffer_manager.with_buffer(buffer_id, |buf| {
-            // Extract data
-            let data = unsafe {
-                buf.as_slice().map(|s| s.to_vec())
-            };
+        let buffer_opt = self
+            .buffer_manager
+            .with_buffer(buffer_id, |buf| {
+                // Extract data
+                let data = unsafe { buf.as_slice().map(|s| s.to_vec()) };
 
-            (buf.size, buf.buffer_type, data)
-        }).await;
+                (buf.size, buf.buffer_type, data)
+            })
+            .await;
 
         if let Some((size, buffer_type, Some(data))) = buffer_opt {
             // Get negotiated format
@@ -301,8 +302,8 @@ impl PipeWireStream {
                     id
                 };
 
-                let pixel_format = PixelFormat::from_spa(format.format)
-                    .unwrap_or(PixelFormat::BGRA);
+                let pixel_format =
+                    PixelFormat::from_spa(format.format).unwrap_or(PixelFormat::BGRA);
 
                 let mut frame = VideoFrame::with_data(
                     frame_id,
@@ -340,7 +341,10 @@ impl PipeWireStream {
 
     /// Get uptime
     pub fn uptime(&self) -> Option<Duration> {
-        self.start_time.lock().unwrap().as_ref()
+        self.start_time
+            .lock()
+            .unwrap()
+            .as_ref()
             .and_then(|start| start.elapsed().ok())
     }
 }
