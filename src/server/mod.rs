@@ -183,10 +183,19 @@ impl WrdServer {
             })
             .collect();
 
+        // Get the primary stream node ID for Portal input injection
+        let primary_stream_id = stream_info
+            .first()
+            .map(|s| s.node_id)
+            .unwrap_or(0);
+
+        info!("Using PipeWire stream node ID {} for input injection", primary_stream_id);
+
         let input_handler = WrdInputHandler::new(
             portal_manager.remote_desktop().clone(),
             session_handle.session,
             monitors,
+            primary_stream_id,
         )
         .context("Failed to create input handler")?;
 

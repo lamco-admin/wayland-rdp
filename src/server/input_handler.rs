@@ -108,6 +108,9 @@ pub struct WrdInputHandler {
 
     /// Portal session (kept alive for the connection lifetime)
     session: Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
+
+    /// Primary stream node ID for input injection (PipeWire node ID)
+    primary_stream_id: u32,
 }
 
 impl WrdInputHandler {
@@ -130,6 +133,7 @@ impl WrdInputHandler {
         portal: Arc<RemoteDesktopManager>,
         session: ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>,
         monitors: Vec<MonitorInfo>,
+        primary_stream_id: u32,
     ) -> Result<Self, InputError> {
         let keyboard_handler = Arc::new(Mutex::new(KeyboardHandler::new()));
         let mouse_handler = Arc::new(Mutex::new(MouseHandler::new()));
@@ -139,12 +143,15 @@ impl WrdInputHandler {
             CoordinateTransformer::new(monitors)?
         ));
 
+        debug!("Input handler using PipeWire stream node ID: {}", primary_stream_id);
+
         Ok(Self {
             portal,
             keyboard_handler,
             mouse_handler,
             coordinate_transformer,
             session: Arc::new(Mutex::new(session)),
+            primary_stream_id,
         })
     }
 
@@ -248,10 +255,9 @@ impl WrdInputHandler {
                 };
 
                 // Inject mouse movement via portal (absolute positioning)
-                // Portal API uses stream ID and stream-relative coordinates
-                // For single monitor, use stream 0
+                // Portal API uses PipeWire node ID (not index) for stream identification
                 self.portal
-                    .notify_pointer_motion_absolute(&session, 0, stream_x, stream_y)
+                    .notify_pointer_motion_absolute(&session, self.primary_stream_id, stream_x, stream_y)
                     .await
                     .map_err(|e| InputError::PortalError(format!("Failed to inject mouse move: {}", e)))?;
             }
@@ -270,7 +276,7 @@ impl WrdInputHandler {
 
                 // Inject via portal absolute API (we converted relative to absolute already)
                 self.portal
-                    .notify_pointer_motion_absolute(&session, 0, stream_x, stream_y)
+                    .notify_pointer_motion_absolute(&session, self.primary_stream_id, stream_x, stream_y)
                     .await
                     .map_err(|e| InputError::PortalError(format!("Failed to inject relative move: {}", e)))?;
             }
@@ -407,6 +413,7 @@ impl RdpServerInputHandler for WrdInputHandler {
         let portal = Arc::clone(&self.portal);
         let keyboard_handler = Arc::clone(&self.keyboard_handler);
         let session = Arc::clone(&self.session);
+        let primary_stream_id = self.primary_stream_id;
 
         // Spawn async task to handle the event
         // We spawn a task because the trait method is synchronous but portal calls are async
@@ -420,6 +427,7 @@ impl RdpServerInputHandler for WrdInputHandler {
                     CoordinateTransformer::new(vec![]).unwrap_or_else(|_| panic!("Invalid transformer"))
                 )), // Not used for keyboard
                 session,
+                primary_stream_id,
             };
 
             if let Err(e) = temp_handler.handle_keyboard_async(event).await {
@@ -434,6 +442,7 @@ impl RdpServerInputHandler for WrdInputHandler {
         let mouse_handler = Arc::clone(&self.mouse_handler);
         let coordinate_transformer = Arc::clone(&self.coordinate_transformer);
         let session = Arc::clone(&self.session);
+        let primary_stream_id = self.primary_stream_id;
 
         // Spawn async task to handle the event
         tokio::spawn(async move {
@@ -444,6 +453,7 @@ impl RdpServerInputHandler for WrdInputHandler {
                 mouse_handler,
                 coordinate_transformer,
                 session,
+                primary_stream_id,
             };
 
             if let Err(e) = temp_handler.handle_mouse_async(event).await {
@@ -463,6 +473,7 @@ impl Clone for WrdInputHandler {
             mouse_handler: Arc::clone(&self.mouse_handler),
             coordinate_transformer: Arc::clone(&self.coordinate_transformer),
             session: Arc::clone(&self.session),
+            primary_stream_id: self.primary_stream_id,
         }
     }
 }
