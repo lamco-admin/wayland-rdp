@@ -241,7 +241,7 @@ pub mod translator;
 
 // Re-export main types for convenience
 pub use coordinates::{CoordinateTransformer, MonitorInfo};
-pub use error::{ErrorClassification, ErrorContext, InputError, RecoveryAction, Result};
+pub use error::{ErrorContext, InputError, RecoveryAction, Result};
 pub use keyboard::{KeyModifiers, KeyboardEvent, KeyboardHandler};
 pub use mapper::{keycodes, ScancodeMapper};
 pub use mouse::{MouseButton, MouseEvent, MouseHandler};
