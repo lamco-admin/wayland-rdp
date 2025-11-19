@@ -115,6 +115,9 @@ pub struct ClipboardManager {
 
     /// Portal clipboard manager for read/write operations
     portal_clipboard: Option<Arc<crate::portal::clipboard::ClipboardManager>>,
+
+    /// Portal session (needed for Portal Clipboard API calls)
+    portal_session: Option<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>,
 }
 
 impl ClipboardManager {
@@ -148,6 +151,7 @@ impl ClipboardManager {
             event_tx,
             shutdown_tx: None,
             portal_clipboard: None, // Will be set after Portal initialization
+            portal_session: None, // Will be set with portal_clipboard
         };
 
         // Start event processor
@@ -163,9 +167,14 @@ impl ClipboardManager {
         self.event_tx.clone()
     }
 
-    /// Set Portal clipboard manager
-    pub fn set_portal_clipboard(&mut self, portal: Arc<crate::portal::clipboard::ClipboardManager>) {
+    /// Set Portal clipboard manager and session
+    pub fn set_portal_clipboard(
+        &mut self,
+        portal: Arc<crate::portal::clipboard::ClipboardManager>,
+        session: ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>,
+    ) {
         self.portal_clipboard = Some(portal);
+        self.portal_session = Some(session);
     }
 
     /// Start event processing loop
@@ -297,10 +306,12 @@ impl ClipboardManager {
         let mime_type = converter.format_id_to_mime(format_id)?;
         debug!("Format {} maps to MIME: {}", format_id, mime_type);
 
-        // Read from Portal clipboard
-        let portal_data = portal.read_local_clipboard(&mime_type).await
-            .map_err(|e| ClipboardError::PortalError(format!("Failed to read clipboard: {}", e)))?;
-        debug!("Read {} bytes from Portal clipboard", portal_data.len());
+        // TODO: Need session reference to call Portal API
+        // For now, skip Portal read and just log
+        warn!("Portal clipboard read skipped - session not accessible from event handler");
+
+        // Portal read not yet wired - need session reference
+        let portal_data = Vec::new(); // Placeholder
 
         if portal_data.is_empty() {
             debug!("Portal clipboard empty for MIME type: {}", mime_type);
