@@ -370,14 +370,10 @@ impl ClipboardManager {
     ) -> Result<()> {
         debug!("RDP data response received: {} bytes", data.len());
 
-        // Get Portal clipboard manager
-        let portal = match portal_clipboard {
-            Some(p) => p,
-            None => {
-                warn!("Portal clipboard not available");
-                return Ok(());
-            }
-        };
+        // Note: Portal clipboard may not be available, but we can still write via wl-clipboard-rs
+        if portal_clipboard.is_none() {
+            debug!("Portal clipboard not available, using wl-clipboard-rs directly");
+        }
 
         // Check for content loop
         let should_transfer = sync_manager.write().await.check_content(&data, true)?;
