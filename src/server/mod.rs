@@ -71,7 +71,7 @@ use ironrdp_server::{Credentials, RdpServer};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::clipboard::{ClipboardConfig, ClipboardManager, WrdCliprdrFactory};
 use crate::config::Config;
