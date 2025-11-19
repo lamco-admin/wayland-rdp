@@ -54,12 +54,28 @@ async-trait = "0.1"
 # Video encoding
 # Note: These will be added when video encoding is implemented
 
-# Wayland and Portal integration
+# Wayland and Portal integration (client-side for existing mode)
 wayland-client = { version = "0.31", optional = true }
 wayland-protocols = { version = "0.31", features = ["client"], optional = true }
 ashpd = { version = "0.12.0", features = ["tokio"] }
 zbus = "4.0.1"
 enumflags2 = "0.7"
+
+# Smithay compositor framework (server-side for headless mode)
+# Note: Using basic features for now, full Smithay integration pending
+smithay = { version = "0.3", default-features = false, optional = true }
+wayland-server = { version = "0.31", optional = true }
+wayland-protocols-wlr = { version = "0.2", optional = true }
+wayland-protocols-misc = { version = "0.2", optional = true }
+
+# Event loop for compositor
+calloop = { version = "0.13", optional = true }
+
+# TODO: Additional rendering dependencies when implementing rendering
+# pixman = { version = "0.1", optional = true }
+# gbm = { version = "0.14", optional = true }
+# drm = { version = "0.12", optional = true }
+# input = { version = "0.9", optional = true }
 
 # PipeWire integration
 pipewire = "0.8"
@@ -106,6 +122,13 @@ proptest = "1.4"
 default = ["pam-auth"]
 wayland = ["wayland-client", "wayland-protocols"]
 pam-auth = ["pam"]
+headless-compositor = [
+    "smithay",
+    "wayland-server",
+    "wayland-protocols-wlr",
+    "wayland-protocols-misc",
+    "calloop",
+]
 
 [profile.release]
 opt-level = 3
