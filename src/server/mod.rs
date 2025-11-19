@@ -125,7 +125,33 @@ impl WrdServer {
                 .context("Failed to initialize Portal manager")?,
         );
 
-        // Create combined portal session (ScreenCast + RemoteDesktop)
+        // Create Portal Clipboard BEFORE creating session (if enabled)
+        let portal_clipboard = if config.clipboard.enabled {
+            match crate::portal::clipboard::ClipboardManager::new().await {
+                Ok(clipboard_mgr) => {
+                    info!("Portal Clipboard manager created");
+                    Some(Arc::new(clipboard_mgr))
+                }
+                Err(e) => {
+                    warn!("Failed to create Portal Clipboard: {:#}", e);
+                    warn!("Clipboard will not be available");
+                    None
+                }
+            }
+        } else {
+            info!("Clipboard disabled in configuration");
+            None
+        };
+
+        // Set clipboard in portal manager so create_session() can use it
+        if let Some(ref clipboard) = portal_clipboard {
+            // Need mutable access to portal_manager
+            // Actually PortalManager doesn't have &mut method
+            // Clipboard request needs to happen in create_session()
+            // Let me check if we can do it there instead
+        }
+
+        // Create combined portal session (ScreenCast + RemoteDesktop + optionally Clipboard)
         info!("Creating combined portal session");
         let session_handle = portal_manager
             .create_session()
@@ -134,32 +160,18 @@ impl WrdServer {
 
         info!("Portal session created successfully");
 
-        // Try to create Portal Clipboard (may not be available on all systems)
-        let portal_clipboard = if config.clipboard.enabled {
-            match crate::portal::clipboard::ClipboardManager::new().await {
-                Ok(clipboard_mgr) => {
-                    match clipboard_mgr.enable_for_session(&session_handle.session).await {
-                        Ok(()) => {
-                            info!("✅ Portal Clipboard enabled for session");
-                            Some(Arc::new(clipboard_mgr))
-                        }
-                        Err(e) => {
-                            warn!("Failed to enable Portal Clipboard: {:#}", e);
-                            warn!("Clipboard will not be available");
-                            None
-                        }
-                    }
+        // Enable clipboard for session if available (after session created but before started)
+        if let Some(ref clipboard) = portal_clipboard {
+            match clipboard.enable_for_session(&session_handle.session).await {
+                Ok(()) => {
+                    info!("✅ Portal Clipboard enabled for session");
                 }
                 Err(e) => {
-                    warn!("Failed to create Portal Clipboard: {:#}", e);
-                    warn!("Clipboard portal may not be available on this system");
-                    None
+                    warn!("Failed to enable Portal Clipboard: {:#}", e);
+                    warn!("Clipboard will not be available - continuing without it");
                 }
             }
-        } else {
-            info!("Clipboard disabled in configuration");
-            None
-        };
+        }
 
         // Extract session details
         let pipewire_fd = session_handle.pipewire_fd;
