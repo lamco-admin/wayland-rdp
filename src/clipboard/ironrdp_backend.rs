@@ -55,8 +55,8 @@ pub struct WrdCliprdrFactory {
     /// Message receiver channel
     message_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<ClipboardMessage>>>>,
 
-    /// Shared message proxy for all backends
-    shared_proxy: Arc<Mutex<Option<WrdMessageProxy>>>,
+    /// Shared message proxy for all backends (created once, immutable)
+    shared_proxy: Arc<WrdMessageProxy>,
 }
 
 impl WrdCliprdrFactory {
@@ -72,7 +72,7 @@ impl WrdCliprdrFactory {
     pub fn new(clipboard_manager: Arc<Mutex<ClipboardManager>>) -> Self {
         // Create shared message channel for clipboard communication
         let (msg_tx, msg_rx) = mpsc::unbounded_channel();
-        let shared_proxy = Arc::new(Mutex::new(Some(WrdMessageProxy { tx: msg_tx })));
+        let shared_proxy = Arc::new(WrdMessageProxy { tx: msg_tx });
 
         // Store receiver for processing messages
         let message_rx = Arc::new(Mutex::new(Some(msg_rx)));
@@ -185,8 +185,8 @@ impl CliprdrBackendFactory for WrdCliprdrFactory {
         // The message proxy will be set later via the ServerEventSender trait
         // when the connection is established.
 
-        // Get shared proxy (should be available now)
-        let message_proxy = self.shared_proxy.blocking_lock().clone();
+        // Clone shared proxy (no lock needed - it's immutable)
+        let message_proxy = Some((*self.shared_proxy).clone());
 
         let backend = Box::new(WrdCliprdrBackend {
             clipboard_manager: Arc::clone(&self.clipboard_manager),
