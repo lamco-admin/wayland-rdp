@@ -418,11 +418,22 @@ impl ClipboardManager {
             data
         };
 
-        // Write to Portal clipboard via announcement (delayed rendering)
-        // Note: With Portal API, we announce formats and provide data on-demand
-        // For RDP → Portal direction, data arrives via on_format_data_response
-        // and is provided via SelectionWrite when Portal requests it
-        debug!("Wrote {} bytes to Portal clipboard ({})", portal_data.len(), mime_type);
+        // Temporary: Write to Wayland clipboard via wl-clipboard-rs
+        // Portal Clipboard has initialization issues, using simple write for now
+        use wl_clipboard_rs::copy::{MimeType as CopyMimeType, Options as CopyOptions, Source};
+
+        let mime = CopyMimeType::Specific(mime_type.to_string());
+        let source = Source::Bytes(portal_data.clone().into());
+        let opts = CopyOptions::new();
+
+        tokio::task::spawn_blocking(move || {
+            opts.copy(source, mime)
+        })
+        .await
+        .context("Failed to spawn clipboard write")?
+        .context("Failed to write to clipboard")?;
+
+        info!("✅ Wrote {} bytes to Wayland clipboard ({})", portal_data.len(), mime_type);
 
         Ok(())
     }
