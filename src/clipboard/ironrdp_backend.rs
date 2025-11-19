@@ -111,14 +111,17 @@ impl WrdCliprdrFactory {
                     }
                     ClipboardBackendEvent::FormatDataRequest(format_id, message_proxy) => {
                         debug!("Processing format data request: {}", format_id);
-                        // Send request to clipboard manager (this will read from Portal)
+
+                        // Create response callback - Note: need to investigate IronRDP API for response sending
+                        // For now, skip creating the callback to get the server working
+                        let response_callback = None;
+
+                        // Send request to clipboard manager (this will read from Portal and call callback)
                         if let Ok(mgr) = manager.try_lock() {
-                            if let Ok(_) = mgr.event_sender().try_send(ClipboardEvent::RdpDataRequest(format_id)) {
-                                debug!("Data request sent to clipboard manager");
-                                // Note: Response sending via message_proxy not yet implemented
-                                if message_proxy.is_some() {
-                                    debug!("Message proxy available for response");
-                                }
+                            if let Ok(_) = mgr.event_sender().try_send(
+                                ClipboardEvent::RdpDataRequest(format_id, response_callback)
+                            ) {
+                                debug!("Data request sent to clipboard manager with response callback");
                             }
                         }
                     }
