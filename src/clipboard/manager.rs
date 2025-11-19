@@ -54,14 +54,17 @@ impl Default for ClipboardConfig {
     }
 }
 
+/// Response callback for sending data back to RDP
+pub type RdpResponseCallback = Arc<dyn Fn(Vec<u8>) + Send + Sync>;
+
 /// Clipboard events from RDP or Portal
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ClipboardEvent {
     /// RDP client announced available formats
     RdpFormatList(Vec<ClipboardFormat>),
 
-    /// RDP client requests data in specific format
-    RdpDataRequest(u32),
+    /// RDP client requests data in specific format (with callback to send response)
+    RdpDataRequest(u32, Option<RdpResponseCallback>),
 
     /// RDP client provides requested data
     RdpDataResponse(Vec<u8>),
@@ -74,6 +77,19 @@ pub enum ClipboardEvent {
 
     /// Portal provides requested data
     PortalDataResponse(Vec<u8>),
+}
+
+impl std::fmt::Debug for ClipboardEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RdpFormatList(formats) => write!(f, "RdpFormatList({} formats)", formats.len()),
+            Self::RdpDataRequest(id, _) => write!(f, "RdpDataRequest({})", id),
+            Self::RdpDataResponse(data) => write!(f, "RdpDataResponse({} bytes)", data.len()),
+            Self::PortalFormatsAvailable(mimes) => write!(f, "PortalFormatsAvailable({:?})", mimes),
+            Self::PortalDataRequest(mime) => write!(f, "PortalDataRequest({})", mime),
+            Self::PortalDataResponse(data) => write!(f, "PortalDataResponse({} bytes)", data.len()),
+        }
+    }
 }
 
 /// Clipboard manager coordinates all clipboard operations
@@ -201,8 +217,8 @@ impl ClipboardManager {
                 Self::handle_rdp_format_list(formats, converter, sync_manager, portal_clipboard).await
             }
 
-            ClipboardEvent::RdpDataRequest(format_id) => {
-                Self::handle_rdp_data_request(format_id, converter, sync_manager, portal_clipboard).await
+            ClipboardEvent::RdpDataRequest(format_id, response_callback) => {
+                Self::handle_rdp_data_request(format_id, response_callback, converter, sync_manager, portal_clipboard).await
             }
 
             ClipboardEvent::RdpDataResponse(data) => {
@@ -258,8 +274,9 @@ impl ClipboardManager {
     /// Handle RDP data request - Client wants data from Portal clipboard
     async fn handle_rdp_data_request(
         format_id: u32,
+        response_callback: Option<RdpResponseCallback>,
         converter: &FormatConverter,
-        sync_manager: &Arc<RwLock<SyncManager>>,
+        _sync_manager: &Arc<RwLock<SyncManager>>,
         portal_clipboard: &Option<Arc<crate::portal::clipboard::ClipboardManager>>,
     ) -> Result<()> {
         debug!("RDP data request for format ID: {}", format_id);
@@ -305,9 +322,13 @@ impl ClipboardManager {
 
         debug!("Converted to RDP format: {} bytes", rdp_data.len());
 
-        // Note: Sending response back to RDP client requires message proxy
-        // This will be implemented when we add response channel to event queue
-        debug!("RDP data prepared (response mechanism pending)");
+        // Send response back to RDP client if callback provided
+        if let Some(callback) = response_callback {
+            callback(rdp_data);
+            debug!("Response sent to RDP client");
+        } else {
+            warn!("No response callback available for RDP data request");
+        }
 
         Ok(())
     }
