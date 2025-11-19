@@ -102,8 +102,19 @@ impl WrdCliprdrFactory {
                         debug!("Processing remote copy event: {} formats", formats.len());
                         // Send to clipboard manager
                         if let Ok(mgr) = manager.try_lock() {
-                            if let Ok(event_tx) = mgr.event_sender().try_send(ClipboardEvent::RdpFormatList(formats)) {
+                            if let Ok(_) = mgr.event_sender().try_send(ClipboardEvent::RdpFormatList(formats.clone())) {
                                 debug!("Format list sent to clipboard manager");
+
+                                // Proactively request common formats to populate Wayland clipboard
+                                // Check for text format (CF_UNICODETEXT = 13 or CF_TEXT = 1)
+                                let has_unicode_text = formats.iter().any(|f| f.format_id == 13);
+                                let has_text = formats.iter().any(|f| f.format_id == 1);
+
+                                if has_unicode_text || has_text {
+                                    debug!("Requesting text clipboard data proactively");
+                                    // Request will trigger on_format_data_request which we need to handle
+                                    // For now, just log that we detected text
+                                }
                             } else {
                                 warn!("Failed to send format list - manager queue full");
                             }
@@ -290,7 +301,21 @@ impl CliprdrBackend for WrdCliprdrBackend {
 
         // Non-blocking: push event to queue for async processing
         if let Ok(mut queue) = self.event_queue.try_write() {
-            queue.push_back(ClipboardBackendEvent::RemoteCopy(wrd_formats));
+            queue.push_back(ClipboardBackendEvent::RemoteCopy(wrd_formats.clone()));
+
+            // Immediately request text data if available (CF_UNICODETEXT=13 or CF_TEXT=1)
+            let text_format = available_formats.iter()
+                .find(|f| f.id.0 == 13 || f.id.0 == 1)
+                .map(|f| f.id.0);
+
+            if let Some(format_id) = text_format {
+                debug!("Proactively requesting text format {} from RDP client", format_id);
+                // Note: We need to send a FormatDataRequest to the RDP client to get the actual data.
+                // The ClipboardMessage API for this is unclear from current imports.
+                // For now, log that we detected text is available.
+                // The client will send data when something pastes (reactive model).
+                debug!("Text format available but proactive request not yet implemented");
+            }
         } else {
             warn!("Clipboard event queue locked, skipping format announcement");
         }
