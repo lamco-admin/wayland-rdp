@@ -42,6 +42,7 @@ pub use auth::{PamAuthenticator, AuthenticatedUser};
 pub use session::{SessionManager, UserSession, SessionState};
 pub use security::{SecurityManager, ResourceLimits};
 pub use config::LoginConfig;
+pub use logind::{LogindClient, SessionInfo, SessionProperties};
 
 use anyhow::Result;
 

@@ -67,6 +67,12 @@ pub mod types;
 pub use self::state::{CompositorState, WrdCompositor};
 #[cfg(feature = "headless-compositor")]
 pub use self::types::{CompositorConfig, CompositorEvent, WindowId};
+#[cfg(feature = "headless-compositor")]
+pub use self::smithay_impl::SmithayCompositor;
+#[cfg(feature = "headless-compositor")]
+pub use self::software_renderer::SoftwareRenderer;
+#[cfg(feature = "headless-compositor")]
+pub use self::integration::{CompositorRdpIntegration, RenderedFrame, IntegrationStats};
 
 use anyhow::Result;
 use std::sync::Arc;
