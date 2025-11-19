@@ -26,7 +26,7 @@ pub struct PortalManager {
     connection: zbus::Connection,
     screencast: Arc<ScreenCastManager>,
     remote_desktop: Arc<RemoteDesktopManager>,
-    clipboard: Arc<ClipboardManager>,
+    clipboard: Option<Arc<ClipboardManager>>,
 }
 
 impl PortalManager {
@@ -48,7 +48,8 @@ impl PortalManager {
         let remote_desktop =
             Arc::new(RemoteDesktopManager::new(connection.clone(), config.clone()).await?);
 
-        let clipboard = Arc::new(ClipboardManager::new(connection.clone(), config.clone()).await?);
+        // Clipboard manager requires a RemoteDesktop session
+        // It will be created after session is established in create_session_with_clipboard()
 
         info!("Portal Manager initialized successfully");
 
@@ -57,7 +58,7 @@ impl PortalManager {
             connection,
             screencast,
             remote_desktop,
-            clipboard,
+            clipboard: None, // Created later with session
         })
     }
 
@@ -158,8 +159,13 @@ impl PortalManager {
     }
 
     /// Access clipboard manager
-    pub fn clipboard(&self) -> &Arc<ClipboardManager> {
-        &self.clipboard
+    pub fn clipboard(&self) -> Option<&Arc<ClipboardManager>> {
+        self.clipboard.as_ref()
+    }
+
+    /// Set clipboard manager (called after session creation)
+    pub fn set_clipboard(&mut self, clipboard: Arc<ClipboardManager>) {
+        self.clipboard = Some(clipboard);
     }
 
     /// Cleanup all portal resources

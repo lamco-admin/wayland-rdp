@@ -223,8 +223,10 @@ impl WrdServer {
             .await
             .context("Failed to create clipboard manager")?;
 
-        // Set Portal clipboard reference
-        clipboard_mgr.set_portal_clipboard(Arc::clone(portal_manager.clipboard()));
+        // Portal clipboard will be created after session is established
+        // For now, clipboard manager doesn't have Portal reference
+        // This will be set later when we implement Portal Clipboard API integration
+        // clipboard_mgr.set_portal_clipboard(...);
 
         let clipboard_manager = Arc::new(Mutex::new(clipboard_mgr));
 
