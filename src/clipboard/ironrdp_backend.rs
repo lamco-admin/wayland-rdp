@@ -310,11 +310,16 @@ impl CliprdrBackend for WrdCliprdrBackend {
 
             if let Some(format_id) = text_format {
                 debug!("Proactively requesting text format {} from RDP client", format_id);
-                // Note: We need to send a FormatDataRequest to the RDP client to get the actual data.
-                // The ClipboardMessage API for this is unclear from current imports.
-                // For now, log that we detected text is available.
-                // The client will send data when something pastes (reactive model).
-                debug!("Text format available but proactive request not yet implemented");
+                // Send SendInitiatePaste to request the data from RDP client
+                if let Some(proxy) = &self.message_proxy {
+                    use ironrdp_cliprdr::pdu::ClipboardFormatId;
+                    proxy.send_clipboard_message(ClipboardMessage::SendInitiatePaste(
+                        ClipboardFormatId(format_id)
+                    ));
+                    debug!("Sent initiate paste request for format {}", format_id);
+                } else {
+                    warn!("No message proxy available to request clipboard data");
+                }
             }
         } else {
             warn!("Clipboard event queue locked, skipping format announcement");
