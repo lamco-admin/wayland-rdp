@@ -134,26 +134,32 @@ impl WrdServer {
 
         info!("Portal session created successfully");
 
-        // Create Portal Clipboard manager
-        let portal_clipboard = Arc::new(
-            crate::portal::clipboard::ClipboardManager::new()
-                .await
-                .context("Failed to create Portal Clipboard manager")?
-        );
-
-        // Enable clipboard for this session
-        match portal_clipboard.enable_for_session(&session_handle.session).await {
-            Ok(()) => {
-                info!("✅ Portal Clipboard enabled for session");
+        // Try to create Portal Clipboard (may not be available on all systems)
+        let portal_clipboard = if config.clipboard.enabled {
+            match crate::portal::clipboard::ClipboardManager::new().await {
+                Ok(clipboard_mgr) => {
+                    match clipboard_mgr.enable_for_session(&session_handle.session).await {
+                        Ok(()) => {
+                            info!("✅ Portal Clipboard enabled for session");
+                            Some(Arc::new(clipboard_mgr))
+                        }
+                        Err(e) => {
+                            warn!("Failed to enable Portal Clipboard: {:#}", e);
+                            warn!("Clipboard will not be available");
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to create Portal Clipboard: {:#}", e);
+                    warn!("Clipboard portal may not be available on this system");
+                    None
+                }
             }
-            Err(e) => {
-                warn!("Failed to enable Portal Clipboard (may not be supported): {}", e);
-                warn!("Clipboard functionality will be limited");
-                // Don't fail server startup - clipboard is optional
-            }
-        }
-
-        info!("Portal Clipboard manager created");
+        } else {
+            info!("Clipboard disabled in configuration");
+            None
+        };
 
         // Extract session details
         let pipewire_fd = session_handle.pipewire_fd;
@@ -250,11 +256,14 @@ impl WrdServer {
             .await
             .context("Failed to create clipboard manager")?;
 
-        // Set Portal clipboard reference with shared session
-        clipboard_mgr.set_portal_clipboard(
-            portal_clipboard,
-            Arc::clone(&shared_session), // Share session with clipboard
-        );
+        // Set Portal clipboard reference if available
+        if let Some(portal_clip) = portal_clipboard {
+            clipboard_mgr.set_portal_clipboard(
+                portal_clip,
+                Arc::clone(&shared_session), // Share session with clipboard
+            );
+            info!("Portal Clipboard integrated with clipboard manager");
+        }
 
         let clipboard_manager = Arc::new(Mutex::new(clipboard_mgr));
 
