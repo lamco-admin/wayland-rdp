@@ -605,11 +605,14 @@ impl ClipboardManager {
 
             if let Ok(text) = String::from_utf16(&utf16_data) {
                 // Successfully decoded as UTF-16 text
-                debug!("Converted UTF-16 text: {} chars", text.len());
-                text.into_bytes()
+                let utf8_bytes = text.as_bytes().to_vec();
+                debug!("Converted UTF-16 to UTF-8: {} UTF-16 chars ({} bytes) → {} UTF-8 bytes",
+                    utf16_data.len(), data.len(), utf8_bytes.len());
+                debug!("Text preview: {:?}", &text[..text.len().min(50)]);
+                utf8_bytes
             } else {
                 // Not valid UTF-16, use raw data
-                debug!("Data is not UTF-16 text, using raw bytes");
+                warn!("Data is not valid UTF-16 text, using raw bytes");
                 data
             }
         } else {
