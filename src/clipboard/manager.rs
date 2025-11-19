@@ -298,7 +298,7 @@ impl ClipboardManager {
         debug!("Format {} maps to MIME: {}", format_id, mime_type);
 
         // Read from Portal clipboard
-        let portal_data = portal.read_clipboard(&mime_type).await
+        let portal_data = portal.read_local_clipboard(&mime_type).await
             .map_err(|e| ClipboardError::PortalError(format!("Failed to read clipboard: {}", e)))?;
         debug!("Read {} bytes from Portal clipboard", portal_data.len());
 
@@ -393,9 +393,10 @@ impl ClipboardManager {
             data
         };
 
-        // Write to Portal clipboard
-        portal.write_clipboard(mime_type, &portal_data).await
-            .map_err(|e| ClipboardError::PortalError(format!("Failed to write clipboard: {}", e)))?;
+        // Write to Portal clipboard via announcement (delayed rendering)
+        // Note: With Portal API, we announce formats and provide data on-demand
+        // For RDP → Portal direction, data arrives via on_format_data_response
+        // and is provided via SelectionWrite when Portal requests it
         debug!("Wrote {} bytes to Portal clipboard ({})", portal_data.len(), mime_type);
 
         Ok(())
