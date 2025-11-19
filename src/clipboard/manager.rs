@@ -235,8 +235,9 @@ impl ClipboardManager {
 
         debug!("Converted to MIME types: {:?}", mime_types);
 
-        // TODO: When Portal clipboard integration is ready, announce formats to Portal
-        // portal_clipboard.advertise_formats(mime_types).await?;
+        // Note: Format announcement to Portal happens via the ironrdp_backend
+        // when clipboard operations are triggered. This helper is currently unused
+        // but provides the conversion logic for when Portal integration is activated.
 
         Ok(())
     }
@@ -291,7 +292,9 @@ impl ClipboardManager {
             return Ok(());
         }
 
-        // TODO: When Portal integration is ready, forward data to Portal
+        // Note: Data forwarding to Portal happens via ironrdp_backend.rs
+        // on_format_data_response() which handles the actual Portal write.
+        // This helper provides the conversion logic when needed.
 
         Ok(())
     }
@@ -320,7 +323,8 @@ impl ClipboardManager {
 
         debug!("Converted to RDP formats: {:?}", rdp_formats);
 
-        // TODO: When RDP integration is ready, send format list to RDP client
+        // Note: Format list transmission to RDP happens via the message proxy
+        // in ironrdp_backend.rs. This helper provides conversion logic.
 
         Ok(())
     }
@@ -341,10 +345,10 @@ impl ClipboardManager {
 
         match state {
             ClipboardState::RdpOwned(_formats) => {
-                // TODO: When RDP integration is ready
-                // 1. Request data from RDP for format_id
-                // 2. Convert from RDP format
-                // 3. Send response to Portal
+                // Data flow: RDP → Portal
+                // This helper is currently unused. Actual implementation happens
+                // in ironrdp_backend.rs on_file_contents_response() and
+                // on_format_data_response() which handle Portal writes.
 
                 debug!("Would fetch data from RDP for format: {}", format_id);
                 Ok(())
@@ -375,7 +379,8 @@ impl ClipboardManager {
             return Ok(());
         }
 
-        // TODO: When RDP integration is ready, forward data to RDP client
+        // Note: Data forwarding to RDP happens via ironrdp_backend.rs
+        // message proxy. This helper provides conversion logic when needed.
 
         Ok(())
     }
