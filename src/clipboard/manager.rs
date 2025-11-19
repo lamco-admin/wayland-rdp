@@ -8,7 +8,7 @@ use crate::clipboard::formats::{ClipboardFormat, FormatConverter};
 use crate::clipboard::sync::{ClipboardState, LoopDetectionConfig, LoopDetector, SyncManager};
 use crate::clipboard::transfer::{TransferConfig, TransferEngine};
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
 /// Clipboard configuration
@@ -116,8 +116,8 @@ pub struct ClipboardManager {
     /// Portal clipboard manager for read/write operations
     portal_clipboard: Option<Arc<crate::portal::clipboard::ClipboardManager>>,
 
-    /// Portal session (needed for Portal Clipboard API calls)
-    portal_session: Option<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>,
+    /// Portal session (shared with input handler, wrapped for concurrent access)
+    portal_session: Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>,
 }
 
 impl ClipboardManager {
@@ -171,7 +171,7 @@ impl ClipboardManager {
     pub fn set_portal_clipboard(
         &mut self,
         portal: Arc<crate::portal::clipboard::ClipboardManager>,
-        session: ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>,
+        session: Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
     ) {
         self.portal_clipboard = Some(portal);
         self.portal_session = Some(session);

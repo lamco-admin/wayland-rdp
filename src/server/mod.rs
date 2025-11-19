@@ -207,9 +207,12 @@ impl WrdServer {
 
         info!("Using PipeWire stream node ID {} for input injection", primary_stream_id);
 
+        // Wrap session in Arc<Mutex> for sharing between input and clipboard
+        let shared_session = Arc::new(Mutex::new(session_handle.session));
+
         let input_handler = WrdInputHandler::new(
             portal_manager.remote_desktop().clone(),
-            session_handle.session,
+            Arc::clone(&shared_session), // Share session with input handler
             monitors,
             primary_stream_id,
         )
@@ -239,10 +242,11 @@ impl WrdServer {
             .await
             .context("Failed to create clipboard manager")?;
 
-        // Set Portal clipboard reference (session passing needs refactoring)
-        // For now, just set the portal without session
-        // clipboard_mgr.set_portal_clipboard(portal_clipboard, ...);
-        // This needs architectural refactoring to handle session sharing
+        // Set Portal clipboard reference with shared session
+        clipboard_mgr.set_portal_clipboard(
+            portal_clipboard,
+            Arc::clone(&shared_session), // Share session with clipboard
+        );
 
         let clipboard_manager = Arc::new(Mutex::new(clipboard_mgr));
 
