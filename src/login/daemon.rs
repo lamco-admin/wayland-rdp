@@ -45,7 +45,7 @@ impl WrdLoginDaemon {
         ));
 
         // Create session manager
-        let sessions = Arc::new(SessionManager::new(Arc::clone(&config))?);
+        let sessions = Arc::new(SessionManager::new(Arc::clone(&config)).await?);
 
         // Create security manager
         let limits = ResourceLimits::new(

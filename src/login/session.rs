@@ -4,6 +4,7 @@
 
 use super::auth::AuthenticatedUser;
 use super::config::LoginConfig;
+use super::logind::LogindClient;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -155,20 +156,22 @@ pub struct SessionManager {
     config: Arc<LoginConfig>,
 
     /// systemd-logind client
-    logind_client: Option<Arc<LogindClient>>,
+    logind_client: Option<Arc<tokio::sync::Mutex<LogindClient>>>,
 }
 
 impl SessionManager {
     /// Create new session manager
-    pub fn new(config: Arc<LoginConfig>) -> Result<Self> {
+    pub async fn new(config: Arc<LoginConfig>) -> Result<Self> {
         info!("Initializing session manager");
 
         // Create systemd-logind client
-        let logind_client = LogindClient::new().ok().map(Arc::new);
-
-        if logind_client.is_none() {
-            warn!("Failed to connect to systemd-logind - session tracking limited");
-        }
+        let logind_client = match LogindClient::new().await {
+            Ok(client) => Some(Arc::new(tokio::sync::Mutex::new(client))),
+            Err(e) => {
+                warn!("Failed to connect to systemd-logind: {} - session tracking limited", e);
+                None
+            }
+        };
 
         Ok(Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -196,7 +199,7 @@ impl SessionManager {
 
         // Create systemd-logind session
         if let Some(logind) = &self.logind_client {
-            match logind.create_session(&user).await {
+            match logind.lock().await.create_session(&user).await {
                 Ok(session_id) => {
                     info!("Created systemd-logind session: {}", session_id);
                     session.logind_session_id = Some(session_id);
@@ -263,7 +266,7 @@ impl SessionManager {
         // Terminate systemd-logind session
         if let Some(logind) = &self.logind_client {
             if let Some(logind_session_id) = &session.logind_session_id {
-                logind.terminate_session(logind_session_id).await?;
+                logind.lock().await.terminate_session(logind_session_id).await?;
             }
         }
 
@@ -408,43 +411,7 @@ impl SessionManager {
     }
 }
 
-/// systemd-logind client
-pub struct LogindClient {
-    // Placeholder for D-Bus connection to systemd-logind
-    // In a real implementation, this would use zbus to communicate with logind
-}
-
-impl LogindClient {
-    /// Create new logind client
-    pub fn new() -> Result<Self> {
-        info!("Connecting to systemd-logind");
-
-        // TODO: Establish D-Bus connection
-        // let connection = zbus::Connection::system().await?;
-
-        Ok(Self {})
-    }
-
-    /// Create systemd-logind session
-    pub async fn create_session(&self, user: &AuthenticatedUser) -> Result<String> {
-        debug!("Creating systemd-logind session for user: {}", user.username);
-
-        // TODO: Call systemd-logind D-Bus API
-        // For now, generate a dummy session ID
-        let session_id = format!("c{}", uuid::Uuid::new_v4().simple());
-
-        Ok(session_id)
-    }
-
-    /// Terminate systemd-logind session
-    pub async fn terminate_session(&self, session_id: &str) -> Result<()> {
-        debug!("Terminating systemd-logind session: {}", session_id);
-
-        // TODO: Call systemd-logind D-Bus API
-
-        Ok(())
-    }
-}
+// systemd-logind client is now in its own module (logind.rs)
 
 #[cfg(test)]
 mod tests {
