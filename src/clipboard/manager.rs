@@ -264,9 +264,12 @@ impl ClipboardManager {
 
         debug!("Converted to MIME types: {:?}", mime_types);
 
-        // Note: Format announcement to Portal happens via the ironrdp_backend
-        // when clipboard operations are triggered. This helper is currently unused
-        // but provides the conversion logic for when Portal integration is activated.
+        // With wl-clipboard-rs, we can't just announce formats - we need actual data.
+        // The RDP client has data but won't send it until we request it.
+        // We need to trigger a format data request back to RDP to get the actual bytes.
+        //
+        // This is the missing link: RDP announces → we request data → RDP sends → we write to Portal
+        debug!("RDP formats available but need to implement proactive data request");
 
         Ok(())
     }
