@@ -113,8 +113,10 @@ impl FormatConverter {
     /// Initialize format mapping tables
     fn init_format_mappings(&mut self) {
         // Text formats
-        self.add_mapping(CF_TEXT, "text/plain;charset=utf-8");
-        self.add_mapping(CF_UNICODETEXT, "text/plain");
+        // CF_UNICODETEXT is UTF-16LE, maps to UTF-8 text
+        self.add_mapping(CF_UNICODETEXT, "text/plain;charset=utf-8");
+        // CF_TEXT is ANSI/ASCII (legacy), maps to plain text
+        self.add_mapping(CF_TEXT, "text/plain");
         self.add_mapping(CF_HTML, "text/html");
         self.add_mapping(CF_RTF, "application/rtf");
 
