@@ -92,6 +92,10 @@ impl WrdCliprdrFactory {
 
         info!("Clipboard event processor task started");
 
+        // TODO: Start task to process message_rx and forward ClipboardMessages
+        // Currently SendInitiatePaste messages go into the channel but aren't processed
+        // Need to convert ClipboardMessage → actual RDP protocol actions
+
         Self {
             clipboard_manager,
             event_sender: None,
