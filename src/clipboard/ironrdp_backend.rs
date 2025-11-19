@@ -22,25 +22,13 @@ use crate::clipboard::formats::ClipboardFormat as WrdClipboardFormat;
 #[derive(Debug, Clone)]
 enum ClipboardBackendEvent {
     RemoteCopy(Vec<WrdClipboardFormat>),
-    FormatDataRequest(u32, Option<WrdMessageProxy>),
+    FormatDataRequest(u32),
     FormatDataResponse(Vec<u8>),
-    FileContentsRequest(u32, u32, u64, u32, Option<WrdMessageProxy>),
+    FileContentsRequest(u32, u32, u64, u32),
     FileContentsResponse(u32, Vec<u8>),
 }
 
-/// Clipboard message proxy implementation
-#[derive(Debug, Clone)]
-struct WrdMessageProxy {
-    tx: mpsc::UnboundedSender<ClipboardMessage>,
-}
-
-impl ClipboardMessageProxy for WrdMessageProxy {
-    fn send_clipboard_message(&self, message: ClipboardMessage) {
-        if let Err(e) = self.tx.send(message) {
-            error!("Failed to send clipboard message: {:?}", e);
-        }
-    }
-}
+// ClipboardMessage proxy removed - ServerEvent channel is used instead
 
 /// Clipboard backend factory for IronRDP server
 ///
@@ -51,12 +39,6 @@ pub struct WrdCliprdrFactory {
 
     /// Server event sender for IronRDP
     event_sender: Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>,
-
-    /// Message receiver channel
-    message_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<ClipboardMessage>>>>,
-
-    /// Shared message proxy for all backends (created once, immutable)
-    shared_proxy: Arc<WrdMessageProxy>,
 
     /// Shared event queue for all backends
     shared_event_queue: Arc<RwLock<VecDeque<ClipboardBackendEvent>>>,
@@ -73,14 +55,7 @@ impl WrdCliprdrFactory {
     ///
     /// A new factory instance
     pub fn new(clipboard_manager: Arc<Mutex<ClipboardManager>>) -> Self {
-        // Create shared message channel for clipboard communication
-        let (msg_tx, msg_rx) = mpsc::unbounded_channel();
-        let shared_proxy = Arc::new(WrdMessageProxy { tx: msg_tx });
-
-        // Store receiver for processing messages
-        let message_rx = Arc::new(Mutex::new(Some(msg_rx)));
-
-        // Create shared event queue
+        // Create shared event queue for all clipboard backends
         let shared_event_queue = Arc::new(RwLock::new(VecDeque::new()));
 
         // Start single async task to process clipboard events (spawn once here, not per backend)
@@ -92,22 +67,11 @@ impl WrdCliprdrFactory {
 
         info!("Clipboard event processor task started");
 
-        // TODO: Start task to process message_rx and forward ClipboardMessages
-        // Currently SendInitiatePaste messages go into the channel but aren't processed
-        // Need to convert ClipboardMessage → actual RDP protocol actions
-
         Self {
             clipboard_manager,
             event_sender: None,
-            message_rx,
-            shared_proxy,
             shared_event_queue,
         }
-    }
-
-    /// Get message receiver for processing clipboard messages
-    pub async fn take_message_receiver(&self) -> Option<mpsc::UnboundedReceiver<ClipboardMessage>> {
-        self.message_rx.lock().await.take()
     }
 }
 
@@ -151,19 +115,15 @@ impl WrdCliprdrFactory {
                             }
                         }
                     }
-                    ClipboardBackendEvent::FormatDataRequest(format_id, message_proxy) => {
+                    ClipboardBackendEvent::FormatDataRequest(format_id) => {
                         debug!("Processing format data request: {}", format_id);
 
-                        // Create response callback - Note: need to investigate IronRDP API for response sending
-                        // For now, skip creating the callback to get the server working
-                        let response_callback = None;
-
-                        // Send request to clipboard manager (this will read from Portal and call callback)
+                        // Send request to clipboard manager (will read from Portal)
                         if let Ok(mgr) = manager.try_lock() {
                             if let Ok(_) = mgr.event_sender().try_send(
-                                ClipboardEvent::RdpDataRequest(format_id, response_callback)
+                                ClipboardEvent::RdpDataRequest(format_id, None)
                             ) {
-                                debug!("Data request sent to clipboard manager with response callback");
+                                debug!("Data request sent to clipboard manager");
                             }
                         }
                     }
@@ -176,7 +136,7 @@ impl WrdCliprdrFactory {
                             }
                         }
                     }
-                    ClipboardBackendEvent::FileContentsRequest(stream_id, _index, _position, _size, _proxy) => {
+                    ClipboardBackendEvent::FileContentsRequest(stream_id, _index, _position, _size) => {
                         debug!("Processing file contents request: stream={}", stream_id);
                         // File transfer not yet implemented - will be added after text/images work
                     }
@@ -362,12 +322,8 @@ impl CliprdrBackend for WrdCliprdrBackend {
         debug!("Format data requested for format ID: {}", format_id);
 
         // Non-blocking: push to event queue
-        // Note: Response mechanism removed - will be implemented differently
         if let Ok(mut queue) = self.event_queue.try_write() {
-            queue.push_back(ClipboardBackendEvent::FormatDataRequest(
-                format_id,
-                None, // No response callback for now
-            ));
+            queue.push_back(ClipboardBackendEvent::FormatDataRequest(format_id));
         }
     }
 
@@ -404,7 +360,6 @@ impl CliprdrBackend for WrdCliprdrBackend {
                 list_index,
                 position,
                 size,
-                None, // No response callback for now
             ));
         }
     }
