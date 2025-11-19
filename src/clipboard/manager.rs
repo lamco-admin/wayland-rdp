@@ -430,8 +430,8 @@ impl ClipboardManager {
             opts.copy(source, mime)
         })
         .await
-        .map_err(|e| ClipboardError::TransferFailed(format!("spawn error: {}", e)))?
-        .map_err(|e| ClipboardError::TransferFailed(format!("clipboard write: {}", e)))?;
+        .map_err(|e| ClipboardError::PortalError(format!("spawn error: {}", e)))?
+        .map_err(|e| ClipboardError::PortalError(format!("clipboard write: {}", e)))?;
 
         info!("✅ Wrote {} bytes to Wayland clipboard ({})", portal_data.len(), mime_type);
 
