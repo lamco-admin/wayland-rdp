@@ -151,27 +151,14 @@ impl WrdServer {
             // Let me check if we can do it there instead
         }
 
-        // Create combined portal session (ScreenCast + RemoteDesktop + optionally Clipboard)
+        // Create combined portal session (pass clipboard to be enabled at correct time)
         info!("Creating combined portal session");
         let session_handle = portal_manager
-            .create_session()
+            .create_session(portal_clipboard.as_ref().map(|c| c.as_ref()))
             .await
             .context("Failed to create portal session")?;
 
-        info!("Portal session created successfully");
-
-        // Enable clipboard for session if available (after session created but before started)
-        if let Some(ref clipboard) = portal_clipboard {
-            match clipboard.enable_for_session(&session_handle.session).await {
-                Ok(()) => {
-                    info!("✅ Portal Clipboard enabled for session");
-                }
-                Err(e) => {
-                    warn!("Failed to enable Portal Clipboard: {:#}", e);
-                    warn!("Clipboard will not be available - continuing without it");
-                }
-            }
-        }
+        info!("Portal session created successfully (clipboard enabled if available)");
 
         // Extract session details
         let pipewire_fd = session_handle.pipewire_fd;

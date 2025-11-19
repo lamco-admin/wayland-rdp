@@ -62,23 +62,31 @@ impl PortalManager {
         })
     }
 
-    /// Create a complete portal session (ScreenCast for video, RemoteDesktop for input)
+    /// Create a complete portal session (ScreenCast for video, RemoteDesktop for input, optionally Clipboard)
     ///
     /// This triggers the user permission dialog and returns a session handle
     /// with PipeWire access for video and input injection capabilities.
+    ///
+    /// # Arguments
+    ///
+    /// * `clipboard` - Optional Clipboard manager to enable for this session
     ///
     /// # Flow
     ///
     /// 1. Create combined RemoteDesktop session (includes ScreenCast capability)
     /// 2. Select devices (keyboard + pointer for input injection)
     /// 3. Select sources (monitors to capture for screen sharing)
-    /// 4. Start session (triggers permission dialog)
-    /// 5. Get PipeWire FD and stream information
+    /// 4. Request clipboard access (if clipboard provided) ← BEFORE START
+    /// 5. Start session (triggers permission dialog)
+    /// 6. Get PipeWire FD and stream information
     ///
     /// # Returns
     ///
     /// PortalSessionHandle with PipeWire FD, stream information, and session reference
-    pub async fn create_session(&self) -> Result<PortalSessionHandle> {
+    pub async fn create_session(
+        &self,
+        clipboard: Option<&crate::portal::clipboard::ClipboardManager>,
+    ) -> Result<PortalSessionHandle> {
         info!("Creating combined portal session (ScreenCast + RemoteDesktop)");
 
         // Create RemoteDesktop session (this type of session can include screen sharing)
@@ -118,6 +126,17 @@ impl PortalManager {
             .context("Failed to select screen sources")?;
 
         info!("Screen sources selected - permission dialog will appear");
+
+        // Request clipboard access BEFORE starting session (required by Portal spec)
+        if let Some(clipboard_mgr) = clipboard {
+            info!("Requesting clipboard access for session");
+            if let Err(e) = clipboard_mgr.portal_clipboard().request(&remote_desktop_session).await {
+                warn!("Failed to request clipboard access: {}", e);
+                warn!("Clipboard will not be available");
+            } else {
+                info!("✅ Clipboard access requested for session");
+            }
+        }
 
         // Start the combined session (triggers permission dialog)
         let (pipewire_fd, streams) = self.remote_desktop.start_session(&remote_desktop_session).await
