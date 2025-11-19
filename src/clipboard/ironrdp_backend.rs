@@ -10,13 +10,23 @@ use ironrdp_cliprdr::pdu::{
 };
 use ironrdp_core::AsAny;
 use ironrdp_server::ServerEventSender;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
 use crate::clipboard::manager::{ClipboardManager, ClipboardEvent};
 use crate::clipboard::formats::ClipboardFormat as WrdClipboardFormat;
+
+/// Clipboard event for non-blocking queue
+#[derive(Debug, Clone)]
+enum ClipboardBackendEvent {
+    RemoteCopy(Vec<WrdClipboardFormat>),
+    FormatDataRequest(u32),
+    FormatDataResponse(Vec<u8>),
+    FileContentsRequest(u32, u32, u64, u32),
+    FileContentsResponse(u32, Vec<u8>),
+}
 
 /// Clipboard message proxy implementation
 #[derive(Debug, Clone)]
@@ -70,6 +80,53 @@ impl WrdCliprdrFactory {
     }
 }
 
+impl WrdCliprdrFactory {
+    /// Process clipboard events from the non-blocking queue
+    async fn process_clipboard_events(
+        queue: Arc<RwLock<VecDeque<ClipboardBackendEvent>>>,
+        manager: Arc<Mutex<ClipboardManager>>,
+    ) {
+        loop {
+            // Non-blocking check for events
+            let event = {
+                if let Ok(mut q) = queue.try_write() {
+                    q.pop_front()
+                } else {
+                    None
+                }
+            };
+
+            if let Some(event) = event {
+                match event {
+                    ClipboardBackendEvent::RemoteCopy(formats) => {
+                        debug!("Processing remote copy event: {} formats", formats.len());
+                        // TODO: Forward to clipboard manager
+                    }
+                    ClipboardBackendEvent::FormatDataRequest(format_id) => {
+                        debug!("Processing format data request: {}", format_id);
+                        // TODO: Fetch from Portal, send to RDP
+                    }
+                    ClipboardBackendEvent::FormatDataResponse(data) => {
+                        debug!("Processing format data response: {} bytes", data.len());
+                        // TODO: Write to Portal
+                    }
+                    ClipboardBackendEvent::FileContentsRequest(stream_id, index, position, size) => {
+                        debug!("Processing file contents request: stream={}", stream_id);
+                        // TODO: Read file, send to RDP
+                    }
+                    ClipboardBackendEvent::FileContentsResponse(stream_id, data) => {
+                        debug!("Processing file contents response: stream={}, {} bytes", stream_id, data.len());
+                        // TODO: Write file chunk
+                    }
+                }
+            }
+
+            // Sleep briefly to avoid busy-looping
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+    }
+}
+
 impl CliprdrBackendFactory for WrdCliprdrFactory {
     fn build_cliprdr_backend(&self) -> Box<dyn CliprdrBackend> {
         debug!("Building clipboard backend for new connection");
@@ -82,14 +139,23 @@ impl CliprdrBackendFactory for WrdCliprdrFactory {
         // The message proxy will be set later via the ServerEventSender trait
         // when the connection is established.
 
-        Box::new(WrdCliprdrBackend {
+        let backend = Box::new(WrdCliprdrBackend {
             clipboard_manager: Arc::clone(&self.clipboard_manager),
             capabilities: ClipboardGeneralCapabilityFlags::empty(),
             temporary_directory: "/tmp/wrd-clipboard".to_string(),
             message_proxy: None, // Will be set when connection succeeds
-            pending_requests: Arc::new(RwLock::new(HashMap::new())),
-            file_transfers: Arc::new(RwLock::new(HashMap::new())),
-        })
+            event_queue: Arc::new(RwLock::new(VecDeque::new())),
+        });
+
+        // Spawn async task to process events from queue
+        // This runs in a separate task, so it won't block IronRDP callbacks
+        let queue = backend.event_queue.clone();
+        let manager = Arc::clone(&self.clipboard_manager);
+        tokio::spawn(async move {
+            Self::process_clipboard_events(queue, manager).await;
+        });
+
+        backend
     }
 }
 
@@ -130,11 +196,8 @@ struct WrdCliprdrBackend {
     /// Message proxy for sending responses
     message_proxy: Option<WrdMessageProxy>,
 
-    /// Pending format data requests (format_id -> request_context)
-    pending_requests: Arc<RwLock<HashMap<u32, FormatDataRequest>>>,
-
-    /// Active file transfers (stream_id -> transfer_state)
-    file_transfers: Arc<RwLock<HashMap<u32, FileTransferState>>>,
+    /// Event queue for non-blocking clipboard operations
+    event_queue: Arc<RwLock<VecDeque<ClipboardBackendEvent>>>,
 }
 
 impl AsAny for WrdCliprdrBackend {
@@ -192,19 +255,31 @@ impl CliprdrBackend for WrdCliprdrBackend {
             debug!("  Format {}: ID={:?}, Name={}", idx, format.id, name);
         }
 
-        // Note: This callback is called from IronRDP's sync context.
-        // Blocking operations here can deadlock the IronRDP runtime.
-        // For now, just log the formats. Full clipboard integration will
-        // be implemented after resolving the async/sync boundary issues.
+        // Convert IronRDP formats to our format
+        let wrd_formats: Vec<WrdClipboardFormat> = available_formats
+            .iter()
+            .map(|f| WrdClipboardFormat {
+                format_id: f.id.0,
+                format_name: f.name.as_ref().map(|n| n.value().to_string()).unwrap_or_default(),
+            })
+            .collect();
+
+        // Non-blocking: push event to queue for async processing
+        if let Ok(mut queue) = self.event_queue.try_write() {
+            queue.push_back(ClipboardBackendEvent::RemoteCopy(wrd_formats));
+        } else {
+            warn!("Clipboard event queue locked, skipping format announcement");
+        }
     }
 
     fn on_format_data_request(&mut self, request: FormatDataRequest) {
         let format_id = request.format.0;
         debug!("Format data requested for format ID: {}", format_id);
 
-        // Note: Blocking operations in this callback can deadlock IronRDP.
-        // For now, log only. Full implementation requires redesign to avoid
-        // blocking the IronRDP event loop.
+        // Non-blocking: push to event queue
+        if let Ok(mut queue) = self.event_queue.try_write() {
+            queue.push_back(ClipboardBackendEvent::FormatDataRequest(format_id));
+        }
     }
 
     fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
@@ -213,44 +288,35 @@ impl CliprdrBackend for WrdCliprdrBackend {
             return;
         }
 
-        let data_len = response.data().len();
-        debug!("Format data response received: {} bytes", data_len);
+        let data = response.data().to_vec();
+        debug!("Format data response received: {} bytes", data.len());
 
-        // Note: Blocking operations cause IronRDP deadlock. Logging only for now.
+        // Non-blocking: push to event queue
+        if let Ok(mut queue) = self.event_queue.try_write() {
+            queue.push_back(ClipboardBackendEvent::FormatDataResponse(data));
+        }
     }
 
     fn on_file_contents_request(&mut self, request: FileContentsRequest) {
         let stream_id = request.stream_id;
         let list_index = request.index;
+        let position = request.position;
+        let size = request.requested_size;
 
         debug!(
-            "File contents requested: stream_id={}, list_index={}",
-            stream_id, list_index
+            "File contents requested: stream_id={}, list_index={}, pos={}, size={}",
+            stream_id, list_index, position, size
         );
 
-        // Notify clipboard manager
-        let manager = self.clipboard_manager.clone();
-        let message_proxy = self.message_proxy.clone();
-
-        tokio::spawn(async move {
-            let mgr = manager.lock().await;
-
-            match mgr.handle_file_contents_request(stream_id, list_index).await {
-                Ok(()) => {
-                    debug!("File contents request handled successfully");
-                }
-                Err(e) => {
-                    error!("Failed to handle file contents request: {:?}", e);
-
-                    // Send error response
-                    if let Some(proxy) = message_proxy {
-                        // Note: Would need to create FileContentsResponse error here
-                        // This is a placeholder - actual implementation would construct proper response
-                        warn!("File contents error response not yet implemented");
-                    }
-                }
-            }
-        });
+        // Non-blocking: push to event queue
+        if let Ok(mut queue) = self.event_queue.try_write() {
+            queue.push_back(ClipboardBackendEvent::FileContentsRequest(
+                stream_id,
+                list_index,
+                position,
+                size,
+            ));
+        }
     }
 
     fn on_file_contents_response(&mut self, response: FileContentsResponse<'_>) {
@@ -263,42 +329,10 @@ impl CliprdrBackend for WrdCliprdrBackend {
             data.len()
         );
 
-        // Track file transfer progress
-        let file_transfers = self.file_transfers.clone();
-        let data_clone = data.clone();
-        tokio::spawn(async move {
-            let mut transfers = file_transfers.write().await;
-
-            if let Some(state) = transfers.get_mut(&stream_id) {
-                state.chunks.push(data_clone.clone());
-                state.received_size += data_clone.len() as u64;
-
-                debug!(
-                    "File transfer progress: {}/{} bytes",
-                    state.received_size, state.total_size
-                );
-            } else {
-                // Initialize new transfer state
-                transfers.insert(stream_id, FileTransferState {
-                    stream_id,
-                    list_index: 0,
-                    file_path: format!("/tmp/wrd-clipboard/file_{}", stream_id),
-                    total_size: 0,
-                    received_size: data_clone.len() as u64,
-                    chunks: vec![data_clone],
-                });
-            }
-        });
-
-        // Notify clipboard manager
-        let manager = self.clipboard_manager.clone();
-        tokio::spawn(async move {
-            let mgr = manager.lock().await;
-
-            if let Err(e) = mgr.handle_file_contents_response(stream_id, data).await {
-                error!("Failed to handle file contents response: {:?}", e);
-            }
-        });
+        // Non-blocking: push to event queue
+        if let Ok(mut queue) = self.event_queue.try_write() {
+            queue.push_back(ClipboardBackendEvent::FileContentsResponse(stream_id, data));
+        }
     }
 
     fn on_lock(&mut self, data_id: LockDataId) {
