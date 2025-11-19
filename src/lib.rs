@@ -17,3 +17,7 @@ pub mod security;
 pub mod server;
 pub mod utils;
 pub mod video;
+
+// Headless RDP server infrastructure (multi-user, cloud-native deployment)
+#[cfg(any(feature = "headless", feature = "full-headless"))]
+pub mod headless;
