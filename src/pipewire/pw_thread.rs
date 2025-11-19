@@ -214,7 +214,9 @@ impl PipeWireThreadManager {
         // Create channels for commands and frames
         // Using std::sync::mpsc (not tokio) because PipeWire thread is not async
         let (command_tx, command_rx) = std_mpsc::sync_channel::<PipeWireThreadCommand>(100);
-        let (frame_tx, frame_rx) = std_mpsc::sync_channel::<VideoFrame>(64);
+        // Frame channel: increased from 64 to 256 to handle burst traffic
+        // At 60 FPS capture / 30 FPS target = 2:1 ratio needs buffer
+        let (frame_tx, frame_rx) = std_mpsc::sync_channel::<VideoFrame>(256);
         let (shutdown_tx, shutdown_rx) = std_mpsc::sync_channel::<()>(1);
 
         // Spawn dedicated PipeWire thread
@@ -551,8 +553,12 @@ fn create_stream_on_thread(
                             };
 
                             // Send frame to async runtime
-                            if let Err(e) = frame_tx_for_process.try_send(frame) {
-                                warn!("Failed to send frame: {}", e);
+                            // Note: Channel may be full if consumer can't keep up with PipeWire capture rate
+                            // Frame drops are expected and handled gracefully (not an error condition)
+                            if frame_tx_for_process.try_send(frame).is_err() {
+                                // Frame dropped silently - this is normal backpressure behavior
+                                // Logging removed to avoid spam (was causing 385 warnings in logP.txt)
+                                // If frame drops are excessive, increase channel capacity in pw_thread.rs:219
                             }
                         } else {
                             warn!(
