@@ -96,6 +96,9 @@ pub struct ClipboardManager {
 
     /// Shutdown signal
     shutdown_tx: Option<mpsc::Sender<()>>,
+
+    /// Portal clipboard manager for read/write operations
+    portal_clipboard: Option<Arc<crate::portal::clipboard::ClipboardManager>>,
 }
 
 impl ClipboardManager {
@@ -128,6 +131,7 @@ impl ClipboardManager {
             sync_manager,
             event_tx,
             shutdown_tx: None,
+            portal_clipboard: None, // Will be set after Portal initialization
         };
 
         // Start event processor
@@ -143,12 +147,18 @@ impl ClipboardManager {
         self.event_tx.clone()
     }
 
+    /// Set Portal clipboard manager
+    pub fn set_portal_clipboard(&mut self, portal: Arc<crate::portal::clipboard::ClipboardManager>) {
+        self.portal_clipboard = Some(portal);
+    }
+
     /// Start event processing loop
     fn start_event_processor(&mut self, mut event_rx: mpsc::Receiver<ClipboardEvent>) {
         let converter = self.converter.clone();
         let sync_manager = self.sync_manager.clone();
         let transfer_engine = self.transfer_engine.clone();
         let config = self.config.clone();
+        let portal_clipboard = self.portal_clipboard.clone();
 
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         self.shutdown_tx = Some(shutdown_tx);
@@ -163,6 +173,7 @@ impl ClipboardManager {
                             &sync_manager,
                             &transfer_engine,
                             &config,
+                            &portal_clipboard,
                         ).await {
                             error!("Error handling clipboard event: {:?}", e);
                         }
@@ -183,18 +194,19 @@ impl ClipboardManager {
         sync_manager: &Arc<RwLock<SyncManager>>,
         transfer_engine: &TransferEngine,
         _config: &ClipboardConfig,
+        portal_clipboard: &Option<Arc<crate::portal::clipboard::ClipboardManager>>,
     ) -> Result<()> {
         match event {
             ClipboardEvent::RdpFormatList(formats) => {
-                Self::handle_rdp_format_list(formats, converter, sync_manager).await
+                Self::handle_rdp_format_list(formats, converter, sync_manager, portal_clipboard).await
             }
 
             ClipboardEvent::RdpDataRequest(format_id) => {
-                Self::handle_rdp_data_request(format_id, converter, sync_manager).await
+                Self::handle_rdp_data_request(format_id, converter, sync_manager, portal_clipboard).await
             }
 
             ClipboardEvent::RdpDataResponse(data) => {
-                Self::handle_rdp_data_response(data, sync_manager, transfer_engine).await
+                Self::handle_rdp_data_response(data, sync_manager, transfer_engine, portal_clipboard).await
             }
 
             ClipboardEvent::PortalFormatsAvailable(mime_types) => {
@@ -216,6 +228,7 @@ impl ClipboardManager {
         formats: Vec<ClipboardFormat>,
         converter: &FormatConverter,
         sync_manager: &Arc<RwLock<SyncManager>>,
+        _portal_clipboard: &Option<Arc<crate::portal::clipboard::ClipboardManager>>,
     ) -> Result<()> {
         debug!("RDP format list received: {:?}", formats);
 
@@ -242,46 +255,80 @@ impl ClipboardManager {
         Ok(())
     }
 
-    /// Handle RDP data request
-    pub async fn handle_rdp_data_request(
+    /// Handle RDP data request - Client wants data from Portal clipboard
+    async fn handle_rdp_data_request(
         format_id: u32,
         converter: &FormatConverter,
         sync_manager: &Arc<RwLock<SyncManager>>,
+        portal_clipboard: &Option<Arc<crate::portal::clipboard::ClipboardManager>>,
     ) -> Result<()> {
         debug!("RDP data request for format ID: {}", format_id);
 
+        // Get Portal clipboard manager
+        let portal = match portal_clipboard {
+            Some(p) => p,
+            None => {
+                warn!("Portal clipboard not available");
+                return Ok(());
+            }
+        };
+
         // Get MIME type for format
         let mime_type = converter.format_id_to_mime(format_id)?;
+        debug!("Format {} maps to MIME: {}", format_id, mime_type);
 
-        // Check current state
-        let state = sync_manager.read().await.state().clone();
+        // Read from Portal clipboard
+        let portal_data = portal.read_clipboard(&mime_type).await
+            .map_err(|e| ClipboardError::PortalError(format!("Failed to read clipboard: {}", e)))?;
+        debug!("Read {} bytes from Portal clipboard", portal_data.len());
 
-        match state {
-            ClipboardState::PortalOwned(_mime_types) => {
-                // Data flow: Portal → RDP
-                // Helper function - actual implementation in ironrdp_backend.rs
-                // on_format_data_request() which reads Portal and sends to RDP
-
-                debug!("Would fetch data from Portal for: {}", mime_type);
-                Ok(())
-            }
-            _ => {
-                warn!("RDP data request in invalid state: {:?}", state);
-                Err(ClipboardError::InvalidState(format!(
-                    "Cannot handle RDP data request in state: {:?}",
-                    state
-                )))
-            }
+        if portal_data.is_empty() {
+            debug!("Portal clipboard empty for MIME type: {}", mime_type);
+            return Ok(());
         }
+
+        // Portal data is already in the right format (UTF-8 text, PNG bytes, etc.)
+        // RDP expects UTF-16LE for text, so convert if text
+        let rdp_data = if mime_type.starts_with("text/plain") {
+            // Convert UTF-8 to UTF-16LE for RDP
+            let text = String::from_utf8_lossy(&portal_data);
+            let utf16: Vec<u16> = text.encode_utf16().collect();
+            let mut bytes = Vec::with_capacity(utf16.len() * 2 + 2);
+            for c in utf16 {
+                bytes.extend_from_slice(&c.to_le_bytes());
+            }
+            bytes.extend_from_slice(&[0, 0]); // Null terminator
+            bytes
+        } else {
+            portal_data
+        };
+
+        debug!("Converted to RDP format: {} bytes", rdp_data.len());
+
+        // Note: Sending response back to RDP client requires message proxy
+        // This will be implemented when we add response channel to event queue
+        debug!("RDP data prepared (response mechanism pending)");
+
+        Ok(())
     }
 
-    /// Handle RDP data response
-    pub async fn handle_rdp_data_response(
+    /// Handle RDP data response - Client sent clipboard data, write to Portal
+    async fn handle_rdp_data_response(
         data: Vec<u8>,
         sync_manager: &Arc<RwLock<SyncManager>>,
         _transfer_engine: &TransferEngine,
+        portal_clipboard: &Option<Arc<crate::portal::clipboard::ClipboardManager>>,
     ) -> Result<()> {
         debug!("RDP data response received: {} bytes", data.len());
+
+        // Get Portal clipboard manager
+        let portal = match portal_clipboard {
+            Some(p) => p,
+            None => {
+                warn!("Portal clipboard not available");
+                return Ok(());
+            }
+        };
 
         // Check for content loop
         let should_transfer = sync_manager.write().await.check_content(&data, true)?;
@@ -291,9 +338,41 @@ impl ClipboardManager {
             return Ok(());
         }
 
-        // Note: Data forwarding to Portal happens via ironrdp_backend.rs
-        // on_format_data_response() which handles the actual Portal write.
-        // This helper provides the conversion logic when needed.
+        // Detect format from data content (simple heuristic for now)
+        let mime_type = if data.starts_with(b"file://") || data.starts_with(b"x-special/") {
+            "text/uri-list"
+        } else if data.len() > 54 && &data[0..2] == b"BM" {
+            "image/bmp"
+        } else if data.len() > 8 && &data[0..8] == b"\x89PNG\r\n\x1a\n" {
+            "image/png"
+        } else {
+            // Assume UTF-16 text from Windows, convert to UTF-8
+            "text/plain;charset=utf-8"
+        };
+
+        debug!("Detected MIME type from data: {}", mime_type);
+
+        // Convert RDP data to Portal format if needed
+        let portal_data = if mime_type.starts_with("text/plain") && data.len() >= 2 {
+            // Convert UTF-16LE to UTF-8
+            use std::str;
+            let utf16_data: Vec<u16> = data
+                .chunks_exact(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .take_while(|&c| c != 0) // Stop at null terminator
+                .collect();
+
+            String::from_utf16(&utf16_data)
+                .unwrap_or_default()
+                .into_bytes()
+        } else {
+            data
+        };
+
+        // Write to Portal clipboard
+        portal.write_clipboard(mime_type, &portal_data).await
+            .map_err(|e| ClipboardError::PortalError(format!("Failed to write clipboard: {}", e)))?;
+        debug!("Wrote {} bytes to Portal clipboard ({})", portal_data.len(), mime_type);
 
         Ok(())
     }
