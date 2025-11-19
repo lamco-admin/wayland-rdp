@@ -62,6 +62,18 @@ pub mod rdp_bridge;
 pub mod state;
 #[cfg(feature = "headless-compositor")]
 pub mod types;
+#[cfg(feature = "headless-compositor")]
+pub mod smithay_impl;
+#[cfg(feature = "headless-compositor")]
+pub mod software_renderer;
+#[cfg(feature = "headless-compositor")]
+pub mod integration;
+#[cfg(feature = "headless-compositor")]
+pub mod dispatch;
+#[cfg(feature = "headless-compositor")]
+pub mod buffer_management;
+#[cfg(feature = "headless-compositor")]
+pub mod input_delivery;
 
 #[cfg(feature = "headless-compositor")]
 pub use self::state::{CompositorState, WrdCompositor};
@@ -155,3 +167,15 @@ mod tests {
         assert!(init().is_ok());
     }
 }
+
+#[cfg(feature = "headless-compositor")]
+pub mod runtime;
+
+#[cfg(feature = "headless-compositor")]
+pub use self::runtime::CompositorRuntime;
+#[cfg(feature = "headless-compositor")]
+pub use self::dispatch::WaylandDispatcher;
+#[cfg(feature = "headless-compositor")]
+pub use self::buffer_management::BufferManager;
+#[cfg(feature = "headless-compositor")]
+pub use self::input_delivery::InputDelivery;
