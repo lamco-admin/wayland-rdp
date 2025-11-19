@@ -192,51 +192,19 @@ impl CliprdrBackend for WrdCliprdrBackend {
             debug!("  Format {}: ID={:?}, Name={}", idx, format.id, name);
         }
 
-        // Convert IronRDP formats to our WrdClipboardFormat
-        let wrd_formats: Vec<WrdClipboardFormat> = available_formats
-            .iter()
-            .map(|f| WrdClipboardFormat {
-                format_id: f.id.0,
-                format_name: f.name.as_ref().map(|n| n.value().to_string()).unwrap_or_default(),
-            })
-            .collect();
-
-        // Send event to clipboard manager
-        let event_tx = {
-            let manager = self.clipboard_manager.blocking_lock();
-            manager.event_sender()
-        };
-
-        if let Err(e) = event_tx.blocking_send(ClipboardEvent::RdpFormatList(wrd_formats)) {
-            error!("Failed to send RDP format list to manager: {:?}", e);
-        }
+        // Note: This callback is called from IronRDP's sync context.
+        // Blocking operations here can deadlock the IronRDP runtime.
+        // For now, just log the formats. Full clipboard integration will
+        // be implemented after resolving the async/sync boundary issues.
     }
 
     fn on_format_data_request(&mut self, request: FormatDataRequest) {
         let format_id = request.format.0;
         debug!("Format data requested for format ID: {}", format_id);
 
-        // Store request for correlation with response
-        let pending_requests = self.pending_requests.clone();
-        tokio::spawn(async move {
-            pending_requests.write().await.insert(format_id, request);
-        });
-
-        // Send event to clipboard manager to fetch data from Portal
-        let event_tx = {
-            let manager = self.clipboard_manager.blocking_lock();
-            manager.event_sender()
-        };
-
-        if let Err(e) = event_tx.blocking_send(ClipboardEvent::RdpDataRequest(format_id)) {
-            error!("Failed to send RDP data request to manager: {:?}", e);
-
-            // Send error response
-            if let Some(proxy) = &self.message_proxy {
-                let error_response = OwnedFormatDataResponse::new_error();
-                proxy.send_clipboard_message(ClipboardMessage::SendFormatData(error_response));
-            }
-        }
+        // Note: Blocking operations in this callback can deadlock IronRDP.
+        // For now, log only. Full implementation requires redesign to avoid
+        // blocking the IronRDP event loop.
     }
 
     fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
@@ -245,18 +213,10 @@ impl CliprdrBackend for WrdCliprdrBackend {
             return;
         }
 
-        let data = response.data().to_vec();
-        debug!("Format data response received: {} bytes", data.len());
+        let data_len = response.data().len();
+        debug!("Format data response received: {} bytes", data_len);
 
-        // Send data to clipboard manager for conversion and Portal clipboard update
-        let event_tx = {
-            let manager = self.clipboard_manager.blocking_lock();
-            manager.event_sender()
-        };
-
-        if let Err(e) = event_tx.blocking_send(ClipboardEvent::RdpDataResponse(data)) {
-            error!("Failed to send RDP data response to manager: {:?}", e);
-        }
+        // Note: Blocking operations cause IronRDP deadlock. Logging only for now.
     }
 
     fn on_file_contents_request(&mut self, request: FileContentsRequest) {
