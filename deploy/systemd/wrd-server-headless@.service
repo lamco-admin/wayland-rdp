@@ -1,0 +1,47 @@
+[Unit]
+Description=WRD Server User Session for %i
+Documentation=https://github.com/lamco-admin/wayland-rdp
+After=network.target
+PartOf=wrd-server-headless.service
+StopWhenUnneeded=yes
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/wrd-server-session --user %i --session-id %i
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+
+# Run as the user
+User=%i
+Group=%i
+
+# Security
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=no
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=no
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+
+# Resource limits (per-session)
+MemoryMax=2G
+CPUQuota=200%
+TasksMax=256
+
+# Environment
+Environment="WAYLAND_DISPLAY=wayland-%i"
+Environment="XDG_RUNTIME_DIR=/run/user/%U"
+Environment="XDG_SESSION_TYPE=wayland"
+Environment="XDG_SESSION_CLASS=user"
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wrd-session-%i
+
+[Install]
+WantedBy=wrd-server-headless.service
