@@ -57,6 +57,9 @@ pub struct WrdCliprdrFactory {
 
     /// Shared message proxy for all backends (created once, immutable)
     shared_proxy: Arc<WrdMessageProxy>,
+
+    /// Shared event queue for all backends
+    shared_event_queue: Arc<RwLock<VecDeque<ClipboardBackendEvent>>>,
 }
 
 impl WrdCliprdrFactory {
@@ -77,11 +80,24 @@ impl WrdCliprdrFactory {
         // Store receiver for processing messages
         let message_rx = Arc::new(Mutex::new(Some(msg_rx)));
 
+        // Create shared event queue
+        let shared_event_queue = Arc::new(RwLock::new(VecDeque::new()));
+
+        // Start single async task to process clipboard events (spawn once here, not per backend)
+        let queue = Arc::clone(&shared_event_queue);
+        let manager = Arc::clone(&clipboard_manager);
+        tokio::spawn(async move {
+            Self::process_clipboard_events(queue, manager).await;
+        });
+
+        info!("Clipboard event processor task started");
+
         Self {
             clipboard_manager,
             event_sender: None,
             message_rx,
             shared_proxy,
+            shared_event_queue,
         }
     }
 
@@ -188,20 +204,13 @@ impl CliprdrBackendFactory for WrdCliprdrFactory {
         // Clone shared proxy (no lock needed - it's immutable)
         let message_proxy = Some((*self.shared_proxy).clone());
 
+        // All backends share the same event queue and processing task
         let backend = Box::new(WrdCliprdrBackend {
             clipboard_manager: Arc::clone(&self.clipboard_manager),
             capabilities: ClipboardGeneralCapabilityFlags::empty(),
             temporary_directory: "/tmp/wrd-clipboard".to_string(),
             message_proxy, // Use shared proxy from factory
-            event_queue: Arc::new(RwLock::new(VecDeque::new())),
-        });
-
-        // Spawn async task to process events from queue
-        // This runs in a separate task, so it won't block IronRDP callbacks
-        let queue = backend.event_queue.clone();
-        let manager = Arc::clone(&self.clipboard_manager);
-        tokio::spawn(async move {
-            Self::process_clipboard_events(queue, manager).await;
+            event_queue: Arc::clone(&self.shared_event_queue), // Use shared queue
         });
 
         backend
