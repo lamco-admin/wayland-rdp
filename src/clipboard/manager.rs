@@ -182,7 +182,7 @@ impl ClipboardManager {
         converter: &FormatConverter,
         sync_manager: &Arc<RwLock<SyncManager>>,
         transfer_engine: &TransferEngine,
-        config: &ClipboardConfig,
+        _config: &ClipboardConfig,
     ) -> Result<()> {
         match event {
             ClipboardEvent::RdpFormatList(formats) => {
@@ -389,17 +389,127 @@ impl ClipboardManager {
         Ok(())
     }
 
+    /// Handle remote copy from RDP client
+    ///
+    /// Called when RDP client announces available formats
+    pub async fn handle_remote_copy(
+        &self,
+        formats: Vec<ClipboardFormat>,
+    ) -> Result<()> {
+        debug!("Handling remote copy with {} formats", formats.len());
+
+        // Use sync manager for loop detection
+        let should_sync = {
+            let mut mgr = self.sync_manager.write().await;
+            mgr.handle_rdp_formats(formats.clone())?
+        };
+
+        if !should_sync {
+            debug!("Skipping remote copy due to loop detection");
+            return Ok(());
+        }
+
+        // Convert RDP formats to MIME types
+        let mime_types = self.converter.rdp_to_mime_types(&formats)?;
+        debug!("Converted {} formats to MIME types: {:?}", mime_types.len(), mime_types);
+
+        Ok(())
+    }
+
+    /// Handle format data request from RDP client
+    ///
+    /// Called when RDP client wants data from Portal clipboard
+    pub async fn handle_format_data_request(
+        &self,
+        format_id: u32,
+    ) -> Result<Vec<u8>> {
+        debug!("Handling format data request for format ID: {}", format_id);
+
+        // Get MIME type for format
+        let mime_type = self.converter.format_id_to_mime(format_id)?;
+
+        // Check current state
+        let state = self.sync_manager.read().await.state().clone();
+
+        match state {
+            ClipboardState::PortalOwned(_mime_types) => {
+                debug!("Fetching data from Portal for MIME type: {}", mime_type);
+
+                // Placeholder: In full implementation, would fetch from Portal here
+                // For now, return empty data
+                Ok(Vec::new())
+            }
+            _ => {
+                warn!("Format data request in invalid state: {:?}", state);
+                Err(ClipboardError::InvalidState(format!(
+                    "Cannot handle format data request in state: {:?}",
+                    state
+                )))
+            }
+        }
+    }
+
+    /// Handle format data response from RDP client
+    ///
+    /// Called when RDP client provides requested data
+    pub async fn handle_format_data_response(
+        &self,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        debug!("Handling format data response: {} bytes", data.len());
+
+        // Check for content loop
+        let should_transfer = self.sync_manager.write().await.check_content(&data, true)?;
+
+        if !should_transfer {
+            debug!("Skipping format data response due to content loop detection");
+            return Ok(());
+        }
+
+        // Placeholder: In full implementation, would set Portal clipboard here
+        debug!("Would set Portal clipboard with {} bytes", data.len());
+
+        Ok(())
+    }
+
     /// Handle file contents request (public wrapper)
     pub async fn handle_file_contents_request(&self, stream_id: u32, list_index: u32) -> Result<()> {
         debug!("File contents request: stream={}, index={}", stream_id, list_index);
-        // File transfer not yet implemented - return Ok for now
+
+        // Create temporary directory if it doesn't exist
+        let temp_dir = std::path::Path::new("/tmp/wrd-clipboard");
+        if !temp_dir.exists() {
+            std::fs::create_dir_all(temp_dir).map_err(|e| {
+                ClipboardError::Io(e)
+            })?;
+        }
+
+        // Placeholder: In full implementation, would read file from Portal
+        debug!("File contents request handling - file transfer implementation pending");
+
         Ok(())
     }
 
     /// Handle file contents response (public wrapper)
     pub async fn handle_file_contents_response(&self, stream_id: u32, data: Vec<u8>) -> Result<()> {
         debug!("File contents response: stream={}, {} bytes", stream_id, data.len());
-        // File transfer not yet implemented - return Ok for now
+
+        // Create temporary directory if it doesn't exist
+        let temp_dir = std::path::Path::new("/tmp/wrd-clipboard");
+        if !temp_dir.exists() {
+            std::fs::create_dir_all(temp_dir).map_err(|e| {
+                ClipboardError::Io(e)
+            })?;
+        }
+
+        // Write file chunk
+        let file_path = temp_dir.join(format!("file_{}", stream_id));
+        std::fs::write(&file_path, &data).map_err(|e| {
+            ClipboardError::Io(e)
+        })?;
+
+        debug!("Wrote {} bytes to {:?}", data.len(), file_path);
+
         Ok(())
     }
 
