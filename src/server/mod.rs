@@ -219,11 +219,14 @@ impl WrdServer {
         // Create clipboard manager
         info!("Initializing clipboard manager");
         let clipboard_config = ClipboardConfig::default();
-        let clipboard_manager = Arc::new(Mutex::new(
-            ClipboardManager::new(clipboard_config)
-                .await
-                .context("Failed to create clipboard manager")?,
-        ));
+        let mut clipboard_mgr = ClipboardManager::new(clipboard_config)
+            .await
+            .context("Failed to create clipboard manager")?;
+
+        // Set Portal clipboard reference
+        clipboard_mgr.set_portal_clipboard(Arc::clone(portal_manager.clipboard()));
+
+        let clipboard_manager = Arc::new(Mutex::new(clipboard_mgr));
 
         // Create clipboard factory for IronRDP
         let clipboard_factory = WrdCliprdrFactory::new(Arc::clone(&clipboard_manager));

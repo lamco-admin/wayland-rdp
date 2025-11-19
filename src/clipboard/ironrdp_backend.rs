@@ -22,9 +22,9 @@ use crate::clipboard::formats::ClipboardFormat as WrdClipboardFormat;
 #[derive(Debug, Clone)]
 enum ClipboardBackendEvent {
     RemoteCopy(Vec<WrdClipboardFormat>),
-    FormatDataRequest(u32),
+    FormatDataRequest(u32, Option<WrdMessageProxy>),
     FormatDataResponse(Vec<u8>),
-    FileContentsRequest(u32, u32, u64, u32),
+    FileContentsRequest(u32, u32, u64, u32, Option<WrdMessageProxy>),
     FileContentsResponse(u32, Vec<u8>),
 }
 
@@ -109,12 +109,16 @@ impl WrdCliprdrFactory {
                             }
                         }
                     }
-                    ClipboardBackendEvent::FormatDataRequest(format_id) => {
+                    ClipboardBackendEvent::FormatDataRequest(format_id, message_proxy) => {
                         debug!("Processing format data request: {}", format_id);
-                        // Send request to clipboard manager
+                        // Send request to clipboard manager (this will read from Portal)
                         if let Ok(mgr) = manager.try_lock() {
                             if let Ok(_) = mgr.event_sender().try_send(ClipboardEvent::RdpDataRequest(format_id)) {
                                 debug!("Data request sent to clipboard manager");
+                                // Note: Response sending via message_proxy not yet implemented
+                                if message_proxy.is_some() {
+                                    debug!("Message proxy available for response");
+                                }
                             }
                         }
                     }
@@ -127,7 +131,7 @@ impl WrdCliprdrFactory {
                             }
                         }
                     }
-                    ClipboardBackendEvent::FileContentsRequest(stream_id, _index, _position, _size) => {
+                    ClipboardBackendEvent::FileContentsRequest(stream_id, _index, _position, _size, _proxy) => {
                         debug!("Processing file contents request: stream={}", stream_id);
                         // File transfer not yet implemented - will be added after text/images work
                     }
@@ -293,9 +297,12 @@ impl CliprdrBackend for WrdCliprdrBackend {
         let format_id = request.format.0;
         debug!("Format data requested for format ID: {}", format_id);
 
-        // Non-blocking: push to event queue
+        // Non-blocking: push to event queue with message proxy for response
         if let Ok(mut queue) = self.event_queue.try_write() {
-            queue.push_back(ClipboardBackendEvent::FormatDataRequest(format_id));
+            queue.push_back(ClipboardBackendEvent::FormatDataRequest(
+                format_id,
+                self.message_proxy.clone(),
+            ));
         }
     }
 
@@ -325,13 +332,14 @@ impl CliprdrBackend for WrdCliprdrBackend {
             stream_id, list_index, position, size
         );
 
-        // Non-blocking: push to event queue
+        // Non-blocking: push to event queue with message proxy for response
         if let Ok(mut queue) = self.event_queue.try_write() {
             queue.push_back(ClipboardBackendEvent::FileContentsRequest(
                 stream_id,
                 list_index,
                 position,
                 size,
+                self.message_proxy.clone(),
             ));
         }
     }

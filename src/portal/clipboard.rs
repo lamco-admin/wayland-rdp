@@ -12,6 +12,7 @@ use wl_clipboard_rs::paste::{get_contents, ClipboardType, MimeType as PasteMimeT
 use crate::config::Config;
 
 /// Clipboard portal manager
+#[derive(Debug)]
 pub struct ClipboardManager {
     connection: zbus::Connection,
     config: Arc<Config>,
