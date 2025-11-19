@@ -196,6 +196,7 @@ impl CliprdrBackendFactory for WrdCliprdrFactory {
 
 impl ServerEventSender for WrdCliprdrFactory {
     fn set_sender(&mut self, sender: mpsc::UnboundedSender<ironrdp_server::ServerEvent>) {
+        info!("Clipboard factory received server event sender");
         self.event_sender = Some(sender);
     }
 }
@@ -309,16 +310,16 @@ impl CliprdrBackend for WrdCliprdrBackend {
                 .map(|f| f.id.0);
 
             if let Some(format_id) = text_format {
-                debug!("Proactively requesting text format {} from RDP client", format_id);
+                info!("Text format {} detected, requesting clipboard data from RDP", format_id);
                 // Send SendInitiatePaste to request the data from RDP client
                 if let Some(proxy) = &self.message_proxy {
                     use ironrdp_cliprdr::pdu::ClipboardFormatId;
                     proxy.send_clipboard_message(ClipboardMessage::SendInitiatePaste(
                         ClipboardFormatId(format_id)
                     ));
-                    debug!("Sent initiate paste request for format {}", format_id);
+                    info!("✅ Sent initiate paste request for format {}", format_id);
                 } else {
-                    warn!("No message proxy available to request clipboard data");
+                    error!("❌ No message proxy available to request clipboard data - proxy not set yet!");
                 }
             }
         } else {
