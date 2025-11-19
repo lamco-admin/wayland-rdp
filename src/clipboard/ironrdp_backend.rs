@@ -205,15 +205,12 @@ impl CliprdrBackendFactory for WrdCliprdrFactory {
         // The message proxy will be set later via the ServerEventSender trait
         // when the connection is established.
 
-        // Clone shared proxy (no lock needed - it's immutable)
-        let message_proxy = Some((*self.shared_proxy).clone());
-
         // All backends share the same event queue and processing task
         let backend = Box::new(WrdCliprdrBackend {
             clipboard_manager: Arc::clone(&self.clipboard_manager),
             capabilities: ClipboardGeneralCapabilityFlags::empty(),
             temporary_directory: "/tmp/wrd-clipboard".to_string(),
-            message_proxy, // Use shared proxy from factory
+            event_sender: self.event_sender.clone(), // Pass ServerEvent sender
             event_queue: Arc::clone(&self.shared_event_queue), // Use shared queue
         });
 
@@ -256,8 +253,8 @@ struct WrdCliprdrBackend {
     /// Temporary directory for file transfers
     temporary_directory: String,
 
-    /// Message proxy for sending responses
-    message_proxy: Option<WrdMessageProxy>,
+    /// ServerEvent sender for sending clipboard requests to IronRDP
+    event_sender: Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>,
 
     /// Event queue for non-blocking clipboard operations
     event_queue: Arc<RwLock<VecDeque<ClipboardBackendEvent>>>,
@@ -337,16 +334,22 @@ impl CliprdrBackend for WrdCliprdrBackend {
                 .map(|f| f.id.0);
 
             if let Some(format_id) = text_format {
-                info!("Text format {} detected, requesting clipboard data from RDP", format_id);
-                // Send SendInitiatePaste to request the data from RDP client
-                if let Some(proxy) = &self.message_proxy {
+                info!("Text format {} detected, requesting clipboard data from RDP client", format_id);
+
+                // ✅ CORRECT: Send through ServerEvent channel
+                if let Some(sender) = &self.event_sender {
+                    use ironrdp_cliprdr::backend::ClipboardMessage;
                     use ironrdp_cliprdr::pdu::ClipboardFormatId;
-                    proxy.send_clipboard_message(ClipboardMessage::SendInitiatePaste(
-                        ClipboardFormatId(format_id)
-                    ));
-                    info!("✅ Sent initiate paste request for format {}", format_id);
+
+                    if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                        ClipboardMessage::SendInitiatePaste(ClipboardFormatId(format_id))
+                    )) {
+                        error!("Failed to send clipboard request via ServerEvent: {:?}", e);
+                    } else {
+                        info!("✅ Sent FormatDataRequest for format {} to RDP client via ServerEvent", format_id);
+                    }
                 } else {
-                    error!("❌ No message proxy available to request clipboard data - proxy not set yet!");
+                    error!("❌ No ServerEvent sender available - factory not initialized!");
                 }
             }
         } else {
@@ -358,11 +361,12 @@ impl CliprdrBackend for WrdCliprdrBackend {
         let format_id = request.format.0;
         debug!("Format data requested for format ID: {}", format_id);
 
-        // Non-blocking: push to event queue with message proxy for response
+        // Non-blocking: push to event queue
+        // Note: Response mechanism removed - will be implemented differently
         if let Ok(mut queue) = self.event_queue.try_write() {
             queue.push_back(ClipboardBackendEvent::FormatDataRequest(
                 format_id,
-                self.message_proxy.clone(),
+                None, // No response callback for now
             ));
         }
     }
@@ -393,14 +397,14 @@ impl CliprdrBackend for WrdCliprdrBackend {
             stream_id, list_index, position, size
         );
 
-        // Non-blocking: push to event queue with message proxy for response
+        // Non-blocking: push to event queue
         if let Ok(mut queue) = self.event_queue.try_write() {
             queue.push_back(ClipboardBackendEvent::FileContentsRequest(
                 stream_id,
                 list_index,
                 position,
                 size,
-                self.message_proxy.clone(),
+                None, // No response callback for now
             ));
         }
     }
