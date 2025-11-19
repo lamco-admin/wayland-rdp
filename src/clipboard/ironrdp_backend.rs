@@ -100,23 +100,40 @@ impl WrdCliprdrFactory {
                 match event {
                     ClipboardBackendEvent::RemoteCopy(formats) => {
                         debug!("Processing remote copy event: {} formats", formats.len());
-                        // TODO: Forward to clipboard manager
+                        // Send to clipboard manager
+                        if let Ok(mgr) = manager.try_lock() {
+                            if let Ok(event_tx) = mgr.event_sender().try_send(ClipboardEvent::RdpFormatList(formats)) {
+                                debug!("Format list sent to clipboard manager");
+                            } else {
+                                warn!("Failed to send format list - manager queue full");
+                            }
+                        }
                     }
                     ClipboardBackendEvent::FormatDataRequest(format_id) => {
                         debug!("Processing format data request: {}", format_id);
-                        // TODO: Fetch from Portal, send to RDP
+                        // Send request to clipboard manager
+                        if let Ok(mgr) = manager.try_lock() {
+                            if let Ok(_) = mgr.event_sender().try_send(ClipboardEvent::RdpDataRequest(format_id)) {
+                                debug!("Data request sent to clipboard manager");
+                            }
+                        }
                     }
                     ClipboardBackendEvent::FormatDataResponse(data) => {
                         debug!("Processing format data response: {} bytes", data.len());
-                        // TODO: Write to Portal
+                        // Send data to clipboard manager for Portal write
+                        if let Ok(mgr) = manager.try_lock() {
+                            if let Ok(_) = mgr.event_sender().try_send(ClipboardEvent::RdpDataResponse(data)) {
+                                debug!("Data response sent to clipboard manager");
+                            }
+                        }
                     }
-                    ClipboardBackendEvent::FileContentsRequest(stream_id, index, position, size) => {
+                    ClipboardBackendEvent::FileContentsRequest(stream_id, _index, _position, _size) => {
                         debug!("Processing file contents request: stream={}", stream_id);
-                        // TODO: Read file, send to RDP
+                        // File transfer not yet implemented - will be added after text/images work
                     }
                     ClipboardBackendEvent::FileContentsResponse(stream_id, data) => {
                         debug!("Processing file contents response: stream={}, {} bytes", stream_id, data.len());
-                        // TODO: Write file chunk
+                        // File transfer not yet implemented
                     }
                 }
             }
