@@ -76,7 +76,7 @@ use tracing::{debug, error, info};
 use crate::clipboard::{ClipboardConfig, ClipboardManager, WrdCliprdrFactory};
 use crate::config::Config;
 use crate::input::coordinates::MonitorInfo as InputMonitorInfo;
-use crate::portal::PortalManager;
+use crate::portal::{PortalManager, PortalSessionHandle};
 use crate::security::TlsConfig;
 
 /// WRD Server
@@ -98,6 +98,9 @@ pub struct WrdServer {
     /// Display handler (kept for lifecycle management)
     #[allow(dead_code)]
     display_handler: Arc<WrdDisplayHandler>,
+
+    // Portal session handle removed - session is consumed by input_handler
+    // TODO: Refactor to allow session sharing between input and clipboard
 }
 
 impl WrdServer {
@@ -130,6 +133,19 @@ impl WrdServer {
             .context("Failed to create portal session")?;
 
         info!("Portal session created successfully");
+
+        // Create Portal Clipboard manager
+        let portal_clipboard = Arc::new(
+            crate::portal::clipboard::ClipboardManager::new()
+                .await
+                .context("Failed to create Portal Clipboard manager")?
+        );
+
+        // Enable clipboard for this session
+        portal_clipboard.enable_for_session(&session_handle.session).await
+            .context("Failed to enable clipboard for session")?;
+
+        info!("Portal Clipboard manager created and enabled");
 
         // Extract session details
         let pipewire_fd = session_handle.pipewire_fd;
@@ -223,10 +239,10 @@ impl WrdServer {
             .await
             .context("Failed to create clipboard manager")?;
 
-        // Portal clipboard will be created after session is established
-        // For now, clipboard manager doesn't have Portal reference
-        // This will be set later when we implement Portal Clipboard API integration
-        // clipboard_mgr.set_portal_clipboard(...);
+        // Set Portal clipboard reference (session passing needs refactoring)
+        // For now, just set the portal without session
+        // clipboard_mgr.set_portal_clipboard(portal_clipboard, ...);
+        // This needs architectural refactoring to handle session sharing
 
         let clipboard_manager = Arc::new(Mutex::new(clipboard_mgr));
 

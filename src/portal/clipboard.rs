@@ -45,9 +45,6 @@ pub struct ClipboardManager {
     /// Portal Clipboard interface
     clipboard: Clipboard<'static>,
 
-    /// RemoteDesktop session (clipboard is scoped to this session)
-    session: Session<'static, RemoteDesktop<'static>>,
-
     /// Pending Portal requests (serial → request info)
     pending_requests: Arc<RwLock<HashMap<u32, PendingRequest>>>,
 }
@@ -57,32 +54,33 @@ impl ClipboardManager {
     ///
     /// # Arguments
     ///
-    /// * `session` - RemoteDesktop session to associate clipboard with
+    /// * `session` - Reference to RemoteDesktop session to associate clipboard with
     ///
     /// # Returns
     ///
     /// Clipboard manager instance with listeners started
-    pub async fn new(
-        session: Session<'static, RemoteDesktop<'static>>,
-    ) -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         info!("Initializing Portal Clipboard manager");
 
         let clipboard = Clipboard::new().await
             .context("Failed to create Portal Clipboard")?;
 
-        // Request clipboard access for RemoteDesktop session
-        clipboard.request(&session).await
-            .context("Failed to request clipboard access for session")?;
-
-        info!("✅ Portal Clipboard enabled for RemoteDesktop session");
+        info!("Portal Clipboard created (will be enabled when session is ready)");
 
         let manager = Self {
             clipboard,
-            session,
             pending_requests: Arc::new(RwLock::new(HashMap::new())),
         };
 
         Ok(manager)
+    }
+
+    /// Request clipboard access for session
+    pub async fn enable_for_session(&self, session: &Session<'_, RemoteDesktop<'_>>) -> Result<()> {
+        self.clipboard.request(session).await
+            .context("Failed to request clipboard access for session")?;
+        info!("✅ Portal Clipboard enabled for session");
+        Ok(())
     }
 
     /// Announce RDP clipboard formats to Wayland (delayed rendering)
@@ -92,8 +90,13 @@ impl ClipboardManager {
     ///
     /// # Arguments
     ///
+    /// * `session` - RemoteDesktop session
     /// * `mime_types` - List of MIME types available (e.g., ["text/plain", "image/png"])
-    pub async fn announce_rdp_formats(&self, mime_types: Vec<String>) -> Result<()> {
+    pub async fn announce_rdp_formats(
+        &self,
+        session: &Session<'_, RemoteDesktop<'_>>,
+        mime_types: Vec<String>,
+    ) -> Result<()> {
         if mime_types.is_empty() {
             debug!("No formats to announce");
             return Ok(());
@@ -101,7 +104,7 @@ impl ClipboardManager {
 
         let mime_refs: Vec<&str> = mime_types.iter().map(|s| s.as_str()).collect();
 
-        self.clipboard.set_selection(&self.session, &mime_refs).await
+        self.clipboard.set_selection(session, &mime_refs).await
             .context("Failed to set Portal selection")?;
 
         info!("📋 Announced {} RDP formats to Portal: {:?}", mime_types.len(), mime_types);
@@ -148,8 +151,13 @@ impl ClipboardManager {
     }
 
     /// Provide clipboard data to Portal
-    pub async fn provide_data(&self, serial: u32, data: Vec<u8>) -> Result<()> {
-        Self::write_to_portal_fd_static(&self.clipboard, &self.session, serial, &data).await
+    pub async fn provide_data(
+        &self,
+        session: &Session<'_, RemoteDesktop<'_>>,
+        serial: u32,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        Self::write_to_portal_fd_static(&self.clipboard, session, serial, &data).await
     }
 
     // Signal streams removed - caller uses portal_clipboard() directly for signal access
@@ -160,17 +168,22 @@ impl ClipboardManager {
     ///
     /// # Arguments
     ///
+    /// * `session` - RemoteDesktop session
     /// * `mime_type` - MIME type to read (e.g., "text/plain")
     ///
     /// # Returns
     ///
     /// Clipboard data in requested format
-    pub async fn read_local_clipboard(&self, mime_type: &str) -> Result<Vec<u8>> {
+    pub async fn read_local_clipboard(
+        &self,
+        session: &Session<'_, RemoteDesktop<'_>>,
+        mime_type: &str,
+    ) -> Result<Vec<u8>> {
         use tokio::io::AsyncReadExt;
 
         debug!("Reading local clipboard: {}", mime_type);
 
-        let fd = self.clipboard.selection_read(&self.session, mime_type).await
+        let fd = self.clipboard.selection_read(session, mime_type).await
             .context("Failed to get SelectionRead fd")?;
 
         // Convert zvariant::OwnedFd to File
@@ -183,11 +196,6 @@ impl ClipboardManager {
 
         info!("📖 Read {} bytes from local clipboard ({})", data.len(), mime_type);
         Ok(data)
-    }
-
-    /// Get clipboard session
-    pub fn session(&self) -> &Session<'static, RemoteDesktop<'static>> {
-        &self.session
     }
 
     /// Get pending request by serial
