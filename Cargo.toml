@@ -74,8 +74,7 @@ xkbcommon = "0.7"
 image = { version = "0.24", features = ["png", "jpeg", "bmp"] }
 percent-encoding = "2.3"
 sha2 = "0.10"
-# Clipboard via Portal (delayed rendering support)
-wl-clipboard-rs = "0.8"  # Temporarily back for simple write until Portal issue resolved
+# Clipboard via Portal API (delayed rendering)
 futures-util = "0.3"  # For Portal signal streams
 
 # System and utilities

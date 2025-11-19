@@ -113,11 +113,19 @@ pub struct ClipboardManager {
     /// Shutdown signal
     shutdown_tx: Option<mpsc::Sender<()>>,
 
-    /// Portal clipboard manager for read/write operations
-    portal_clipboard: Option<Arc<crate::portal::clipboard::ClipboardManager>>,
+    /// Portal clipboard manager for read/write operations (wrapped for dynamic update)
+    portal_clipboard: Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
 
-    /// Portal session (shared with input handler, wrapped for concurrent access)
-    portal_session: Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>,
+    /// Portal session (shared with input handler, wrapped for concurrent access and dynamic update)
+    portal_session: Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
+
+    /// Pending Portal SelectionTransfer requests (serial → mime_type)
+    /// Used to correlate SelectionTransfer signals with RDP FormatDataResponse
+    pending_portal_requests: Arc<RwLock<std::collections::HashMap<u32, String>>>,
+
+    /// Server event sender for sending clipboard requests to IronRDP
+    /// Set by WrdCliprdrFactory after ServerEvent sender is available
+    server_event_sender: Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
 }
 
 impl ClipboardManager {
@@ -150,8 +158,10 @@ impl ClipboardManager {
             sync_manager,
             event_tx,
             shutdown_tx: None,
-            portal_clipboard: None, // Will be set after Portal initialization
-            portal_session: None, // Will be set with portal_clipboard
+            portal_clipboard: Arc::new(RwLock::new(None)), // Will be set after Portal initialization
+            portal_session: Arc::new(RwLock::new(None)), // Will be set with portal_clipboard
+            pending_portal_requests: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            server_event_sender: Arc::new(RwLock::new(None)), // Set by WrdCliprdrFactory
         };
 
         // Start event processor
@@ -167,14 +177,158 @@ impl ClipboardManager {
         self.event_tx.clone()
     }
 
-    /// Set Portal clipboard manager and session
-    pub fn set_portal_clipboard(
+    /// Set server event sender (called by WrdCliprdrFactory after initialization)
+    pub async fn set_server_event_sender(&self, sender: mpsc::UnboundedSender<ironrdp_server::ServerEvent>) {
+        *self.server_event_sender.write().await = Some(sender);
+        info!("✅ ServerEvent sender registered with clipboard manager");
+    }
+
+    /// Set Portal clipboard manager and session (async to acquire write lock)
+    pub async fn set_portal_clipboard(
         &mut self,
         portal: Arc<crate::portal::clipboard::ClipboardManager>,
         session: Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
     ) {
-        self.portal_clipboard = Some(portal);
-        self.portal_session = Some(session);
+        *self.portal_clipboard.write().await = Some(Arc::clone(&portal));
+        *self.portal_session.write().await = Some(Arc::clone(&session));
+        info!("✅ Portal clipboard and session dynamically set in clipboard manager");
+
+        // Start SelectionTransfer listener for delayed rendering (Windows → Linux paste)
+        self.start_selection_transfer_listener(Arc::clone(&portal), Arc::clone(&session)).await;
+
+        // Start SelectionOwnerChanged listener for local clipboard monitoring (Linux → Windows copy)
+        self.start_owner_changed_listener(portal, session).await;
+    }
+
+    /// Start SelectionTransfer listener for delayed rendering
+    ///
+    /// This enables Windows → Linux clipboard flow:
+    /// 1. Windows user copies (we announced formats via SetSelection)
+    /// 2. Linux user pastes
+    /// 3. Portal sends SelectionTransfer signal
+    /// 4. We request data from RDP client via ServerEvent
+    /// 5. We receive data in on_format_data_response
+    /// 6. We write data via SelectionWrite using tracked serial
+    async fn start_selection_transfer_listener(
+        &self,
+        portal: Arc<crate::portal::clipboard::ClipboardManager>,
+        _session: Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
+    ) {
+        // Create channel for SelectionTransfer events
+        let (transfer_tx, mut transfer_rx) = mpsc::unbounded_channel();
+
+        // Start the Portal listener (spawns background task)
+        match portal.start_selection_transfer_listener(transfer_tx).await {
+            Ok(()) => {
+                info!("Starting SelectionTransfer handler task");
+
+                // Clone refs for the spawned task
+                let pending_requests = Arc::clone(&self.pending_portal_requests);
+                let server_event_sender = Arc::clone(&self.server_event_sender);
+                let converter = Arc::clone(&self.converter);
+
+                // Spawn task to handle SelectionTransfer events
+                tokio::spawn(async move {
+                    while let Some(transfer_event) = transfer_rx.recv().await {
+                        info!("📥 SelectionTransfer signal: {} (serial {})",
+                            transfer_event.mime_type, transfer_event.serial);
+
+                        // Track this transfer request (serial → mime_type)
+                        // When RDP FormatDataResponse arrives, we'll use this serial to write to Portal
+                        pending_requests.write().await.insert(
+                            transfer_event.serial,
+                            transfer_event.mime_type.clone()
+                        );
+
+                        // Convert MIME type → RDP format ID
+                        let format_id = match converter.mime_to_format_id(&transfer_event.mime_type) {
+                            Ok(id) => id,
+                            Err(e) => {
+                                error!("Failed to convert MIME {} to format ID: {}", transfer_event.mime_type, e);
+                                pending_requests.write().await.remove(&transfer_event.serial);
+                                continue;
+                            }
+                        };
+
+                        // Send ServerEvent to request data from RDP client (TRUE delayed rendering!)
+                        let sender_opt = server_event_sender.read().await.clone();
+                        if let Some(sender) = sender_opt {
+                            use ironrdp_cliprdr::backend::ClipboardMessage;
+                            use ironrdp_cliprdr::pdu::ClipboardFormatId;
+
+                            if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                                ClipboardMessage::SendInitiatePaste(ClipboardFormatId(format_id))
+                            )) {
+                                error!("Failed to send FormatDataRequest via ServerEvent: {:?}", e);
+                                pending_requests.write().await.remove(&transfer_event.serial);
+                            } else {
+                                info!("✅ Sent FormatDataRequest for format {} (Portal serial {})", format_id, transfer_event.serial);
+                            }
+                        } else {
+                            warn!("ServerEvent sender not available yet - cannot request from RDP");
+                            pending_requests.write().await.remove(&transfer_event.serial);
+                        }
+                    }
+
+                    warn!("SelectionTransfer handler task ended");
+                });
+
+                info!("✅ SelectionTransfer listener and handler started - delayed rendering enabled");
+            }
+            Err(e) => {
+                error!("Failed to start SelectionTransfer listener: {:#}", e);
+                warn!("Delayed rendering (Windows → Linux paste) will not work");
+            }
+        }
+    }
+
+    /// Start SelectionOwnerChanged listener for local clipboard monitoring
+    ///
+    /// This enables Linux → Windows clipboard flow:
+    /// 1. Linux user copies (another app owns clipboard)
+    /// 2. Portal sends SelectionOwnerChanged signal (mime_types, session_is_owner=false)
+    /// 3. We convert MIME types → RDP formats
+    /// 4. We send FormatList PDU to RDP clients
+    /// 5. Windows user pastes → RDP sends FormatDataRequest
+    /// 6. We read from Portal clipboard via SelectionRead
+    /// 7. We send FormatDataResponse to RDP client
+    async fn start_owner_changed_listener(
+        &self,
+        portal: Arc<crate::portal::clipboard::ClipboardManager>,
+        _session: Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
+    ) {
+        // Create channel for SelectionOwnerChanged events
+        let (owner_tx, mut owner_rx) = mpsc::unbounded_channel();
+
+        // Start the Portal listener
+        match portal.start_owner_changed_listener(owner_tx).await {
+            Ok(()) => {
+                info!("Starting SelectionOwnerChanged handler task");
+
+                let event_tx = self.event_tx.clone();
+
+                // Spawn task to handle clipboard ownership changes
+                tokio::spawn(async move {
+                    while let Some(mime_types) = owner_rx.recv().await {
+                        info!("📋 Local clipboard changed: {} formats", mime_types.len());
+
+                        // Send event to announce these formats to RDP clients
+                        if let Err(e) = event_tx.send(ClipboardEvent::PortalFormatsAvailable(mime_types)).await {
+                            error!("Failed to send PortalFormatsAvailable event: {}", e);
+                            break;
+                        }
+                    }
+
+                    warn!("SelectionOwnerChanged handler task ended");
+                });
+
+                info!("✅ SelectionOwnerChanged listener started - monitoring Linux clipboard");
+            }
+            Err(e) => {
+                error!("Failed to start SelectionOwnerChanged listener: {:#}", e);
+                warn!("Linux → Windows clipboard flow will not work");
+            }
+        }
     }
 
     /// Start event processing loop
@@ -183,8 +337,11 @@ impl ClipboardManager {
         let sync_manager = self.sync_manager.clone();
         let transfer_engine = self.transfer_engine.clone();
         let config = self.config.clone();
-        let portal_clipboard = self.portal_clipboard.clone();
-        let portal_session = self.portal_session.clone();
+        // Clone the Arc<RwLock<>> wrappers - they can be read dynamically
+        let portal_clipboard = Arc::clone(&self.portal_clipboard);
+        let portal_session = Arc::clone(&self.portal_session);
+        let pending_portal_requests = Arc::clone(&self.pending_portal_requests);
+        let server_event_sender = Arc::clone(&self.server_event_sender);
 
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         self.shutdown_tx = Some(shutdown_tx);
@@ -201,6 +358,8 @@ impl ClipboardManager {
                             &config,
                             &portal_clipboard,
                             &portal_session,
+                            &pending_portal_requests,
+                            &server_event_sender,
                         ).await {
                             error!("Error handling clipboard event: {:?}", e);
                         }
@@ -221,8 +380,10 @@ impl ClipboardManager {
         sync_manager: &Arc<RwLock<SyncManager>>,
         transfer_engine: &TransferEngine,
         _config: &ClipboardConfig,
-        portal_clipboard: &Option<Arc<crate::portal::clipboard::ClipboardManager>>,
-        portal_session: &Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>,
+        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+        portal_session: &Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
+        pending_portal_requests: &Arc<RwLock<std::collections::HashMap<u32, String>>>,
+        server_event_sender: &Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
     ) -> Result<()> {
         match event {
             ClipboardEvent::RdpFormatList(formats) => {
@@ -230,19 +391,19 @@ impl ClipboardManager {
             }
 
             ClipboardEvent::RdpDataRequest(format_id, response_callback) => {
-                Self::handle_rdp_data_request(format_id, response_callback, converter, sync_manager, portal_clipboard).await
+                Self::handle_rdp_data_request(format_id, response_callback, converter, sync_manager, portal_clipboard, portal_session).await
             }
 
             ClipboardEvent::RdpDataResponse(data) => {
-                Self::handle_rdp_data_response(data, sync_manager, transfer_engine, portal_clipboard).await
+                Self::handle_rdp_data_response(data, sync_manager, transfer_engine, portal_clipboard, portal_session, pending_portal_requests).await
             }
 
             ClipboardEvent::PortalFormatsAvailable(mime_types) => {
-                Self::handle_portal_formats(mime_types, converter, sync_manager).await
+                Self::handle_portal_formats(mime_types, converter, sync_manager, server_event_sender).await
             }
 
             ClipboardEvent::PortalDataRequest(mime_type) => {
-                Self::handle_portal_data_request(mime_type, converter, sync_manager).await
+                Self::handle_portal_data_request(mime_type, converter, sync_manager, portal_clipboard, portal_session).await
             }
 
             ClipboardEvent::PortalDataResponse(data) => {
@@ -256,8 +417,8 @@ impl ClipboardManager {
         formats: Vec<ClipboardFormat>,
         converter: &FormatConverter,
         sync_manager: &Arc<RwLock<SyncManager>>,
-        portal_clipboard: &Option<Arc<crate::portal::clipboard::ClipboardManager>>,
-        portal_session: &Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>,
+        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+        portal_session: &Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
     ) -> Result<()> {
         debug!("RDP format list received: {:?}", formats);
 
@@ -277,11 +438,25 @@ impl ClipboardManager {
 
         debug!("Converted to MIME types: {:?}", mime_types);
 
-        // Get Portal clipboard and session
-        let (portal, session) = match (portal_clipboard, portal_session) {
+        // Get Portal clipboard and session (dynamically read from Arc<RwLock<>>)
+        let portal_opt = portal_clipboard.read().await.clone();
+        let session_opt = portal_session.read().await.clone();
+
+        debug!("Checking Portal availability: clipboard={}, session={}",
+            portal_opt.is_some(), session_opt.is_some());
+
+        let (portal, session) = match (portal_opt, session_opt) {
             (Some(p), Some(s)) => (p, s),
-            _ => {
-                warn!("Portal clipboard or session not available for format announcement");
+            (None, Some(_)) => {
+                warn!("Portal clipboard not available (but session is)");
+                return Ok(());
+            }
+            (Some(_), None) => {
+                warn!("Portal session not available (but clipboard is) - THIS SHOULD NOT HAPPEN");
+                return Ok(());
+            }
+            (None, None) => {
+                debug!("Portal clipboard and session not yet initialized (normal during startup)");
                 return Ok(());
             }
         };
@@ -297,43 +472,50 @@ impl ClipboardManager {
         Ok(())
     }
 
-    /// Handle RDP data request - Client wants data from Portal clipboard
+    /// Handle RDP data request - Client wants data from Portal clipboard (Linux → Windows)
+    ///
+    /// This is called when Windows user pastes and RDP client requests our (Linux) clipboard data.
+    /// We read from Portal clipboard via SelectionRead and send back to RDP client.
     async fn handle_rdp_data_request(
         format_id: u32,
         response_callback: Option<RdpResponseCallback>,
         converter: &FormatConverter,
         _sync_manager: &Arc<RwLock<SyncManager>>,
-        portal_clipboard: &Option<Arc<crate::portal::clipboard::ClipboardManager>>,
+        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+        portal_session: &Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
     ) -> Result<()> {
         debug!("RDP data request for format ID: {}", format_id);
 
-        // Get Portal clipboard manager
-        let portal = match portal_clipboard {
-            Some(p) => p,
-            None => {
-                warn!("Portal clipboard not available");
+        // Get Portal clipboard and session
+        let portal_opt = portal_clipboard.read().await.clone();
+        let session_opt = portal_session.read().await.clone();
+
+        let (portal, session) = match (portal_opt, session_opt) {
+            (Some(p), Some(s)) => (p, s),
+            _ => {
+                warn!("Portal not available for RDP data request");
                 return Ok(());
             }
         };
 
-        // Get MIME type for format
+        // Convert format ID to MIME type
         let mime_type = converter.format_id_to_mime(format_id)?;
         debug!("Format {} maps to MIME: {}", format_id, mime_type);
 
-        // TODO: Need session reference to call Portal API
-        // For now, skip Portal read and just log
-        warn!("Portal clipboard read skipped - session not accessible from event handler");
+        // Read from Portal clipboard via SelectionRead
+        let session_guard = session.lock().await;
+        let portal_data = match portal.read_local_clipboard(&session_guard, &mime_type).await {
+            Ok(data) => {
+                info!("📖 Read {} bytes from Portal clipboard ({})", data.len(), mime_type);
+                data
+            }
+            Err(e) => {
+                error!("Failed to read from Portal clipboard: {:#}", e);
+                return Ok(()); // Return empty/error - RDP client will handle
+            }
+        };
 
-        // Portal read not yet wired - need session reference
-        let portal_data = Vec::new(); // Placeholder
-
-        if portal_data.is_empty() {
-            debug!("Portal clipboard empty for MIME type: {}", mime_type);
-            return Ok(());
-        }
-
-        // Portal data is already in the right format (UTF-8 text, PNG bytes, etc.)
-        // RDP expects UTF-16LE for text, so convert if text
+        // Convert Portal data to RDP format
         let rdp_data = if mime_type.starts_with("text/plain") {
             // Convert UTF-8 to UTF-16LE for RDP
             let text = String::from_utf8_lossy(&portal_data);
@@ -348,12 +530,13 @@ impl ClipboardManager {
             portal_data
         };
 
-        debug!("Converted to RDP format: {} bytes", rdp_data.len());
+        let data_len = rdp_data.len();
+        debug!("Converted to RDP format: {} bytes", data_len);
 
-        // Send response back to RDP client if callback provided
+        // Send response back to RDP client
         if let Some(callback) = response_callback {
             callback(rdp_data);
-            debug!("Response sent to RDP client");
+            info!("✅ Sent {} bytes to RDP client for format {}", data_len, format_id);
         } else {
             warn!("No response callback available for RDP data request");
         }
@@ -362,83 +545,108 @@ impl ClipboardManager {
     }
 
     /// Handle RDP data response - Client sent clipboard data, write to Portal
+    ///
+    /// This is called when RDP client sends FormatDataResponse in response to our
+    /// FormatDataRequest (which was triggered by SelectionTransfer signal).
+    /// We write the data to Portal using the tracked serial number.
     async fn handle_rdp_data_response(
         data: Vec<u8>,
         sync_manager: &Arc<RwLock<SyncManager>>,
         _transfer_engine: &TransferEngine,
-        portal_clipboard: &Option<Arc<crate::portal::clipboard::ClipboardManager>>,
+        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+        portal_session: &Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
+        pending_portal_requests: &Arc<RwLock<std::collections::HashMap<u32, String>>>,
     ) -> Result<()> {
         debug!("RDP data response received: {} bytes", data.len());
 
-        // Note: Portal clipboard may not be available, but we can still write via wl-clipboard-rs
-        if portal_clipboard.is_none() {
-            debug!("Portal clipboard not available, using wl-clipboard-rs directly");
-        }
-
         // Check for content loop
         let should_transfer = sync_manager.write().await.check_content(&data, true)?;
-
         if !should_transfer {
             debug!("Skipping RDP data due to content loop detection");
             return Ok(());
         }
 
-        // Detect format from data content (simple heuristic for now)
-        let mime_type = if data.starts_with(b"file://") || data.starts_with(b"x-special/") {
-            "text/uri-list"
-        } else if data.len() > 54 && &data[0..2] == b"BM" {
-            "image/bmp"
-        } else if data.len() > 8 && &data[0..8] == b"\x89PNG\r\n\x1a\n" {
-            "image/png"
-        } else {
-            // Assume UTF-16 text from Windows, convert to UTF-8
-            "text/plain;charset=utf-8"
+        // Get Portal clipboard and session
+        let portal_opt = portal_clipboard.read().await.clone();
+        let session_opt = portal_session.read().await.clone();
+
+        let (portal, session) = match (portal_opt, session_opt) {
+            (Some(p), Some(s)) => (p, s),
+            _ => {
+                warn!("Portal not available - cannot deliver clipboard data");
+                return Ok(());
+            }
         };
 
-        debug!("Detected MIME type from data: {}", mime_type);
+        // Get the pending Portal request (should have exactly one for the latest SelectionTransfer)
+        // In a more sophisticated implementation, we'd track format_id → serial mapping
+        // For now, we take the first/only pending request
+        let pending = pending_portal_requests.read().await;
+        let serial_opt = pending.iter().next().map(|(serial, _mime)| *serial);
+        drop(pending);
 
-        // Convert RDP data to Portal format if needed
-        let portal_data = if mime_type.starts_with("text/plain") && data.len() >= 2 {
-            // Convert UTF-16LE to UTF-8
-            use std::str;
+        let serial = match serial_opt {
+            Some(s) => s,
+            None => {
+                warn!("No pending Portal request - data arrived without SelectionTransfer");
+                warn!("This can happen if user hasn't pasted yet - data will be discarded");
+                return Ok(());
+            }
+        };
+
+        // Convert RDP data to Portal format (UTF-16LE → UTF-8 for text)
+        let portal_data = if data.len() >= 2 {
+            // Detect if this is UTF-16 text
             let utf16_data: Vec<u16> = data
                 .chunks_exact(2)
                 .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
                 .take_while(|&c| c != 0) // Stop at null terminator
                 .collect();
 
-            String::from_utf16(&utf16_data)
-                .unwrap_or_default()
-                .into_bytes()
+            if let Ok(text) = String::from_utf16(&utf16_data) {
+                // Successfully decoded as UTF-16 text
+                debug!("Converted UTF-16 text: {} chars", text.len());
+                text.into_bytes()
+            } else {
+                // Not valid UTF-16, use raw data
+                debug!("Data is not UTF-16 text, using raw bytes");
+                data
+            }
         } else {
             data
         };
 
-        // Temporary: Write to Wayland clipboard via wl-clipboard-rs
-        // Portal Clipboard has initialization issues, using simple write for now
-        use wl_clipboard_rs::copy::{MimeType as CopyMimeType, Options as CopyOptions, Source};
+        // Write data to Portal via SelectionWrite workflow
+        let session_guard = session.lock().await;
+        match portal.write_selection_data(&session_guard, serial, portal_data.clone()).await {
+            Ok(()) => {
+                info!("✅ Clipboard data delivered to Portal via SelectionWrite (serial {})", serial);
 
-        let mime = CopyMimeType::Specific(mime_type.to_string());
-        let source = Source::Bytes(portal_data.clone().into());
-        let opts = CopyOptions::new();
+                // Clear the pending request
+                pending_portal_requests.write().await.remove(&serial);
+            }
+            Err(e) => {
+                error!("Failed to write clipboard data to Portal: {:#}", e);
 
-        tokio::task::spawn_blocking(move || {
-            opts.copy(source, mime)
-        })
-        .await
-        .map_err(|e| ClipboardError::PortalError(format!("spawn error: {}", e)))?
-        .map_err(|e| ClipboardError::PortalError(format!("clipboard write: {}", e)))?;
+                // Clear pending request even on failure
+                pending_portal_requests.write().await.remove(&serial);
 
-        info!("✅ Wrote {} bytes to Wayland clipboard ({})", portal_data.len(), mime_type);
+                return Err(ClipboardError::PortalError(format!("SelectionWrite failed: {}", e)));
+            }
+        }
 
         Ok(())
     }
 
-    /// Handle Portal format announcement
+    /// Handle Portal format announcement (Linux → Windows)
+    ///
+    /// This is called when Linux clipboard changes (SelectionOwnerChanged signal).
+    /// We need to send FormatList PDU to RDP clients to announce available formats.
     async fn handle_portal_formats(
         mime_types: Vec<String>,
         converter: &FormatConverter,
         sync_manager: &Arc<RwLock<SyncManager>>,
+        server_event_sender: &Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
     ) -> Result<()> {
         debug!("Portal formats available: {:?}", mime_types);
 
@@ -455,47 +663,68 @@ impl ClipboardManager {
 
         // Convert MIME types to RDP formats
         let rdp_formats = converter.mime_to_rdp_formats(&mime_types)?;
+        debug!("Converted {} MIME types to {} RDP formats", mime_types.len(), rdp_formats.len());
 
-        debug!("Converted to RDP formats: {:?}", rdp_formats);
+        // Convert to IronRDP ClipboardFormat type
+        let ironrdp_formats: Vec<ironrdp_cliprdr::pdu::ClipboardFormat> = rdp_formats.iter().map(|f| {
+            let name = if !f.format_name.is_empty() {
+                Some(ironrdp_cliprdr::pdu::ClipboardFormatName::new(f.format_name.clone()))
+            } else {
+                None
+            };
+            ironrdp_cliprdr::pdu::ClipboardFormat {
+                id: ironrdp_cliprdr::pdu::ClipboardFormatId(f.format_id),
+                name,
+            }
+        }).collect();
 
-        // Note: Format list transmission to RDP happens via the message proxy
-        // in ironrdp_backend.rs. This helper provides conversion logic.
+        // Send ServerEvent to announce formats to RDP clients
+        let sender_opt = server_event_sender.read().await.clone();
+        if let Some(sender) = sender_opt {
+            use ironrdp_cliprdr::backend::ClipboardMessage;
+
+            if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                ClipboardMessage::SendInitiateCopy(ironrdp_formats)
+            )) {
+                error!("Failed to send FormatList via ServerEvent: {:?}", e);
+            } else {
+                info!("✅ Sent FormatList with {} formats to RDP client (Linux clipboard changed)", rdp_formats.len());
+            }
+        } else {
+            warn!("ServerEvent sender not available - cannot announce formats to RDP");
+        }
 
         Ok(())
     }
 
-    /// Handle Portal data request
+    /// Handle Portal data request (from SelectionTransfer signal)
+    ///
+    /// This is called when Linux user pastes and Portal needs the clipboard data.
+    /// We send a ServerEvent to request data from the RDP client.
     async fn handle_portal_data_request(
         mime_type: String,
         converter: &FormatConverter,
-        sync_manager: &Arc<RwLock<SyncManager>>,
+        _sync_manager: &Arc<RwLock<SyncManager>>,
+        _portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+        _portal_session: &Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
     ) -> Result<()> {
         debug!("Portal data request for MIME type: {}", mime_type);
 
-        // Get format ID for MIME type
+        // Convert MIME type to RDP format ID
         let format_id = converter.mime_to_format_id(&mime_type)?;
 
-        // Check current state
-        let state = sync_manager.read().await.state().clone();
+        info!("📤 Portal needs data - will request format {} from RDP client", format_id);
 
-        match state {
-            ClipboardState::RdpOwned(_formats) => {
-                // Data flow: RDP → Portal
-                // This helper is currently unused. Actual implementation happens
-                // in ironrdp_backend.rs on_file_contents_response() and
-                // on_format_data_response() which handle Portal writes.
+        // NOTE: We can't send ServerEvent from here because we don't have the sender in event handlers.
+        // The sender is available in the SelectionTransfer listener task.
+        // We need to refactor to send the ServerEvent from there instead.
+        //
+        // For now, this handler just logs. The actual request will be sent from the
+        // SelectionTransfer handler task which has access to both pending_requests and event_tx.
 
-                debug!("Would fetch data from RDP for format: {}", format_id);
-                Ok(())
-            }
-            _ => {
-                warn!("Portal data request in invalid state: {:?}", state);
-                Err(ClipboardError::InvalidState(format!(
-                    "Cannot handle Portal data request in state: {:?}",
-                    state
-                )))
-            }
-        }
+        warn!("⚠️  PortalDataRequest event received but ServerEvent sending happens in SelectionTransfer handler");
+
+        Ok(())
     }
 
     /// Handle Portal data response

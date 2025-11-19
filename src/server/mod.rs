@@ -76,7 +76,7 @@ use tracing::{debug, error, info, warn};
 use crate::clipboard::{ClipboardConfig, ClipboardManager, WrdCliprdrFactory};
 use crate::config::Config;
 use crate::input::coordinates::MonitorInfo as InputMonitorInfo;
-use crate::portal::{PortalManager, PortalSessionHandle};
+use crate::portal::PortalManager;
 use crate::security::TlsConfig;
 
 /// WRD Server
@@ -255,13 +255,13 @@ impl WrdServer {
             .await
             .context("Failed to create clipboard manager")?;
 
-        // Set Portal clipboard reference if available
+        // Set Portal clipboard reference if available (async operation)
         if let Some(portal_clip) = portal_clipboard {
             clipboard_mgr.set_portal_clipboard(
                 portal_clip,
                 Arc::clone(&shared_session), // Share session with clipboard
-            );
-            info!("Portal Clipboard integrated with clipboard manager");
+            ).await;
+            // Note: Success message logged inside set_portal_clipboard
         }
 
         let clipboard_manager = Arc::new(Mutex::new(clipboard_mgr));

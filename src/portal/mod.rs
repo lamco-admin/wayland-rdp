@@ -3,8 +3,6 @@
 //! Provides unified access to ScreenCast, RemoteDesktop, and Clipboard portals.
 
 use anyhow::{Context, Result};
-use ashpd::desktop::remote_desktop::DeviceType;
-use enumflags2::BitFlags;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
