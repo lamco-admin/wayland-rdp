@@ -3,14 +3,14 @@
 //! Implements the CliprdrBackend and CliprdrBackendFactory traits to integrate
 //! our clipboard manager with IronRDP's clipboard protocol handling.
 
-use ironrdp_cliprdr::backend::{CliprdrBackend, CliprdrBackendFactory, ClipboardMessage, ClipboardMessageProxy};
+use ironrdp_cliprdr::backend::{CliprdrBackend, CliprdrBackendFactory};
 use ironrdp_cliprdr::pdu::{
     ClipboardFormat, ClipboardGeneralCapabilityFlags, FileContentsRequest,
-    FileContentsResponse, FormatDataRequest, FormatDataResponse, LockDataId, OwnedFormatDataResponse,
+    FileContentsResponse, FormatDataRequest, FormatDataResponse, LockDataId,
 };
 use ironrdp_core::AsAny;
 use ironrdp_server::ServerEventSender;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
@@ -181,7 +181,16 @@ impl CliprdrBackendFactory for WrdCliprdrFactory {
 impl ServerEventSender for WrdCliprdrFactory {
     fn set_sender(&mut self, sender: mpsc::UnboundedSender<ironrdp_server::ServerEvent>) {
         info!("Clipboard factory received server event sender");
-        self.event_sender = Some(sender);
+        self.event_sender = Some(sender.clone());
+
+        // Also register with ClipboardManager so it can send requests for delayed rendering
+        let manager = Arc::clone(&self.clipboard_manager);
+        let sender_clone = sender.clone();
+        tokio::spawn(async move {
+            if let Ok(mgr) = manager.try_lock() {
+                mgr.set_server_event_sender(sender_clone).await;
+            }
+        });
     }
 }
 
@@ -288,30 +297,15 @@ impl CliprdrBackend for WrdCliprdrBackend {
         if let Ok(mut queue) = self.event_queue.try_write() {
             queue.push_back(ClipboardBackendEvent::RemoteCopy(wrd_formats.clone()));
 
-            // Immediately request text data if available (CF_UNICODETEXT=13 or CF_TEXT=1)
-            let text_format = available_formats.iter()
-                .find(|f| f.id.0 == 13 || f.id.0 == 1)
-                .map(|f| f.id.0);
-
-            if let Some(format_id) = text_format {
-                info!("Text format {} detected, requesting clipboard data from RDP client", format_id);
-
-                // ✅ CORRECT: Send through ServerEvent channel
-                if let Some(sender) = &self.event_sender {
-                    use ironrdp_cliprdr::backend::ClipboardMessage;
-                    use ironrdp_cliprdr::pdu::ClipboardFormatId;
-
-                    if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
-                        ClipboardMessage::SendInitiatePaste(ClipboardFormatId(format_id))
-                    )) {
-                        error!("Failed to send clipboard request via ServerEvent: {:?}", e);
-                    } else {
-                        info!("✅ Sent FormatDataRequest for format {} to RDP client via ServerEvent", format_id);
-                    }
-                } else {
-                    error!("❌ No ServerEvent sender available - factory not initialized!");
-                }
-            }
+            // NOTE: We do NOT proactively request data here!
+            // Portal Clipboard uses DELAYED RENDERING:
+            // 1. We announce formats via SetSelection (done in ClipboardManager)
+            // 2. User pastes in Linux → Portal sends SelectionTransfer signal
+            // 3. THEN we request data from RDP via ServerEvent
+            // 4. We receive data in on_format_data_response()
+            // 5. We write to Portal via selection_write(serial)
+            //
+            // The clipboard manager event handler will do the format announcement.
         } else {
             warn!("Clipboard event queue locked, skipping format announcement");
         }

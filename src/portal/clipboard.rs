@@ -15,26 +15,16 @@ use anyhow::{Context, Result};
 use ashpd::desktop::clipboard::Clipboard;
 use ashpd::desktop::remote_desktop::RemoteDesktop;
 use ashpd::desktop::Session;
-use futures_util::StreamExt;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::SystemTime;
-use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tokio::sync::mpsc;
+use tracing::{debug, info};
 
-/// Pending clipboard data request from Portal
+/// Selection transfer event from Portal
 #[derive(Debug, Clone)]
-pub struct PendingRequest {
-    pub serial: u32,
+pub struct SelectionTransferEvent {
     pub mime_type: String,
-    pub requested_at: SystemTime,
+    pub serial: u32,
 }
-
-/// Callback type for requesting clipboard data from RDP client
-pub type RdpDataRequester = Arc<dyn Fn(u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>>> + Send>> + Send + Sync>;
-
-/// Callback type for notifying local clipboard changes
-pub type LocalClipboardChangeHandler = Arc<dyn Fn(Vec<String>) + Send + Sync>;
 
 /// Portal Clipboard Manager
 ///
@@ -42,11 +32,8 @@ pub type LocalClipboardChangeHandler = Arc<dyn Fn(Vec<String>) + Send + Sync>;
 /// Supports delayed rendering where formats are announced without data,
 /// and data is only transferred when actually requested.
 pub struct ClipboardManager {
-    /// Portal Clipboard interface
-    clipboard: Clipboard<'static>,
-
-    /// Pending Portal requests (serial → request info)
-    pending_requests: Arc<RwLock<HashMap<u32, PendingRequest>>>,
+    /// Portal Clipboard interface (Arc-wrapped for sharing across tasks)
+    clipboard: Arc<Clipboard<'static>>,
 }
 
 impl ClipboardManager {
@@ -68,11 +55,117 @@ impl ClipboardManager {
         info!("Portal Clipboard created (will be enabled when session is ready)");
 
         let manager = Self {
-            clipboard,
-            pending_requests: Arc::new(RwLock::new(HashMap::new())),
+            clipboard: Arc::new(clipboard),
         };
 
         Ok(manager)
+    }
+
+    /// Start listening for SelectionTransfer events (delayed rendering requests)
+    ///
+    /// When a Linux application pastes, Portal sends SelectionTransfer with:
+    /// - mime_type: The requested data format
+    /// - serial: Unique ID to track this request
+    ///
+    /// Spawns a background task that listens for SelectionTransfer signals and
+    /// sends events to the provided channel.
+    pub async fn start_selection_transfer_listener(
+        &self,
+        event_tx: mpsc::UnboundedSender<SelectionTransferEvent>,
+    ) -> anyhow::Result<()> {
+        // Clone the Arc clipboard reference (cheap)
+        let clipboard = Arc::clone(&self.clipboard);
+
+        // Start the stream in a task to avoid lifetime issues
+        tokio::spawn(async move {
+            use futures_util::stream::StreamExt;
+
+            // Create stream inside the task
+            let stream_result = clipboard.receive_selection_transfer().await;
+
+            match stream_result {
+                Ok(stream) => {
+                    let mut stream = Box::pin(stream);
+
+                    while let Some((_, mime_type, serial)) = stream.next().await {
+                        debug!("📥 SelectionTransfer signal: mime={}, serial={}", mime_type, serial);
+
+                        let event = SelectionTransferEvent {
+                            mime_type,
+                            serial,
+                        };
+
+                        if event_tx.send(event).is_err() {
+                            info!("SelectionTransfer listener stopping (receiver dropped)");
+                            break;
+                        }
+                    }
+
+                    info!("SelectionTransfer listener task ended");
+                }
+                Err(e) => {
+                    info!("Failed to receive SelectionTransfer stream: {:#}", e);
+                }
+            }
+        });
+
+        info!("✅ SelectionTransfer listener started - ready for delayed rendering");
+        Ok(())
+    }
+
+    /// Start listening for SelectionOwnerChanged events (local clipboard changes)
+    ///
+    /// When clipboard ownership changes in the system (user copies in Linux app),
+    /// Portal sends SelectionOwnerChanged signal with available MIME types.
+    ///
+    /// Spawns a background task that listens for these signals and sends events
+    /// to the provided channel for announcing to RDP clients.
+    pub async fn start_owner_changed_listener(
+        &self,
+        event_tx: mpsc::UnboundedSender<Vec<String>>,
+    ) -> anyhow::Result<()> {
+        use futures_util::stream::StreamExt;
+
+        let clipboard = Arc::clone(&self.clipboard);
+
+        tokio::spawn(async move {
+            let stream_result = clipboard.receive_selection_owner_changed().await;
+
+            match stream_result {
+                Ok(stream) => {
+                    let mut stream = Box::pin(stream);
+
+                    while let Some((_, change)) = stream.next().await {
+                        // Check if we are the owner (we just set the clipboard)
+                        let is_owner = change.session_is_owner().unwrap_or(false);
+
+                        if is_owner {
+                            // We own the clipboard (we just announced RDP data) - ignore
+                            debug!("Ignoring SelectionOwnerChanged - we are the owner");
+                            continue;
+                        }
+
+                        // Another application owns the clipboard - announce to RDP clients
+                        let mime_types = change.mime_types();
+                        info!("📋 Local clipboard changed - new owner has {} formats: {:?}",
+                            mime_types.len(), mime_types);
+
+                        if event_tx.send(mime_types).is_err() {
+                            info!("SelectionOwnerChanged listener stopping (receiver dropped)");
+                            break;
+                        }
+                    }
+
+                    info!("SelectionOwnerChanged listener task ended");
+                }
+                Err(e) => {
+                    info!("Failed to receive SelectionOwnerChanged stream: {:#}", e);
+                }
+            }
+        });
+
+        info!("✅ SelectionOwnerChanged listener started - monitoring local clipboard");
+        Ok(())
     }
 
     /// Request clipboard access for session
@@ -150,16 +243,6 @@ impl ClipboardManager {
         Ok(())
     }
 
-    /// Provide clipboard data to Portal
-    pub async fn provide_data(
-        &self,
-        session: &Session<'_, RemoteDesktop<'_>>,
-        serial: u32,
-        data: Vec<u8>,
-    ) -> Result<()> {
-        Self::write_to_portal_fd_static(&self.clipboard, session, serial, &data).await
-    }
-
     // Signal streams removed - caller uses portal_clipboard() directly for signal access
 
     /// Read from local Wayland clipboard
@@ -198,17 +281,57 @@ impl ClipboardManager {
         Ok(data)
     }
 
-    /// Get pending request by serial
-    pub async fn get_pending_request(&self, serial: u32) -> Option<PendingRequest> {
-        self.pending_requests.read().await.get(&serial).cloned()
+    /// Write clipboard data to Portal via file descriptor
+    ///
+    /// This is called in response to a SelectionTransfer event.
+    /// The data is written to the file descriptor returned by selection_write(),
+    /// and then selection_write_done() is called to notify success/failure.
+    pub async fn write_selection_data(
+        &self,
+        session: &Session<'_, RemoteDesktop<'_>>,
+        serial: u32,
+        data: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        use tokio::io::AsyncWriteExt;
+
+        debug!("Writing {} bytes to Portal (serial {})", data.len(), serial);
+
+        // Get write file descriptor from Portal
+        let fd = self.clipboard.selection_write(session, serial).await
+            .context("Failed to get SelectionWrite fd")?;
+
+        // Convert zvariant::OwnedFd to tokio File
+        let std_fd: std::os::fd::OwnedFd = fd.into();
+        let std_file = std::fs::File::from(std_fd);
+        let mut file = tokio::fs::File::from_std(std_file);
+
+        // Write data to file descriptor
+        match file.write_all(&data).await {
+            Ok(()) => {
+                file.flush().await?;
+                drop(file); // Close fd before notifying Portal
+
+                // Notify Portal of successful write
+                self.clipboard.selection_write_done(session, serial, true).await
+                    .context("Failed to notify Portal of write completion")?;
+
+                info!("✅ Wrote {} bytes to Portal clipboard (serial {})", data.len(), serial);
+                Ok(())
+            }
+            Err(e) => {
+                drop(file); // Close fd on error
+                // Notify Portal of failed write
+                let _ = self.clipboard.selection_write_done(session, serial, false).await;
+                Err(anyhow::anyhow!("Failed to write clipboard data: {}", e))
+            }
+        }
     }
 }
 
 impl std::fmt::Debug for ClipboardManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClipboardManager")
-            .field("session", &"<session>")
-            .field("pending_requests_count", &self.pending_requests.try_read().map(|r| r.len()).unwrap_or(0))
+        f.debug_struct("PortalClipboardManager")
+            .field("clipboard", &"<Portal Clipboard Proxy>")
             .finish()
     }
 }
