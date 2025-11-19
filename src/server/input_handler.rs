@@ -131,7 +131,7 @@ impl WrdInputHandler {
     /// Returns error if coordinate transformer initialization fails
     pub fn new(
         portal: Arc<RemoteDesktopManager>,
-        session: ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>,
+        session: Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
         monitors: Vec<MonitorInfo>,
         primary_stream_id: u32,
     ) -> Result<Self, InputError> {
@@ -150,7 +150,7 @@ impl WrdInputHandler {
             keyboard_handler,
             mouse_handler,
             coordinate_transformer,
-            session: Arc::new(Mutex::new(session)),
+            session, // Already wrapped in Arc<Mutex>
             primary_stream_id,
         })
     }
