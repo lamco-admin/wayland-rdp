@@ -142,10 +142,18 @@ impl WrdServer {
         );
 
         // Enable clipboard for this session
-        portal_clipboard.enable_for_session(&session_handle.session).await
-            .context("Failed to enable clipboard for session")?;
+        match portal_clipboard.enable_for_session(&session_handle.session).await {
+            Ok(()) => {
+                info!("✅ Portal Clipboard enabled for session");
+            }
+            Err(e) => {
+                warn!("Failed to enable Portal Clipboard (may not be supported): {}", e);
+                warn!("Clipboard functionality will be limited");
+                // Don't fail server startup - clipboard is optional
+            }
+        }
 
-        info!("Portal Clipboard manager created and enabled");
+        info!("Portal Clipboard manager created");
 
         // Extract session details
         let pipewire_fd = session_handle.pipewire_fd;
