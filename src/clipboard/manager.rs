@@ -309,17 +309,23 @@ impl ClipboardManager {
 
                 // Spawn task to handle clipboard ownership changes
                 tokio::spawn(async move {
+                    info!("SelectionOwnerChanged handler task ready - waiting for clipboard changes");
+                    let mut change_count = 0;
+
                     while let Some(mime_types) = owner_rx.recv().await {
-                        info!("📋 Local clipboard changed: {} formats", mime_types.len());
+                        change_count += 1;
+                        info!("📋 Local clipboard change #{}: {} formats: {:?}", change_count, mime_types.len(), mime_types);
 
                         // Send event to announce these formats to RDP clients
-                        if let Err(e) = event_tx.send(ClipboardEvent::PortalFormatsAvailable(mime_types)).await {
+                        if let Err(e) = event_tx.send(ClipboardEvent::PortalFormatsAvailable(mime_types.clone())).await {
                             error!("Failed to send PortalFormatsAvailable event: {}", e);
                             break;
+                        } else {
+                            info!("✅ Sent PortalFormatsAvailable event to clipboard manager");
                         }
                     }
 
-                    warn!("SelectionOwnerChanged handler task ended");
+                    warn!("SelectionOwnerChanged handler task ended after {} changes", change_count);
                 });
 
                 info!("✅ SelectionOwnerChanged listener started - monitoring Linux clipboard");
@@ -651,7 +657,7 @@ impl ClipboardManager {
         sync_manager: &Arc<RwLock<SyncManager>>,
         server_event_sender: &Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
     ) -> Result<()> {
-        debug!("Portal formats available: {:?}", mime_types);
+        info!("📥 handle_portal_formats called with {} MIME types: {:?}", mime_types.len(), mime_types);
 
         // Check with sync manager (loop detection)
         let should_sync = {

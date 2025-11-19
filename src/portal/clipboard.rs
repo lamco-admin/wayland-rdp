@@ -17,7 +17,7 @@ use ashpd::desktop::remote_desktop::RemoteDesktop;
 use ashpd::desktop::Session;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, info};
+use tracing::{debug, error, info, warn};
 
 /// Selection transfer event from Portal
 #[derive(Debug, Clone)]
@@ -129,15 +129,24 @@ impl ClipboardManager {
         let clipboard = Arc::clone(&self.clipboard);
 
         tokio::spawn(async move {
+            info!("SelectionOwnerChanged listener task starting - attempting to receive stream");
             let stream_result = clipboard.receive_selection_owner_changed().await;
 
             match stream_result {
                 Ok(stream) => {
+                    info!("SelectionOwnerChanged stream created successfully - waiting for signals");
                     let mut stream = Box::pin(stream);
+                    let mut event_count = 0;
 
                     while let Some((_, change)) = stream.next().await {
+                        event_count += 1;
+                        info!("🔔 SelectionOwnerChanged event #{}: received from Portal", event_count);
+
                         // Check if we are the owner (we just set the clipboard)
                         let is_owner = change.session_is_owner().unwrap_or(false);
+                        let mime_types = change.mime_types();
+
+                        info!("   session_is_owner: {}, mime_types: {:?}", is_owner, mime_types);
 
                         if is_owner {
                             // We own the clipboard (we just announced RDP data) - ignore
@@ -146,7 +155,6 @@ impl ClipboardManager {
                         }
 
                         // Another application owns the clipboard - announce to RDP clients
-                        let mime_types = change.mime_types();
                         info!("📋 Local clipboard changed - new owner has {} formats: {:?}",
                             mime_types.len(), mime_types);
 
@@ -156,10 +164,12 @@ impl ClipboardManager {
                         }
                     }
 
-                    info!("SelectionOwnerChanged listener task ended");
+                    warn!("SelectionOwnerChanged listener task ended after {} events", event_count);
                 }
                 Err(e) => {
-                    info!("Failed to receive SelectionOwnerChanged stream: {:#}", e);
+                    error!("CRITICAL: Failed to receive SelectionOwnerChanged stream: {:#}", e);
+                    error!("This means Linux→Windows clipboard will NOT work");
+                    error!("Portal backend may not support this signal, or permission denied");
                 }
             }
         });

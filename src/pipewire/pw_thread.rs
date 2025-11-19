@@ -553,12 +553,8 @@ fn create_stream_on_thread(
                             };
 
                             // Send frame to async runtime
-                            // Note: Channel may be full if consumer can't keep up with PipeWire capture rate
-                            // Frame drops are expected and handled gracefully (not an error condition)
-                            if frame_tx_for_process.try_send(frame).is_err() {
-                                // Frame dropped silently - this is normal backpressure behavior
-                                // Logging removed to avoid spam (was causing 385 warnings in logP.txt)
-                                // If frame drops are excessive, increase channel capacity in pw_thread.rs:219
+                            if let Err(e) = frame_tx_for_process.try_send(frame) {
+                                warn!("Failed to send frame: {} (channel full, backpressure)", e);
                             }
                         } else {
                             warn!(
