@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use ashpd::desktop::remote_desktop::DeviceType;
 use enumflags2::BitFlags;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 pub mod clipboard;
 pub mod remote_desktop;
