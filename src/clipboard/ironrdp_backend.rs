@@ -74,22 +74,19 @@ impl CliprdrBackendFactory for WrdCliprdrFactory {
     fn build_cliprdr_backend(&self) -> Box<dyn CliprdrBackend> {
         debug!("Building clipboard backend for new connection");
 
-        let (msg_tx, msg_rx) = mpsc::unbounded_channel();
-        let message_proxy = WrdMessageProxy { tx: msg_tx };
-
-        // Store receiver for the factory to process messages
-        tokio::spawn({
-            let message_rx = self.message_rx.clone();
-            async move {
-                *message_rx.lock().await = Some(msg_rx);
-            }
-        });
+        // Note: We don't create channels here because this is called for EACH
+        // connection attempt (including failed ones). Creating channels here
+        // causes the previous channel to be dropped when a retry happens,
+        // which closes the display update channel and crashes the server.
+        //
+        // The message proxy will be set later via the ServerEventSender trait
+        // when the connection is established.
 
         Box::new(WrdCliprdrBackend {
             clipboard_manager: Arc::clone(&self.clipboard_manager),
             capabilities: ClipboardGeneralCapabilityFlags::empty(),
             temporary_directory: "/tmp/wrd-clipboard".to_string(),
-            message_proxy: Some(message_proxy),
+            message_proxy: None, // Will be set when connection succeeds
             pending_requests: Arc::new(RwLock::new(HashMap::new())),
             file_transfers: Arc::new(RwLock::new(HashMap::new())),
         })
