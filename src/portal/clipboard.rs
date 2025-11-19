@@ -41,7 +41,6 @@ pub type LocalClipboardChangeHandler = Arc<dyn Fn(Vec<String>) + Send + Sync>;
 /// Integrates RDP clipboard with Wayland via Portal Clipboard API.
 /// Supports delayed rendering where formats are announced without data,
 /// and data is only transferred when actually requested.
-#[derive(Clone)]
 pub struct ClipboardManager {
     /// Portal Clipboard interface
     clipboard: Clipboard<'static>,
@@ -109,85 +108,13 @@ impl ClipboardManager {
         Ok(())
     }
 
-    /// Start listening for SelectionTransfer signals
-    ///
-    /// Called when Linux app requests clipboard data (user pasted).
-    /// Handler should fetch data from RDP client and call provide_data().
-    ///
-    /// # Arguments
-    ///
-    /// * `handler` - Async function to request data from RDP: (mime_type, serial) -> data
-    pub async fn start_selection_transfer_listener<F, Fut>(
-        &self,
-        handler: F,
-    ) -> Result<()>
-    where
-        F: Fn(String, u32) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<Vec<u8>>> + Send + 'static,
-    {
-        let mut stream = self.clipboard.receive_selection_transfer().await
-            .context("Failed to receive selection transfer signal")?;
-
-        let pending = Arc::clone(&self.pending_requests);
-        let clipboard = self.clipboard.clone();
-        let session_path = self.session.path().to_owned();
-
-        tokio::spawn(async move {
-            info!("🎧 Selection transfer listener started");
-
-            while let Some((_sess, mime_type, serial)) = stream.next().await {
-                info!("🔔 Portal requesting data: {} (serial {})", mime_type, serial);
-
-                // Track this request
-                {
-                    let mut requests = pending.write().await;
-                    requests.insert(serial, PendingRequest {
-                        serial,
-                        mime_type: mime_type.clone(),
-                        requested_at: SystemTime::now(),
-                    });
-                }
-
-                // Request data from RDP client and provide to Portal
-                match handler(mime_type.clone(), serial).await {
-                    Ok(data) => {
-                        info!("Received {} bytes from RDP for serial {}", data.len(), serial);
-
-                        if let Err(e) = Self::write_to_portal_fd(
-                            &clipboard,
-                            &session,
-                            serial,
-                            &data,
-                        ).await {
-                            error!("Failed to provide data to Portal: {}", e);
-                            let _ = clipboard.selection_write_done(&session, serial, false).await;
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to get data from RDP for {}: {}", mime_type, e);
-                        let _ = clipboard.selection_write_done(&session, serial, false).await;
-                    }
-                }
-
-                // Cleanup request
-                pending.write().await.remove(&serial);
-            }
-
-            warn!("Selection transfer listener exited");
-        });
-
-        Ok(())
+    /// Get reference to Portal Clipboard for direct API access
+    pub fn portal_clipboard(&self) -> &Clipboard<'static> {
+        &self.clipboard
     }
 
-    /// Provide clipboard data to Portal via file descriptor
-    ///
-    /// Called after getting data from RDP client in response to SelectionTransfer.
-    ///
-    /// # Arguments
-    ///
-    /// * `serial` - Portal request serial number
-    /// * `data` - Clipboard data to provide
-    async fn write_to_portal_fd(
+    /// Provide clipboard data to Portal via file descriptor (static version for spawned tasks)
+    async fn write_to_portal_fd_static(
         clipboard: &Clipboard<'_>,
         session: &Session<'_, RemoteDesktop<'_>>,
         serial: u32,
@@ -199,8 +126,14 @@ impl ClipboardManager {
         let fd = clipboard.selection_write(session, serial).await
             .context("Failed to get SelectionWrite fd")?;
 
+        // Convert zvariant::OwnedFd to File
+        // zvariant OwnedFd is an enum Fd::Owned(std::os::fd::OwnedFd)
+        // Extract the inner OwnedFd and convert to File
+        let std_fd: std::os::fd::OwnedFd = fd.into();
+        let std_file = std::fs::File::from(std_fd);
+        let mut file = tokio::fs::File::from_std(std_file);
+
         // Write data to fd
-        let mut file = tokio::fs::File::from_std(fd.into());
         file.write_all(data).await
             .context("Failed to write clipboard data to fd")?;
         file.flush().await?;
@@ -214,50 +147,12 @@ impl ClipboardManager {
         Ok(())
     }
 
-    /// Start listening for SelectionOwnerChanged signals
-    ///
-    /// Called when local Linux clipboard changes (Linux app copies).
-    /// Handler should announce formats to RDP clients.
-    ///
-    /// # Arguments
-    ///
-    /// * `handler` - Function called when clipboard changes: (mime_types)
-    pub async fn start_owner_changed_listener<F>(
-        &self,
-        handler: F,
-    ) -> Result<()>
-    where
-        F: Fn(Vec<String>) + Send + Sync + 'static,
-    {
-        let mut stream = self.clipboard.receive_selection_owner_changed().await
-            .context("Failed to receive selection owner changed signal")?;
-
-        tokio::spawn(async move {
-            info!("🎧 Selection owner changed listener started");
-
-            while let Some((_sess, change)) = stream.next().await {
-                if change.session_is_owner().unwrap_or(false) {
-                    // We own it (we just announced RDP data via SetSelection) - ignore
-                    debug!("Ignoring self-owned clipboard change");
-                    continue;
-                }
-
-                // Another app owns clipboard - announce to RDP clients
-                let mime_types = change.mime_types();
-
-                if !mime_types.is_empty() {
-                    info!("🔔 Local clipboard changed: {:?}", mime_types);
-                    handler(mime_types);
-                } else {
-                    debug!("Clipboard cleared");
-                }
-            }
-
-            warn!("Selection owner changed listener exited");
-        });
-
-        Ok(())
+    /// Provide clipboard data to Portal
+    pub async fn provide_data(&self, serial: u32, data: Vec<u8>) -> Result<()> {
+        Self::write_to_portal_fd_static(&self.clipboard, &self.session, serial, &data).await
     }
+
+    // Signal streams removed - caller uses portal_clipboard() directly for signal access
 
     /// Read from local Wayland clipboard
     ///
@@ -278,7 +173,10 @@ impl ClipboardManager {
         let fd = self.clipboard.selection_read(&self.session, mime_type).await
             .context("Failed to get SelectionRead fd")?;
 
-        let mut file = tokio::fs::File::from_std(fd.into());
+        // Convert zvariant::OwnedFd to File
+        let std_fd: std::os::fd::OwnedFd = fd.into();
+        let std_file = std::fs::File::from(std_fd);
+        let mut file = tokio::fs::File::from_std(std_file);
         let mut data = Vec::new();
         file.read_to_end(&mut data).await
             .context("Failed to read clipboard data from fd")?;
