@@ -184,6 +184,7 @@ impl ClipboardManager {
         let transfer_engine = self.transfer_engine.clone();
         let config = self.config.clone();
         let portal_clipboard = self.portal_clipboard.clone();
+        let portal_session = self.portal_session.clone();
 
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         self.shutdown_tx = Some(shutdown_tx);
@@ -199,6 +200,7 @@ impl ClipboardManager {
                             &transfer_engine,
                             &config,
                             &portal_clipboard,
+                            &portal_session,
                         ).await {
                             error!("Error handling clipboard event: {:?}", e);
                         }
@@ -220,10 +222,11 @@ impl ClipboardManager {
         transfer_engine: &TransferEngine,
         _config: &ClipboardConfig,
         portal_clipboard: &Option<Arc<crate::portal::clipboard::ClipboardManager>>,
+        portal_session: &Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>,
     ) -> Result<()> {
         match event {
             ClipboardEvent::RdpFormatList(formats) => {
-                Self::handle_rdp_format_list(formats, converter, sync_manager, portal_clipboard).await
+                Self::handle_rdp_format_list(formats, converter, sync_manager, portal_clipboard, portal_session).await
             }
 
             ClipboardEvent::RdpDataRequest(format_id, response_callback) => {
@@ -253,7 +256,8 @@ impl ClipboardManager {
         formats: Vec<ClipboardFormat>,
         converter: &FormatConverter,
         sync_manager: &Arc<RwLock<SyncManager>>,
-        _portal_clipboard: &Option<Arc<crate::portal::clipboard::ClipboardManager>>,
+        portal_clipboard: &Option<Arc<crate::portal::clipboard::ClipboardManager>>,
+        portal_session: &Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>,
     ) -> Result<()> {
         debug!("RDP format list received: {:?}", formats);
 
@@ -273,12 +277,22 @@ impl ClipboardManager {
 
         debug!("Converted to MIME types: {:?}", mime_types);
 
-        // With wl-clipboard-rs, we can't just announce formats - we need actual data.
-        // The RDP client has data but won't send it until we request it.
-        // We need to trigger a format data request back to RDP to get the actual bytes.
-        //
-        // This is the missing link: RDP announces → we request data → RDP sends → we write to Portal
-        debug!("RDP formats available but need to implement proactive data request");
+        // Get Portal clipboard and session
+        let (portal, session) = match (portal_clipboard, portal_session) {
+            (Some(p), Some(s)) => (p, s),
+            _ => {
+                warn!("Portal clipboard or session not available for format announcement");
+                return Ok(());
+            }
+        };
+
+        // Announce formats to Portal using delayed rendering (SetSelection)
+        // This tells Wayland "these formats are available" WITHOUT transferring data
+        let session_guard = session.lock().await;
+        portal.announce_rdp_formats(&session_guard, mime_types).await
+            .map_err(|e| ClipboardError::PortalError(format!("Failed to announce formats: {}", e)))?;
+
+        info!("✅ RDP clipboard formats announced to Portal via SetSelection");
 
         Ok(())
     }
