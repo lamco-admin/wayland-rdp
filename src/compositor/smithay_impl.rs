@@ -102,17 +102,14 @@ impl SmithayCompositor {
     }
 
     /// Initialize Wayland global objects
-    fn init_wayland_globals(&self, dh: &DisplayHandle) -> Result<()> {
+    fn init_wayland_globals(&mut self, dh: &DisplayHandle) -> Result<()> {
         info!("Initializing Wayland globals");
 
-        // In a real Smithay implementation, we would:
-        // 1. Create wl_compositor global
-        // 2. Create wl_shm global
-        // 3. Create wl_seat global
-        // 4. Create xdg_wm_base global
-        // 5. Create wl_output global
+        // Initialize all Smithay protocol states
+        self.state.lock().init_smithay_states(dh)
+            .context("Failed to initialize Smithay protocol states")?;
 
-        // For now, this is a placeholder showing the structure
+        info!("All Wayland globals initialized successfully");
 
         Ok(())
     }

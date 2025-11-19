@@ -13,6 +13,19 @@ use tracing::{debug, error, info, trace};
 #[cfg(feature = "headless-compositor")]
 use calloop::{EventLoop, LoopHandle};
 
+#[cfg(feature = "headless-compositor")]
+use smithay::{
+    desktop::Space,
+    input::Seat,
+    output::Output,
+    utils::Serial,
+    wayland::compositor::CompositorState as SmithayCompositorState,
+    wayland::shm::ShmState,
+    wayland::shell::xdg::XdgShellState,
+    wayland::seat::SeatState,
+    wayland::selection::data_device::DataDeviceState,
+};
+
 /// Main compositor state
 ///
 /// Holds all compositor state including surfaces, windows, and input state.
@@ -52,6 +65,35 @@ pub struct CompositorState {
 
     /// Event listeners
     pub event_listeners: Vec<Box<dyn Fn(CompositorEvent) + Send + Sync>>,
+
+    // Smithay protocol states (initialized after Display creation)
+    #[cfg(feature = "headless-compositor")]
+    pub smithay_compositor_state: Option<SmithayCompositorState>,
+
+    #[cfg(feature = "headless-compositor")]
+    pub shm_state: Option<ShmState>,
+
+    #[cfg(feature = "headless-compositor")]
+    pub xdg_shell_state: Option<XdgShellState>,
+
+    #[cfg(feature = "headless-compositor")]
+    pub seat_state: Option<SeatState<Self>>,
+
+    #[cfg(feature = "headless-compositor")]
+    pub seat: Option<Seat<Self>>,
+
+    #[cfg(feature = "headless-compositor")]
+    pub output: Option<Output>,
+
+    #[cfg(feature = "headless-compositor")]
+    pub data_device_state: Option<DataDeviceState>,
+
+    #[cfg(feature = "headless-compositor")]
+    pub space: Option<Space<Window>>,
+
+    /// Serial counter for Wayland protocol
+    #[cfg(feature = "headless-compositor")]
+    serial_counter: u32,
 }
 
 impl CompositorState {
@@ -74,6 +116,24 @@ impl CompositorState {
             z_order: Vec::new(),
             frame_sequence: 0,
             event_listeners: Vec::new(),
+            #[cfg(feature = "headless-compositor")]
+            smithay_compositor_state: None,
+            #[cfg(feature = "headless-compositor")]
+            shm_state: None,
+            #[cfg(feature = "headless-compositor")]
+            xdg_shell_state: None,
+            #[cfg(feature = "headless-compositor")]
+            seat_state: None,
+            #[cfg(feature = "headless-compositor")]
+            seat: None,
+            #[cfg(feature = "headless-compositor")]
+            output: None,
+            #[cfg(feature = "headless-compositor")]
+            data_device_state: None,
+            #[cfg(feature = "headless-compositor")]
+            space: None,
+            #[cfg(feature = "headless-compositor")]
+            serial_counter: 0,
         })
     }
 
@@ -307,6 +367,64 @@ impl CompositorState {
         F: Fn(CompositorEvent) + Send + Sync + 'static,
     {
         self.event_listeners.push(Box::new(listener));
+    }
+
+    /// Get next Wayland protocol serial
+    #[cfg(feature = "headless-compositor")]
+    pub fn next_serial(&mut self) -> Serial {
+        self.serial_counter = self.serial_counter.wrapping_add(1);
+        Serial::from(self.serial_counter)
+    }
+
+    /// Mark entire framebuffer as damaged
+    pub fn damage_all(&mut self) {
+        self.damage.damage_all();
+    }
+
+    /// Add XDG shell window to tracking
+    #[cfg(feature = "headless-compositor")]
+    pub fn add_xdg_window(&mut self, window: smithay::desktop::Window) {
+        // Map the window in the space
+        debug!("Adding XDG window to space");
+        // Window is already mapped in the protocol handler
+    }
+
+    /// Initialize Smithay protocol states with a DisplayHandle
+    #[cfg(feature = "headless-compositor")]
+    pub fn init_smithay_states(&mut self, display: &smithay::reexports::wayland_server::DisplayHandle) -> Result<()> {
+        use super::protocols::*;
+
+        info!("Initializing Smithay protocol states");
+
+        // Initialize compositor state
+        self.smithay_compositor_state = Some(SmithayCompositorState::new::<Self>(display));
+        debug!("wl_compositor state initialized");
+
+        // Initialize SHM state
+        self.shm_state = Some(init_shm_global(display));
+
+        // Initialize XDG shell state
+        self.xdg_shell_state = Some(XdgShellState::new::<Self>(display));
+        debug!("xdg_shell state initialized");
+
+        // Initialize seat and data device states
+        let (seat_state, seat) = init_seat_global(display, "wrd-seat");
+        self.seat_state = Some(seat_state);
+        self.seat = Some(seat);
+
+        // Initialize data device state
+        self.data_device_state = Some(init_data_device_global(display));
+
+        // Initialize output
+        self.output = Some(init_output_global(display, &self.config));
+
+        // Initialize space for window management
+        self.space = Some(Space::default());
+        debug!("Desktop space initialized");
+
+        info!("All Smithay protocol states initialized successfully");
+
+        Ok(())
     }
 }
 
