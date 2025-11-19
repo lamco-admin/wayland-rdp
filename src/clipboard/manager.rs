@@ -258,10 +258,9 @@ impl ClipboardManager {
 
         match state {
             ClipboardState::PortalOwned(_mime_types) => {
-                // TODO: When Portal integration is ready
-                // 1. Request data from Portal for mime_type
-                // 2. Convert to RDP format
-                // 3. Send response via RDP
+                // Data flow: Portal → RDP
+                // Helper function - actual implementation in ironrdp_backend.rs
+                // on_format_data_request() which reads Portal and sends to RDP
 
                 debug!("Would fetch data from Portal for: {}", mime_type);
                 Ok(())
