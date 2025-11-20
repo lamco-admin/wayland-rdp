@@ -4,7 +4,7 @@
 
 use super::state::CompositorState;
 use super::input::{KeyboardEvent, PointerEvent};
-use smithay::input::{Seat, keyboard::KeyCode, pointer::{AxisFrame, ButtonEvent, MotionEvent}};
+use smithay::input::{Seat, keyboard::Keycode, pointer::{AxisFrame, ButtonEvent, MotionEvent}};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
 use anyhow::Result;
@@ -30,8 +30,8 @@ impl InputDelivery {
         event: &KeyboardEvent,
         state: &mut CompositorState,
     ) -> Result<()> {
-        trace!("Delivering keyboard event: keycode={}, pressed={}",
-            event.keycode, event.pressed);
+        trace!("Delivering keyboard event: key={}, state={:?}",
+            event.key, event.state);
 
         // Get seat
         let seat = match &mut state.seat {
@@ -55,35 +55,28 @@ impl InputDelivery {
         let serial = state.next_serial();
 
         // Convert to Smithay key code
-        let key_code = KeyCode::new(event.keycode);
+        let key_code = Keycode::new(event.key);
+
+        // Convert key state
+        let key_state = match event.state {
+            super::types::KeyState::Pressed => smithay::backend::input::KeyState::Pressed,
+            super::types::KeyState::Released => smithay::backend::input::KeyState::Released,
+        };
 
         // Deliver key event
-        if event.pressed {
-            keyboard.input(
-                state,
-                key_code,
-                smithay::backend::input::KeyState::Pressed,
-                serial,
-                event.timestamp as u32,
-                |_, _modifiers, _keysym| {
-                    // Filter function - we accept all keys
-                    smithay::input::keyboard::FilterResult::Forward
-                },
-            );
-        } else {
-            keyboard.input(
-                state,
-                key_code,
-                smithay::backend::input::KeyState::Released,
-                serial,
-                event.timestamp as u32,
-                |_, _modifiers, _keysym| {
-                    smithay::input::keyboard::FilterResult::Forward
-                },
-            );
-        }
+        keyboard.input(
+            state,
+            key_code,
+            key_state,
+            serial,
+            event.timestamp as u32,
+            |_, _modifiers, _keysym| {
+                // Filter function - we accept all keys
+                smithay::input::keyboard::FilterResult::Forward
+            },
+        );
 
-        debug!("Keyboard event delivered: keycode={}", event.keycode);
+        debug!("Keyboard event delivered: key={}", event.key);
 
         Ok(())
     }
@@ -284,7 +277,7 @@ impl InputDelivery {
         surface: Option<&WlSurface>,
         state: &mut CompositorState,
     ) -> Result<()> {
-        debug!("Setting keyboard focus: {:?}", surface.map(|s| s.id()));
+        debug!("Setting keyboard focus");
 
         // Get seat
         let seat = match &mut state.seat {
@@ -314,7 +307,7 @@ impl InputDelivery {
         position: Point<i32, Logical>,
         state: &mut CompositorState,
     ) -> Result<()> {
-        debug!("Setting pointer focus: {:?}", surface.map(|s| s.id()));
+        debug!("Setting pointer focus");
 
         // Get seat
         let seat = match &mut state.seat {

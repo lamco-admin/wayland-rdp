@@ -16,13 +16,12 @@ use calloop::{EventLoop, LoopHandle};
 #[cfg(feature = "headless-compositor")]
 use smithay::{
     desktop::Space,
-    input::Seat,
+    input::{Seat, SeatState},
     output::Output,
     utils::Serial,
     wayland::compositor::CompositorState as SmithayCompositorState,
     wayland::shm::ShmState,
     wayland::shell::xdg::XdgShellState,
-    wayland::seat::SeatState,
     wayland::selection::data_device::DataDeviceState,
 };
 
@@ -89,7 +88,7 @@ pub struct CompositorState {
     pub data_device_state: Option<DataDeviceState>,
 
     #[cfg(feature = "headless-compositor")]
-    pub space: Option<Space<Window>>,
+    pub space: Option<Space<smithay::desktop::Window>>,
 
     /// Serial counter for Wayland protocol
     #[cfg(feature = "headless-compositor")]

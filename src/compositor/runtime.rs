@@ -97,7 +97,7 @@ impl CompositorRuntime {
         }
 
         // Create event loop
-        let event_loop = EventLoop::try_new()
+        let event_loop = EventLoop::<super::dispatch::DispatchData>::try_new()
             .context("Failed to create event loop")?;
 
         // Create Wayland dispatcher
@@ -157,16 +157,18 @@ impl CompositorRuntime {
             for window in space.elements() {
                 // Get window geometry
                 if let Some(geo) = space.element_geometry(window) {
-                    // Get window surface
-                    let surface = window.toplevel().wl_surface();
+                    // Get window surface (if toplevel exists)
+                    if let Some(toplevel) = window.toplevel() {
+                        let surface = toplevel.wl_surface();
 
-                    // Render surface tree
-                    buffer_manager.render_surface_tree(
-                        surface,
-                        &mut renderer,
-                        (geo.loc.x, geo.loc.y),
-                        &state,
-                    )?;
+                        // Render surface tree
+                        buffer_manager.render_surface_tree(
+                            surface,
+                            &mut renderer,
+                            (geo.loc.x, geo.loc.y),
+                            &state,
+                        )?;
+                    }
                 }
             }
         }

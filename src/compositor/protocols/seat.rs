@@ -21,8 +21,8 @@ impl SeatHandler for CompositorState {
     }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
-        if let Some(surface) = focused {
-            debug!("Focus changed to surface: {:?}", surface.id());
+        if focused.is_some() {
+            debug!("Focus changed to surface");
         } else {
             debug!("Focus cleared");
         }

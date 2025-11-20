@@ -36,6 +36,7 @@ pub mod auth;
 pub mod session;
 pub mod security;
 pub mod config;
+pub mod logind;
 
 pub use daemon::WrdLoginDaemon;
 pub use auth::{PamAuthenticator, AuthenticatedUser};
