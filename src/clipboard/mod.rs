@@ -124,3 +124,4 @@ pub use sync::{ClipboardState, LoopDetectionConfig, LoopDetector, SyncDirection,
 pub use transfer::{
     TransferConfig, TransferEngine, TransferHandle, TransferProgress, TransferState,
 };
+pub mod wlclip_backend;

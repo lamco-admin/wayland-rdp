@@ -199,9 +199,10 @@ impl ClipboardManager {
         // Start SelectionOwnerChanged listener for local clipboard monitoring (Linux → Windows copy)
         self.start_owner_changed_listener(Arc::clone(&portal), Arc::clone(&session)).await;
 
-        // DISABLED: Polling fallback causes session lock contention breaking input injection
-        // TODO: Fix by using separate session or different clipboard monitoring approach
-        // self.start_clipboard_polling_fallback(portal, session).await;
+        // Start wl-clipboard monitoring (runs in separate thread, no session lock issues)
+        if let Err(e) = crate::clipboard::wlclip_backend::start_clipboard_monitoring(self.event_tx.clone()).await {
+            warn!("Failed to start wl-clipboard monitoring: {}. Clipboard Linux→Windows will not work.", e);
+        }
     }
 
     /// Start SelectionTransfer listener for delayed rendering
