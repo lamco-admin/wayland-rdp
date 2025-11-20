@@ -1,0 +1,27 @@
+[Unit]
+Description=WRD Headless Compositor for user %i
+Documentation=https://github.com/lamco-admin/wayland-rdp
+PartOf=wrd-login.service
+After=wrd-login.service
+
+[Service]
+Type=simple
+User=%i
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=WAYLAND_DISPLAY=wayland-%U
+ExecStart=/usr/bin/wrd-compositor --headless --config /etc/wrd-compositor/config.toml
+Restart=on-failure
+RestartSec=5
+
+# Resource limits (per user)
+MemoryMax=2G
+CPUWeight=100
+TasksMax=256
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wrd-compositor-%i
+
+[Install]
+WantedBy=multi-user.target
