@@ -65,6 +65,9 @@ pub struct CompositorState {
     /// Event listeners
     pub event_listeners: Vec<Box<dyn Fn(CompositorEvent) + Send + Sync>>,
 
+    /// Channel for sending clipboard events to RDP clipboard manager
+    pub clipboard_event_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::clipboard::ClipboardEvent>>,
+
     // Smithay protocol states (initialized after Display creation)
     #[cfg(feature = "headless-compositor")]
     pub smithay_compositor_state: Option<SmithayCompositorState>,
@@ -115,6 +118,7 @@ impl CompositorState {
             z_order: Vec::new(),
             frame_sequence: 0,
             event_listeners: Vec::new(),
+            clipboard_event_tx: None,
             #[cfg(feature = "headless-compositor")]
             smithay_compositor_state: None,
             #[cfg(feature = "headless-compositor")]
