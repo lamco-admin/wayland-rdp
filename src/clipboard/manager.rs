@@ -199,9 +199,9 @@ impl ClipboardManager {
         // Start SelectionOwnerChanged listener for local clipboard monitoring (Linux → Windows copy)
         self.start_owner_changed_listener(Arc::clone(&portal), Arc::clone(&session)).await;
 
-        // ALSO start polling fallback in case SelectionOwnerChanged doesn't work
-        // (xdg-desktop-portal-gnome may not implement this signal)
-        self.start_clipboard_polling_fallback(portal, session).await;
+        // DISABLED: Polling fallback causes session lock contention breaking input injection
+        // TODO: Fix by using separate session or different clipboard monitoring approach
+        // self.start_clipboard_polling_fallback(portal, session).await;
     }
 
     /// Start SelectionTransfer listener for delayed rendering
