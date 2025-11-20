@@ -6,7 +6,7 @@ use smithay::wayland::compositor::{
     CompositorClientState, CompositorHandler, CompositorState as SmithayCompositorState,
 };
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
-use smithay::reexports::wayland_server::protocol::{wl_surface, wl_region};
+use smithay::reexports::wayland_server::protocol::{wl_surface, wl_region, wl_buffer::WlBuffer};
 use smithay::reexports::wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::delegate_compositor;
@@ -25,11 +25,11 @@ impl CompositorHandler for CompositorState {
     }
 
     fn new_surface(&mut self, surface: &wl_surface::WlSurface) {
-        debug!("New Wayland surface created: {:?}", surface.id());
+        debug!("New Wayland surface created");
 
         // Surface data is automatically managed by Smithay
         // We track it in our compositor state when it gets a buffer
-        trace!("Surface {} registered with compositor", surface.id());
+        trace!("Surface registered with compositor");
     }
 
     fn new_subsurface(
@@ -37,18 +37,14 @@ impl CompositorHandler for CompositorState {
         surface: &wl_surface::WlSurface,
         parent: &wl_surface::WlSurface,
     ) {
-        debug!(
-            "New subsurface: {:?} with parent: {:?}",
-            surface.id(),
-            parent.id()
-        );
+        debug!("New subsurface created with parent");
 
         // Subsurface hierarchy is managed by Smithay
         // We just log the event for monitoring
     }
 
     fn commit(&mut self, surface: &wl_surface::WlSurface) {
-        trace!("Surface commit: {:?}", surface.id());
+        trace!("Surface commit");
 
         // Handle buffer attachment and damage
         on_commit_buffer_handler::<Self>(surface);
@@ -58,7 +54,7 @@ impl CompositorHandler for CompositorState {
     }
 
     fn destroyed(&mut self, surface: &wl_surface::WlSurface) {
-        debug!("Surface destroyed: {:?}", surface.id());
+        debug!("Surface destroyed");
 
         // Cleanup will be handled by Smithay's state management
         // We just need to remove from our tracking if needed
@@ -68,7 +64,7 @@ impl CompositorHandler for CompositorState {
 
 /// Buffer handler for managing wl_buffer lifecycle
 impl BufferHandler for CompositorState {
-    fn buffer_destroyed(&mut self, _buffer: &smithay::wayland::buffer::BufferData) {
+    fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {
         trace!("Buffer destroyed");
         // Buffer cleanup is handled by Smithay
     }

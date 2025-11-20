@@ -14,37 +14,47 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use tracing::{debug, error, info, trace, warn};
 
+/// Wayland event dispatcher data
+pub struct DispatchData {
+    /// Display handle
+    pub display: Display<CompositorState>,
+
+    /// Compositor state
+    pub state: Arc<Mutex<CompositorState>>,
+}
+
 /// Wayland event dispatcher
 pub struct WaylandDispatcher {
-    /// Display handle
-    display: Display<CompositorState>,
-
     /// Event loop
-    event_loop: EventLoop<'static, CompositorState>,
+    event_loop: EventLoop<'static, DispatchData>,
 
     /// Loop signal for shutdown
     loop_signal: LoopSignal,
 
-    /// Compositor state
-    state: Arc<Mutex<CompositorState>>,
+    /// Dispatch data
+    data: DispatchData,
 }
 
 impl WaylandDispatcher {
     /// Create new Wayland dispatcher
     pub fn new(
         display: Display<CompositorState>,
-        event_loop: EventLoop<'static, CompositorState>,
+        event_loop: EventLoop<'static, DispatchData>,
         state: Arc<Mutex<CompositorState>>,
     ) -> Result<Self> {
         info!("Creating Wayland event dispatcher");
 
         let loop_signal = event_loop.get_signal();
 
-        Ok(Self {
+        let data = DispatchData {
             display,
+            state,
+        };
+
+        Ok(Self {
             event_loop,
             loop_signal,
-            state,
+            data,
         })
     }
 
@@ -52,21 +62,18 @@ impl WaylandDispatcher {
     pub fn run(mut self) -> Result<()> {
         info!("Starting Wayland event dispatcher");
 
-        // Get display handle
-        let dh = self.display.handle();
+        // Create Wayland socket
+        let listening_socket = smithay::wayland::socket::ListeningSocketSource::new_auto()
+            .context("Failed to create listening socket")?;
 
-        // Insert Wayland display into event loop
-        let display_source = smithay::wayland::socket::ListeningSocketSource::new_auto()
-            .context("Failed to create Wayland socket source")?;
+        info!("Wayland socket: {:?}", listening_socket.socket_name());
 
-        info!("Wayland socket: {:?}", display_source.socket_name());
-
-        // Insert display source into event loop
+        // Insert socket source into event loop
         self.event_loop
             .handle()
-            .insert_source(display_source, |client_stream, _, state| {
+            .insert_source(listening_socket, |client_stream, _, data| {
                 // Accept new client
-                if let Err(e) = state
+                if let Err(e) = data
                     .display
                     .handle()
                     .insert_client(client_stream, Arc::new(ClientState::new(
@@ -78,44 +85,19 @@ impl WaylandDispatcher {
             })
             .context("Failed to insert socket source")?;
 
-        // Insert display into event loop for event dispatching
-        self.event_loop
-            .handle()
-            .insert_source(
-                smithay::wayland::socket::WaylandSource::new(self.display),
-                |event, _, state| {
-                    // Dispatch Wayland events
-                    match event {
-                        smithay::wayland::socket::WaylandSourceEvent::New(stream) => {
-                            debug!("New Wayland client connection");
-                        }
-                        smithay::wayland::socket::WaylandSourceEvent::Data => {
-                            // Client sent data, will be dispatched by Smithay
-                            trace!("Wayland client data");
-                        }
-                        smithay::wayland::socket::WaylandSourceEvent::Error(e) => {
-                            error!("Wayland source error: {}", e);
-                        }
-                    }
-                },
-            )
-            .context("Failed to insert Wayland source")?;
-
         // Run event loop
         info!("Entering Wayland event loop");
 
-        let mut state = self.state.lock();
-
         self.event_loop.run(
             None,
-            &mut *state,
-            |state| {
-                // Event loop callback
-                // This is called after each event dispatch cycle
-                trace!("Event loop iteration");
+            &mut self.data,
+            |data| {
+                // Dispatch Wayland events
+                let mut state = data.state.lock();
+                data.display.dispatch_clients(&mut *state)
+                    .unwrap_or_else(|e| error!("Failed to dispatch clients: {}", e));
 
-                // Dispatch pending Wayland events
-                // Smithay handles this internally
+                trace!("Event loop iteration");
             }
         )
         .context("Event loop error")?;

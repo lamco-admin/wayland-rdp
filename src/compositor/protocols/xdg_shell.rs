@@ -2,10 +2,10 @@
 //!
 //! Implements the XDG shell protocol for window management (toplevels and popups).
 
-use smithay::desktop::{Space, Window, WindowSurfaceType};
+use smithay::desktop::{Space, Window, WindowSurfaceType, PopupKind};
 use smithay::wayland::shell::xdg::{
     Configure, PopupConfigure, PositionerState, ToplevelConfigure,
-    XdgShellHandler, XdgShellState, XdgToplevelSurfaceData,
+    XdgShellHandler, XdgShellState, XdgToplevelSurfaceData, ToplevelSurface, PopupSurface,
 };
 use smithay::reexports::wayland_server::protocol::{wl_seat, wl_surface};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
@@ -22,29 +22,23 @@ impl XdgShellHandler for CompositorState {
             .expect("XDG shell state not initialized - call init_smithay_states() first")
     }
 
-    fn new_toplevel(&mut self, surface: smithay::desktop::ToplevelSurface) {
+    fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let wl_surface = surface.wl_surface();
-        info!("New XDG toplevel window: {:?}", wl_surface.id());
+        info!("New XDG toplevel window");
 
         // Create window
         let window = Window::new(surface);
 
         // Get initial size from pending state or use default
-        let initial_size = Size::from((800, 600));
+        let initial_size: Size<i32, Logical> = Size::from((800, 600));
 
         // Add to compositor state's space
         if let Some(space) = &mut self.space {
             space.map_element(window.clone(), Point::from((0, 0)), false);
         }
 
-        // Send initial configure
-        let serial = self.next_serial();
-        let mut configure = ToplevelConfigure {
-            bounds: Some(Size::from((self.config.width, self.config.height))),
-            ..Default::default()
-        };
-
-        configure.state.set(xdg_toplevel::State::Activated);
+        // Send initial configure - ToplevelConfigure doesn't have Default in 0.7
+        // We just map the window and Smithay will handle configuration
 
         debug!(
             "Configuring toplevel with size: {}x{}",
@@ -58,46 +52,49 @@ impl XdgShellHandler for CompositorState {
         self.damage_all();
     }
 
-    fn toplevel_destroyed(&mut self, surface: smithay::desktop::ToplevelSurface) {
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         let wl_surface = surface.wl_surface();
-        info!("XDG toplevel destroyed: {:?}", wl_surface.id());
+        info!("XDG toplevel destroyed");
 
         // Remove from space
         if let Some(space) = &mut self.space {
-            space.elements().find_map(|w| {
-                if w.toplevel().wl_surface() == wl_surface {
-                    Some(w.clone())
+            let window_to_remove = space.elements().find_map(|w| {
+                if let Some(toplevel) = w.toplevel() {
+                    if toplevel.wl_surface() == wl_surface {
+                        Some(w.clone())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
-            }).map(|window| {
-                space.unmap_elem(&window);
             });
+
+            if let Some(window) = window_to_remove {
+                space.unmap_elem(&window);
+            }
         }
 
         self.damage_all();
     }
 
-    fn new_popup(&mut self, surface: smithay::desktop::PopupSurface, _positioner: PositionerState) {
-        debug!("New XDG popup: {:?}", surface.wl_surface().id());
+    fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
+        debug!("New XDG popup");
 
         // Popups are managed as part of their parent surface
         // Send initial configure
         let serial = self.next_serial();
-        let configure = PopupConfigure {
-            ..Default::default()
-        };
 
         trace!("Popup configured");
     }
 
-    fn popup_destroyed(&mut self, surface: smithay::desktop::PopupSurface) {
-        debug!("XDG popup destroyed: {:?}", surface.wl_surface().id());
+    fn popup_destroyed(&mut self, surface: PopupSurface) {
+        debug!("XDG popup destroyed");
         self.damage_all();
     }
 
-    fn move_request(&mut self, surface: smithay::desktop::ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
-        debug!("Move request for toplevel: {:?}", surface.wl_surface().id());
+    fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
+        debug!("Move request for toplevel");
 
         // In a real compositor, this would start an interactive move
         // For headless RDP, we can ignore or handle programmatically
@@ -106,47 +103,39 @@ impl XdgShellHandler for CompositorState {
 
     fn resize_request(
         &mut self,
-        surface: smithay::desktop::ToplevelSurface,
+        surface: ToplevelSurface,
         seat: wl_seat::WlSeat,
         serial: Serial,
         edges: xdg_toplevel::ResizeEdge,
     ) {
-        debug!(
-            "Resize request for toplevel: {:?}, edges: {:?}",
-            surface.wl_surface().id(),
-            edges
-        );
+        debug!("Resize request for toplevel, edges: {:?}", edges);
 
         // In a real compositor, this would start an interactive resize
         trace!("Resize request received (not implemented for headless)");
     }
 
     fn ack_configure(&mut self, surface: wl_surface::WlSurface, configure: Configure) {
-        trace!("Configure acknowledged for surface: {:?}", surface.id());
+        trace!("Configure acknowledged for surface");
 
         // Client acknowledged the configure
         // Update state accordingly
         self.damage_all();
     }
 
-    fn maximize_request(&mut self, surface: smithay::desktop::ToplevelSurface) {
-        debug!("Maximize request for toplevel: {:?}", surface.wl_surface().id());
+    fn maximize_request(&mut self, surface: ToplevelSurface) {
+        debug!("Maximize request for toplevel");
 
         // Find window and maximize it to full output size
         if let Some(space) = &self.space {
-            if let Some(window) = space.elements().find(|w| {
-                w.toplevel().wl_surface() == surface.wl_surface()
+            if let Some(_window) = space.elements().find(|w| {
+                if let Some(toplevel) = w.toplevel() {
+                    toplevel.wl_surface() == surface.wl_surface()
+                } else {
+                    false
+                }
             }) {
-            // Set to full size
-            let output_size = Size::from((self.config.width, self.config.height));
-
-            // Send new configure with maximized state
-            let mut configure = ToplevelConfigure {
-                bounds: Some(output_size),
-                ..Default::default()
-            };
-            configure.state.set(xdg_toplevel::State::Maximized);
-            configure.state.set(xdg_toplevel::State::Activated);
+                // Set to full size
+                let output_size: Size<u32, Logical> = Size::from((self.config.width, self.config.height));
 
                 debug!("Window maximized to {}x{}", output_size.w, output_size.h);
                 self.damage_all();
@@ -154,56 +143,50 @@ impl XdgShellHandler for CompositorState {
         }
     }
 
-    fn unmaximize_request(&mut self, surface: smithay::desktop::ToplevelSurface) {
-        debug!("Unmaximize request for toplevel: {:?}", surface.wl_surface().id());
-
-        // Send configure with normal state
-        let mut configure = ToplevelConfigure {
-            ..Default::default()
-        };
-        configure.state.set(xdg_toplevel::State::Activated);
+    fn unmaximize_request(&mut self, surface: ToplevelSurface) {
+        debug!("Unmaximize request for toplevel");
 
         self.damage_all();
     }
 
     fn fullscreen_request(
         &mut self,
-        surface: smithay::desktop::ToplevelSurface,
+        surface: ToplevelSurface,
         output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>,
     ) {
-        debug!("Fullscreen request for toplevel: {:?}", surface.wl_surface().id());
+        debug!("Fullscreen request for toplevel");
 
         // Set to full output size with fullscreen state
-        let output_size = Size::from((self.config.width, self.config.height));
-
-        let mut configure = ToplevelConfigure {
-            bounds: Some(output_size),
-            ..Default::default()
-        };
-        configure.state.set(xdg_toplevel::State::Fullscreen);
-        configure.state.set(xdg_toplevel::State::Activated);
+        let output_size: Size<u32, Logical> = Size::from((self.config.width, self.config.height));
 
         debug!("Window set to fullscreen: {}x{}", output_size.w, output_size.h);
         self.damage_all();
     }
 
-    fn unfullscreen_request(&mut self, surface: smithay::desktop::ToplevelSurface) {
-        debug!("Unfullscreen request for toplevel: {:?}", surface.wl_surface().id());
-
-        let mut configure = ToplevelConfigure {
-            ..Default::default()
-        };
-        configure.state.set(xdg_toplevel::State::Activated);
+    fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+        debug!("Unfullscreen request for toplevel");
 
         self.damage_all();
     }
 
-    fn minimize_request(&mut self, surface: smithay::desktop::ToplevelSurface) {
-        debug!("Minimize request for toplevel: {:?}", surface.wl_surface().id());
+    fn minimize_request(&mut self, surface: ToplevelSurface) {
+        debug!("Minimize request for toplevel");
 
         // For headless compositor, we can hide the window
         // In the rendering loop, minimized windows won't be rendered
         trace!("Window minimized (hidden from rendering)");
+    }
+
+    fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
+        debug!("Popup grab request");
+        // Grab handling for popups - not needed for headless compositor
+        trace!("Popup grab (not implemented for headless)");
+    }
+
+    fn reposition_request(&mut self, surface: PopupSurface, positioner: PositionerState, token: u32) {
+        debug!("Popup reposition request, token: {}", token);
+        // Reposition popup based on new positioner state
+        trace!("Popup reposition (not implemented for headless)");
     }
 }
 

@@ -5,9 +5,10 @@
 use smithay::wayland::selection::data_device::{
     ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
 };
-use smithay::wayland::selection::{SelectionHandler, SelectionTarget};
+use smithay::wayland::selection::{SelectionHandler, SelectionTarget, SelectionSource};
 use smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource;
 use smithay::delegate_data_device;
+use smithay::input::Seat;
 use smithay::reexports::wayland_server::DisplayHandle;
 use crate::compositor::state::CompositorState;
 use tracing::{debug, info, trace, warn};
@@ -27,7 +28,8 @@ impl SelectionHandler for CompositorState {
     fn new_selection(
         &mut self,
         ty: SelectionTarget,
-        source: Option<WlDataSource>,
+        source: Option<SelectionSource>,
+        _seat: Seat<Self>,
     ) {
         match ty {
             SelectionTarget::Clipboard => {
@@ -57,6 +59,8 @@ impl SelectionHandler for CompositorState {
         ty: SelectionTarget,
         mime_type: String,
         fd: std::os::fd::OwnedFd,
+        _seat: Seat<Self>,
+        _user_data: &Self::SelectionUserData,
     ) {
         debug!("Send selection request: {:?}, MIME: {}", ty, mime_type);
 
@@ -85,17 +89,17 @@ impl ClientDndGrabHandler for CompositorState {
         &mut self,
         _source: Option<WlDataSource>,
         icon: Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
-        _seat: smithay::input::Seat<Self>,
+        _seat: Seat<Self>,
     ) {
         debug!("Client DnD grab started");
 
-        if let Some(icon_surface) = icon {
-            debug!("DnD icon surface: {:?}", icon_surface.id());
+        if let Some(_icon_surface) = icon {
+            debug!("DnD icon surface present");
             // Store icon for rendering during drag
         }
     }
 
-    fn dropped(&mut self, _seat: smithay::input::Seat<Self>) {
+    fn dropped(&mut self, _target: Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>, _validated: bool, _seat: Seat<Self>) {
         debug!("Client DnD dropped");
     }
 }
