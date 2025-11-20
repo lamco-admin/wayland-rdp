@@ -130,17 +130,52 @@ impl SoftwareRenderer {
                 let dst_slice = &mut self.framebuffer.data[dst_row_offset..dst_row_offset + copy_width * fb_bpp];
                 dst_slice.copy_from_slice(src_slice);
             } else {
-                // Format conversion
+                // Format conversion - need to avoid simultaneous borrows
+                let src_format = buffer.format;
+                let dst_format = self.framebuffer.format;
+
                 for col in 0..copy_width {
                     let src_offset = src_row_offset + col * src_bpp;
                     let dst_offset = dst_row_offset + col * fb_bpp;
 
-                    self.convert_pixel(
-                        &buffer.data[src_offset..src_offset + src_bpp],
-                        &mut self.framebuffer.data[dst_offset..dst_offset + fb_bpp],
-                        buffer.format,
-                        self.framebuffer.format,
-                    );
+                    let src_pixel = &buffer.data[src_offset..src_offset + src_bpp];
+
+                    // Extract RGBA components from source
+                    let (r, g, b, a) = match src_format {
+                        PixelFormat::BGRA8888 => (src_pixel[2], src_pixel[1], src_pixel[0], src_pixel[3]),
+                        PixelFormat::RGBA8888 => (src_pixel[0], src_pixel[1], src_pixel[2], src_pixel[3]),
+                        PixelFormat::BGRX8888 => (src_pixel[2], src_pixel[1], src_pixel[0], 255),
+                        PixelFormat::RGBX8888 => (src_pixel[0], src_pixel[1], src_pixel[2], 255),
+                    };
+
+                    // Write to destination format
+                    let dst_pixel = &mut self.framebuffer.data[dst_offset..dst_offset + fb_bpp];
+                    match dst_format {
+                        PixelFormat::BGRA8888 => {
+                            dst_pixel[0] = b;
+                            dst_pixel[1] = g;
+                            dst_pixel[2] = r;
+                            dst_pixel[3] = a;
+                        }
+                        PixelFormat::RGBA8888 => {
+                            dst_pixel[0] = r;
+                            dst_pixel[1] = g;
+                            dst_pixel[2] = b;
+                            dst_pixel[3] = a;
+                        }
+                        PixelFormat::BGRX8888 => {
+                            dst_pixel[0] = b;
+                            dst_pixel[1] = g;
+                            dst_pixel[2] = r;
+                            dst_pixel[3] = 255;
+                        }
+                        PixelFormat::RGBX8888 => {
+                            dst_pixel[0] = r;
+                            dst_pixel[1] = g;
+                            dst_pixel[2] = b;
+                            dst_pixel[3] = 255;
+                        }
+                    }
                 }
             }
         }

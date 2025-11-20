@@ -64,7 +64,7 @@ impl InputDelivery {
         };
 
         // Deliver key event
-        keyboard.input(
+        keyboard.input::<(), _>(
             state,
             key_code,
             key_state,
@@ -119,7 +119,7 @@ impl InputDelivery {
         // Deliver motion event
         pointer.motion(
             state,
-            under,
+            under.as_ref().map(|(s, p)| (s.clone(), p.to_f64())),
             &MotionEvent {
                 location: self.pointer_position,
                 serial,
@@ -160,11 +160,10 @@ impl InputDelivery {
         };
 
         // Get button and state
-        if let Some(button_code) = event.button {
-            let button_state = if event.button.is_some() {
-                smithay::backend::input::ButtonState::Pressed
-            } else {
-                smithay::backend::input::ButtonState::Released
+        if let Some((button_code, btn_state)) = event.button {
+            let button_state = match btn_state {
+                super::types::ButtonState::Pressed => smithay::backend::input::ButtonState::Pressed,
+                super::types::ButtonState::Released => smithay::backend::input::ButtonState::Released,
             };
 
             // Get serial
@@ -181,7 +180,7 @@ impl InputDelivery {
                 },
             );
 
-            debug!("Pointer button delivered: button={}", button_code);
+            debug!("Pointer button delivered: button={}, state={:?}", button_code, btn_state);
         }
 
         Ok(())
@@ -251,7 +250,7 @@ impl InputDelivery {
             // Check if pointer is within window bounds
             if window_geo.contains(pointer_pos) {
                 // Get window's surface
-                let surface = window.toplevel().wl_surface().clone();
+                let surface = window.toplevel().and_then(|t| Some(t.wl_surface().clone()))?;
 
                 // Calculate position relative to window
                 let relative_pos = Point::from((
@@ -328,7 +327,7 @@ impl InputDelivery {
         let under = surface.map(|s| (s.clone(), position));
         pointer.motion(
             state,
-            under,
+            under.as_ref().map(|(s, p)| (s.clone(), p.to_f64())),
             &MotionEvent {
                 location: position.to_f64(),
                 serial,

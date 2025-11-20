@@ -260,12 +260,21 @@ impl CompositorState {
         self.clear_damage();
 
         // Render windows in Z-order (bottom to top)
-        for window_id in &self.z_order {
-            if let Some(window) = self.windows.get(window_id) {
-                if window.state != WindowState::Minimized {
-                    self.render_window(window)?;
-                }
-            }
+        // Collect window data first to avoid borrow checker issues
+        let windows_to_render: Vec<_> = self.z_order.iter()
+            .filter_map(|id| {
+                self.windows.get(id).and_then(|w| {
+                    if w.state != WindowState::Minimized {
+                        Some((w.id, w.geometry))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        for (window_id, geometry) in windows_to_render {
+            self.render_window_data(window_id, geometry)?;
         }
 
         // Composite cursor
@@ -301,22 +310,21 @@ impl CompositorState {
         }
     }
 
-    /// Render a window
-    fn render_window(&mut self, window: &Window) -> Result<()> {
+    /// Render a window using window data (avoids borrow issues)
+    fn render_window_data(&mut self, window_id: WindowId, geometry: Rectangle) -> Result<()> {
         // In a real implementation, this would copy the window's surface buffer
         // to the framebuffer. For now, we'll render a simple filled rectangle.
 
-        let rect = &window.geometry;
         let stride = self.framebuffer.stride();
         let bpp = self.config.pixel_format.bytes_per_pixel();
 
         // Simple solid color based on window ID (for testing)
-        let color = self.get_window_color(window.id);
+        let color = self.get_window_color(window_id);
 
-        let start_y = rect.y.max(0) as usize;
-        let end_y = (rect.y + rect.height as i32).min(self.config.height as i32) as usize;
-        let start_x = rect.x.max(0) as usize;
-        let end_x = (rect.x + rect.width as i32).min(self.config.width as i32) as usize;
+        let start_y = geometry.y.max(0) as usize;
+        let end_y = (geometry.y + geometry.height as i32).min(self.config.height as i32) as usize;
+        let start_x = geometry.x.max(0) as usize;
+        let end_x = (geometry.x + geometry.width as i32).min(self.config.width as i32) as usize;
 
         for y in start_y..end_y {
             let row_offset = y * stride;
@@ -644,7 +652,7 @@ impl WrdCompositor {
     pub fn run(&mut self) -> Result<()> {
         info!("Starting compositor event loop");
 
-        let event_loop = self.event_loop.take()
+        let mut event_loop = self.event_loop.take()
             .ok_or_else(|| anyhow::anyhow!("Event loop already consumed"))?;
 
         // TODO: Register Wayland socket, timers, etc.
