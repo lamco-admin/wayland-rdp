@@ -2,7 +2,9 @@
 //!
 //! Provides frame encoding capabilities for sending to RDP clients.
 
+#[cfg(feature = "headless-compositor")]
 use crate::compositor::integration::RenderedFrame;
+#[cfg(feature = "headless-compositor")]
 use crate::compositor::types::PixelFormat;
 use anyhow::{Context, Result};
 use tracing::{debug, trace};

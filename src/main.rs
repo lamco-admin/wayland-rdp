@@ -27,6 +27,11 @@ pub struct Args {
     #[arg(short, long, env = "WRD_PORT", default_value = "3389")]
     pub port: u16,
 
+    /// Server mode: portal (default) or compositor (headless)
+    #[arg(short, long, default_value = "portal")]
+    #[cfg(feature = "headless-compositor")]
+    pub mode: String,
+
     /// Verbose logging (can be specified multiple times)
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -64,8 +69,42 @@ async fn main() -> Result<()> {
     info!("Configuration loaded successfully");
     tracing::debug!("Config: {:?}", config);
 
-    // Create and start WRD server
-    info!("Initializing WRD Server");
+    // Run in selected mode
+    #[cfg(feature = "headless-compositor")]
+    {
+        let mode = args.mode.as_str();
+        match mode {
+            "compositor" => {
+                info!("Running in compositor mode (headless)");
+                if let Err(e) = wrd_server::server::compositor_mode::run_compositor_mode(config).await {
+                    eprintln!("{}", wrd_server::utils::format_user_error(&e));
+                    return Err(e);
+                }
+            }
+            "portal" => {
+                info!("Running in portal mode");
+                run_portal_mode(config).await?;
+            }
+            _ => {
+                eprintln!("Invalid mode: {}. Must be 'portal' or 'compositor'", mode);
+                return Err(anyhow::anyhow!("Invalid mode"));
+            }
+        }
+    }
+
+    #[cfg(not(feature = "headless-compositor"))]
+    {
+        info!("Running in portal mode (only mode available)");
+        run_portal_mode(config).await?;
+    }
+
+    info!("WRD Server shut down");
+    Ok(())
+}
+
+/// Run server in portal mode
+async fn run_portal_mode(config: Config) -> Result<()> {
+    info!("Initializing WRD Server in Portal mode");
     let server = match WrdServer::new(config).await {
         Ok(s) => s,
         Err(e) => {
@@ -80,7 +119,6 @@ async fn main() -> Result<()> {
         return Err(e);
     }
 
-    info!("WRD Server shut down");
     Ok(())
 }
 

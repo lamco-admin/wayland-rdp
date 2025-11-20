@@ -22,7 +22,6 @@ pub mod multimon;
 pub mod pipewire;
 pub mod portal;
 pub mod protocol;
-pub mod rdp;
 pub mod security;
 pub mod server;
 pub mod utils;
@@ -31,6 +30,10 @@ pub mod video;
 // Headless compositor (optional)
 #[cfg(feature = "headless-compositor")]
 pub mod compositor;
+
+// RDP server module (requires compositor)
+#[cfg(feature = "headless-compositor")]
+pub mod rdp;
 
 // Direct login service (optional, requires headless-compositor)
 // Temporarily disabled during compositor migration

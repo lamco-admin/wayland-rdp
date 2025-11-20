@@ -2,7 +2,9 @@
 //!
 //! Complete RDP server using IronRDP with compositor integration.
 
+#[cfg(feature = "headless-compositor")]
 use crate::compositor::integration::{CompositorRdpIntegration, RenderedFrame};
+#[cfg(feature = "headless-compositor")]
 use crate::compositor::types::CompositorConfig;
 use anyhow::{Context, Result};
 use std::net::{TcpListener, TcpStream};

@@ -65,6 +65,10 @@ mod input_handler;
 pub use display_handler::WrdDisplayHandler;
 pub use input_handler::WrdInputHandler;
 
+// Compositor mode (requires headless-compositor feature)
+#[cfg(feature = "headless-compositor")]
+pub mod compositor_mode;
+
 use anyhow::{Context, Result};
 use ironrdp_pdu::rdp::capability_sets::server_codecs_capabilities;
 use ironrdp_server::{Credentials, RdpServer};
