@@ -33,5 +33,6 @@ pub mod video;
 pub mod compositor;
 
 // Direct login service (optional, requires headless-compositor)
-#[cfg(all(feature = "headless-compositor", feature = "pam-auth"))]
-pub mod login;
+// Temporarily disabled during compositor migration
+// #[cfg(all(feature = "headless-compositor", feature = "pam-auth"))]
+// pub mod login;

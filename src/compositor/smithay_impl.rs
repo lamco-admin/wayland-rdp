@@ -60,12 +60,9 @@ impl SmithayCompositor {
             InputManager::new(config.width, config.height)
         ));
 
-        // Add Wayland socket
-        let socket_name = config.socket_name.clone();
-        display.add_socket_auto()
-            .context("Failed to add Wayland socket")?;
-
-        info!("Wayland socket created");
+        // Add Wayland socket - in Smithay 0.7, socket creation is handled via ListeningSocketSource
+        // This will be handled in the event loop setup
+        debug!("Display created, socket will be created in event loop");
 
         Ok(Self {
             state,

@@ -126,20 +126,24 @@ impl XdgShellHandler for CompositorState {
         debug!("Maximize request for toplevel");
 
         // Find window and maximize it to full output size
-        if let Some(space) = &self.space {
-            if let Some(_window) = space.elements().find(|w| {
+        let found = if let Some(space) = &self.space {
+            space.elements().any(|w| {
                 if let Some(toplevel) = w.toplevel() {
                     toplevel.wl_surface() == surface.wl_surface()
                 } else {
                     false
                 }
-            }) {
-                // Set to full size
-                let output_size: Size<u32, Logical> = Size::from((self.config.width, self.config.height));
+            })
+        } else {
+            false
+        };
 
-                debug!("Window maximized to {}x{}", output_size.w, output_size.h);
-                self.damage_all();
-            }
+        if found {
+            // Set to full size
+            let output_size: Size<u32, Logical> = Size::from((self.config.width, self.config.height));
+
+            debug!("Window maximized to {}x{}", output_size.w, output_size.h);
+            self.damage_all();
         }
     }
 

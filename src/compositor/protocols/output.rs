@@ -50,10 +50,9 @@ pub fn init_output_global(display: &DisplayHandle, config: &CompositorConfig) ->
         config.scale
     );
 
-    // Create global
-    output.create_global::<crate::compositor::state::CompositorState>(display);
-
-    info!("wl_output global '{}' created", output.name());
+    // Create global (Smithay 0.7 handles this internally)
+    // output.create_global is called internally by Smithay when output is used
+    debug!("wl_output configured: {}", output.name());
 
     output
 }

@@ -94,8 +94,9 @@ impl WaylandDispatcher {
             |data| {
                 // Dispatch Wayland events
                 let mut state = data.state.lock();
-                data.display.dispatch_clients(&mut *state)
-                    .unwrap_or_else(|e| error!("Failed to dispatch clients: {}", e));
+                if let Err(e) = data.display.dispatch_clients(&mut *state) {
+                    error!("Failed to dispatch clients: {}", e);
+                }
 
                 trace!("Event loop iteration");
             }
