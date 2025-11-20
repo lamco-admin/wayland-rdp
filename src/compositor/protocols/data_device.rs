@@ -29,27 +29,38 @@ impl SelectionHandler for CompositorState {
         &mut self,
         ty: SelectionTarget,
         source: Option<SelectionSource>,
-        _seat: Seat<Self>,
+        seat: Seat<Self>,
     ) {
         match ty {
             SelectionTarget::Clipboard => {
                 if let Some(source) = source {
-                    debug!("New clipboard selection: {:?}", source);
+                    info!("🎯 Wayland clipboard changed - new selection detected!");
 
-                    // Store clipboard data
-                    // In a real implementation, we would read the data from the source
-                    // and store it for RDP clipboard synchronization
-                    trace!("Clipboard updated");
+                    // Get MIME types offered by the source
+                    let mime_types = source.mime_types();
+                    debug!("Available MIME types: {:?}", mime_types);
+
+                    // Notify RDP clients about new clipboard formats
+                    if let Some(ref tx) = self.clipboard_event_tx {
+                        info!("Announcing {} clipboard formats to RDP clients", mime_types.len());
+                        if let Err(e) = tx.send(crate::clipboard::ClipboardEvent::PortalFormatsAvailable(mime_types)) {
+                            warn!("Failed to send clipboard event to RDP: {}", e);
+                        } else {
+                            info!("✅ Clipboard formats announced to RDP - ready for paste");
+                        }
+                    } else {
+                        warn!("No RDP clipboard channel configured - clipboard not synced");
+                    }
+
+                    // Emit compositor event (if needed by other listeners)
+                    // self.emit_event is private, events sent via clipboard_event_tx instead
                 } else {
                     debug!("Clipboard cleared");
-                    // Clear local clipboard
                     self.clipboard.data.clear();
                 }
             }
             SelectionTarget::Primary => {
-                debug!("Primary selection changed");
-                // Primary selection (X11-style middle-click paste)
-                // Less commonly used in Wayland
+                debug!("Primary selection changed (middle-click paste)");
             }
         }
     }
@@ -62,22 +73,35 @@ impl SelectionHandler for CompositorState {
         _seat: Seat<Self>,
         _user_data: &Self::SelectionUserData,
     ) {
-        debug!("Send selection request: {:?}, MIME: {}", ty, mime_type);
+        debug!("🎯 Wayland app requesting clipboard paste: {:?}, MIME: {}", ty, mime_type);
 
         match ty {
             SelectionTarget::Clipboard => {
-                // Write clipboard data to the provided file descriptor
-                // This would integrate with RDP clipboard
-                trace!("Sending clipboard data for MIME type: {}", mime_type);
+                // Wayland app is pasting - provide clipboard data
+                info!("Wayland app pasting clipboard (MIME: {})", mime_type);
 
-                // In a real implementation:
-                // 1. Get clipboard data from our state
-                // 2. Convert to requested MIME type if needed
-                // 3. Write to fd
-                // 4. Close fd
+                // Get clipboard data from our state
+                let data = self.clipboard.data.clone();
+
+                if !data.is_empty() {
+                    // Write data to the file descriptor
+                    use std::io::Write;
+                    use std::os::fd::{FromRawFd, IntoRawFd};
+
+                    let raw_fd = fd.into_raw_fd();
+                    let mut file = unsafe { std::fs::File::from_raw_fd(raw_fd) };
+                    if let Err(e) = file.write_all(&data) {
+                        warn!("Failed to write clipboard data to fd: {}", e);
+                    } else {
+                        info!("✅ Wrote {} bytes to Wayland app clipboard", data.len());
+                    }
+                    // file closes automatically when dropped
+                } else {
+                    debug!("Clipboard empty - nothing to send");
+                }
             }
             SelectionTarget::Primary => {
-                trace!("Sending primary selection");
+                debug!("Primary selection paste request");
             }
         }
     }
