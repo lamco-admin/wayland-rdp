@@ -17,7 +17,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::compositor::{CompositorConfig, CompositorRdpIntegration};
+use crate::compositor::{CompositorConfig, CompositorRdpIntegration, CompositorRuntime};
 use crate::config::Config;
 use crate::security::TlsConfig;
 
@@ -46,20 +46,20 @@ pub async fn run_compositor_mode(config: Config) -> Result<()> {
 
     info!("Initializing Lamco compositor: {}x{}", compositor_config.width, compositor_config.height);
 
-    // Create compositor integration (provides rendering without full compositor)
+    // Create compositor integration first
     let integration = Arc::new(CompositorRdpIntegration::new(compositor_config.clone())?);
 
-    info!("Compositor integration ready (stub backend - no Wayland clients yet)");
+    info!("Compositor integration created");
 
-    // TODO: Full compositor support requires refactoring to handle Rc<EventLoop>
-    // For now, we provide rendering via integration layer without actual Wayland server
-    // This allows RDP server to run and provides a framebuffer (empty desktop background)
+    // TODO: Create proper compositor runtime that uses X11 backend
+    // For now, we use integration directly without full compositor event loop
+    // This provides rendering capability for RDP without actual Wayland client support
 
-    // Future: Spawn Wayland compositor with proper event loop handling
-    // This will require either:
-    // 1. Running compositor in main thread with async RDP in background
-    // 2. Using channel-based communication between threads
-    // 3. Refactoring compositor to use Arc instead of Rc
+    // Future work:
+    // 1. Create CompositorRuntime with X11 backend
+    // 2. Initialize Wayland server
+    // 3. Wire compositor event loop to X11 events
+    // 4. Run compositor in dedicated thread
 
     // Build RDP server with compositor integration
     info!("Building RDP server with compositor backends");
