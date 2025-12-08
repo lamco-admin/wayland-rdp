@@ -82,8 +82,17 @@ pub struct ClipboardConfig {
     /// Maximum clipboard data size in bytes
     pub max_size: usize,
 
+    /// Minimum milliseconds between clipboard events (rate limiting)
+    /// Default: 200 (max 5 events/second). Set to 0 to disable.
+    #[serde(default = "default_rate_limit_ms")]
+    pub rate_limit_ms: u64,
+
     /// Allowed MIME types (empty = all types allowed)
     pub allowed_types: Vec<String>,
+}
+
+fn default_rate_limit_ms() -> u64 {
+    200
 }
 
 /// Multi-monitor configuration

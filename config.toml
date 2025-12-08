@@ -50,6 +50,8 @@ enable_touch = false
 [clipboard]
 enabled = true
 max_size = 10485760
+# Minimum ms between clipboard events (rate limiting). 0 = disable, 200 = max 5/sec
+rate_limit_ms = 200
 allowed_types = []
 
 [multimon]

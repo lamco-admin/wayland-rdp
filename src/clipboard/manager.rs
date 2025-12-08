@@ -38,6 +38,10 @@ pub struct ClipboardConfig {
 
     /// Loop detection window in milliseconds
     pub loop_detection_window_ms: u64,
+
+    /// Minimum milliseconds between forwarded clipboard events (rate limiting)
+    /// Prevents rapid-fire D-Bus signals from overwhelming Portal. Set to 0 to disable.
+    pub rate_limit_ms: u64,
 }
 
 impl Default for ClipboardConfig {
@@ -51,6 +55,7 @@ impl Default for ClipboardConfig {
             chunk_size: 64 * 1024, // 64KB chunks
             timeout_ms: 5000,
             loop_detection_window_ms: 500,
+            rate_limit_ms: 200, // Max 5 events/second
         }
     }
 }
@@ -131,6 +136,12 @@ pub struct ClipboardManager {
     /// D-Bus bridge for GNOME clipboard extension integration
     /// This enables Linux→Windows clipboard on GNOME where Portal signals don't work
     dbus_bridge: Arc<RwLock<Option<DbusBridge>>>,
+
+    /// Recently written content hashes (for loop suppression)
+    /// When we write data to Portal, D-Bus bridge will see it as a clipboard change.
+    /// We track hashes of data WE wrote to suppress forwarding it back to RDP.
+    /// Maps hash → timestamp of write
+    recently_written_hashes: Arc<RwLock<std::collections::HashMap<String, std::time::Instant>>>,
 }
 
 impl ClipboardManager {
@@ -168,6 +179,7 @@ impl ClipboardManager {
             pending_portal_requests: Arc::new(RwLock::new(std::collections::HashMap::new())),
             server_event_sender: Arc::new(RwLock::new(None)), // Set by WrdCliprdrFactory
             dbus_bridge: Arc::new(RwLock::new(None)), // Will be set by start_dbus_clipboard_listener
+            recently_written_hashes: Arc::new(RwLock::new(std::collections::HashMap::new())),
         };
 
         // Start event processor
@@ -476,13 +488,24 @@ impl ClipboardManager {
         // Store bridge reference
         *self.dbus_bridge.write().await = Some(bridge);
 
-        // Clone event sender for the spawned task
+        // Clone event sender and hash tracker for the spawned task
         let event_tx = self.event_tx.clone();
+        let recently_written_hashes = Arc::clone(&self.recently_written_hashes);
+        let rate_limit_ms = self.config.rate_limit_ms;
 
         // Spawn task to forward D-Bus events to ClipboardManager
         tokio::spawn(async move {
-            info!("D-Bus clipboard event forwarder started");
+            info!("D-Bus clipboard event forwarder started (rate limit: {}ms)", rate_limit_ms);
             let mut event_count = 0;
+            let mut suppressed_count = 0;
+            let mut rate_limited_count = 0;
+
+            // Loop suppression: ignore events within this window after we wrote data
+            const LOOP_SUPPRESSION_WINDOW_MS: u128 = 2000;
+            // Maximum pending hash entries (prevent unbounded memory)
+            const MAX_HASH_CACHE_SIZE: usize = 50;
+
+            let mut last_forward_time: Option<std::time::Instant> = None;
 
             while let Some(dbus_event) = dbus_rx.recv().await {
                 event_count += 1;
@@ -493,11 +516,66 @@ impl ClipboardManager {
                     continue;
                 }
 
+                let hash_short = &dbus_event.content_hash[..8.min(dbus_event.content_hash.len())];
+
+                // RATE LIMITING: Enforce minimum interval between forwarded events
+                // This prevents rapid-fire D-Bus signals from overwhelming the Portal
+                if rate_limit_ms > 0 {
+                    if let Some(last_time) = last_forward_time {
+                        let elapsed = last_time.elapsed().as_millis() as u64;
+                        if elapsed < rate_limit_ms {
+                            rate_limited_count += 1;
+                            debug!(
+                                "⏱️ Rate limited: {}ms since last event (min: {}ms) - skipping event #{}",
+                                elapsed, rate_limit_ms, event_count
+                            );
+                            continue;
+                        }
+                    }
+                }
+
+                // LOOP SUPPRESSION: Check if this hash matches data we recently wrote to Portal
+                // If so, this is feedback from our own write - don't forward back to RDP!
+                {
+                    let mut hashes = recently_written_hashes.write().await;
+
+                    // Clean up old entries (older than suppression window)
+                    let now = std::time::Instant::now();
+                    hashes.retain(|_, written_at| {
+                        now.duration_since(*written_at).as_millis() < LOOP_SUPPRESSION_WINDOW_MS
+                    });
+
+                    // Also enforce max cache size (evict oldest if too large)
+                    if hashes.len() > MAX_HASH_CACHE_SIZE {
+                        // Find and remove the oldest entry
+                        if let Some(oldest_key) = hashes.iter()
+                            .min_by_key(|(_, time)| *time)
+                            .map(|(k, _)| k.clone())
+                        {
+                            hashes.remove(&oldest_key);
+                            debug!("Evicted oldest hash from cache (size limit: {})", MAX_HASH_CACHE_SIZE);
+                        }
+                    }
+
+                    // Check if this event's hash matches one we recently wrote
+                    if hashes.contains_key(&dbus_event.content_hash) {
+                        suppressed_count += 1;
+                        info!(
+                            "🔄 LOOP SUPPRESSED #{}: D-Bus event hash {} matches our recent write - skipping",
+                            suppressed_count, hash_short
+                        );
+                        continue;
+                    }
+                }
+
+                // Update rate limit timestamp
+                last_forward_time = Some(std::time::Instant::now());
+
                 info!(
                     "📋 D-Bus clipboard change #{}: {} MIME types (hash: {})",
                     event_count,
                     dbus_event.mime_types.len(),
-                    &dbus_event.content_hash[..8.min(dbus_event.content_hash.len())]
+                    hash_short
                 );
                 debug!("   MIME types: {:?}", dbus_event.mime_types);
 
@@ -514,7 +592,10 @@ impl ClipboardManager {
                 info!("✅ Forwarded clipboard change to RDP client announcement flow");
             }
 
-            warn!("D-Bus clipboard event forwarder ended after {} events", event_count);
+            warn!(
+                "D-Bus clipboard event forwarder ended after {} events ({} loop-suppressed, {} rate-limited)",
+                event_count, suppressed_count, rate_limited_count
+            );
         });
 
         info!("✅ D-Bus clipboard bridge started - GNOME extension integration active");
@@ -532,6 +613,7 @@ impl ClipboardManager {
         let portal_session = Arc::clone(&self.portal_session);
         let pending_portal_requests = Arc::clone(&self.pending_portal_requests);
         let server_event_sender = Arc::clone(&self.server_event_sender);
+        let recently_written_hashes = Arc::clone(&self.recently_written_hashes);
 
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         self.shutdown_tx = Some(shutdown_tx);
@@ -550,6 +632,7 @@ impl ClipboardManager {
                             &portal_session,
                             &pending_portal_requests,
                             &server_event_sender,
+                            &recently_written_hashes,
                         ).await {
                             error!("Error handling clipboard event: {:?}", e);
                         }
@@ -574,6 +657,7 @@ impl ClipboardManager {
         portal_session: &Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
         pending_portal_requests: &Arc<RwLock<std::collections::HashMap<u32, String>>>,
         server_event_sender: &Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
+        recently_written_hashes: &Arc<RwLock<std::collections::HashMap<String, std::time::Instant>>>,
     ) -> Result<()> {
         match event {
             ClipboardEvent::RdpFormatList(formats) => {
@@ -585,7 +669,7 @@ impl ClipboardManager {
             }
 
             ClipboardEvent::RdpDataResponse(data) => {
-                Self::handle_rdp_data_response(data, sync_manager, transfer_engine, portal_clipboard, portal_session, pending_portal_requests).await
+                Self::handle_rdp_data_response(data, sync_manager, transfer_engine, portal_clipboard, portal_session, pending_portal_requests, recently_written_hashes).await
             }
 
             ClipboardEvent::PortalFormatsAvailable(mime_types) => {
@@ -746,6 +830,7 @@ impl ClipboardManager {
         portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
         portal_session: &Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
         pending_portal_requests: &Arc<RwLock<std::collections::HashMap<u32, String>>>,
+        recently_written_hashes: &Arc<RwLock<std::collections::HashMap<String, std::time::Instant>>>,
     ) -> Result<()> {
         debug!("RDP data response received: {} bytes", data.len());
 
@@ -814,6 +899,19 @@ impl ClipboardManager {
         match portal.write_selection_data(&session_guard, serial, portal_data.clone()).await {
             Ok(()) => {
                 info!("✅ Clipboard data delivered to Portal via SelectionWrite (serial {})", serial);
+
+                // Record hash of data we just wrote (for loop suppression)
+                // D-Bus bridge will see this as a clipboard change and we need to suppress it
+                {
+                    use sha2::{Digest, Sha256};
+                    let mut hasher = Sha256::new();
+                    hasher.update(&portal_data);
+                    let hash = format!("{:x}", hasher.finalize());
+                    let hash_short = &hash[..8];
+
+                    recently_written_hashes.write().await.insert(hash.clone(), std::time::Instant::now());
+                    info!("🔒 Recorded written hash {} for loop suppression", hash_short);
+                }
 
                 // Clear the pending request
                 pending_portal_requests.write().await.remove(&serial);
