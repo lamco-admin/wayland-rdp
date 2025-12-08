@@ -1107,6 +1107,13 @@ impl ClipboardManager {
             }
         }).collect();
 
+        // Log format details for debugging
+        info!("📋 Sending FormatList to RDP client:");
+        for (idx, fmt) in ironrdp_formats.iter().enumerate() {
+            let name_str = fmt.name.as_ref().map(|n| n.value()).unwrap_or("");
+            info!("   Format {}: ID={}, Name={:?}", idx, fmt.id.0, name_str);
+        }
+
         // Send ServerEvent to announce formats to RDP clients
         let sender_opt = server_event_sender.read().await.clone();
         if let Some(sender) = sender_opt {
