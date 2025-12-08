@@ -374,7 +374,14 @@ impl SyncManager {
 
     /// Handle Portal MIME types announcement
     pub fn handle_portal_formats(&mut self, mime_types: Vec<String>) -> Result<bool> {
-        // Check for loop
+        // If RDP currently owns the clipboard, don't echo back to RDP.
+        // This prevents the loop: RDP copy → SetSelection → SelectionOwnerChanged → FormatList back to RDP
+        if matches!(self.state, ClipboardState::RdpOwned(_)) {
+            debug!("Ignoring Portal format list - RDP currently owns clipboard (preventing echo loop)");
+            return Ok(false); // Don't sync back to RDP
+        }
+
+        // Check for loop using hash comparison (belt and suspenders)
         if self.loop_detector.would_cause_loop_mime(&mime_types) {
             warn!("Ignoring Portal format list due to loop detection");
             return Ok(false); // Don't sync
