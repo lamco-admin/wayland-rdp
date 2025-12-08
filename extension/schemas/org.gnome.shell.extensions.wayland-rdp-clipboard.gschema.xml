@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.wayland-rdp-clipboard"
+          path="/org/gnome/shell/extensions/wayland-rdp-clipboard/">
+
+    <key name="poll-interval" type="u">
+      <default>500</default>
+      <summary>Clipboard poll interval</summary>
+      <description>
+        How often to check for clipboard changes, in milliseconds.
+        Lower values detect changes faster but use more CPU.
+        Valid range: 100-5000ms. Default: 500ms.
+      </description>
+    </key>
+
+    <key name="monitor-clipboard" type="b">
+      <default>true</default>
+      <summary>Monitor CLIPBOARD selection</summary>
+      <description>
+        Whether to monitor the CLIPBOARD selection (Ctrl+C/Ctrl+V).
+        This is the primary clipboard used by most applications.
+      </description>
+    </key>
+
+    <key name="monitor-primary" type="b">
+      <default>true</default>
+      <summary>Monitor PRIMARY selection</summary>
+      <description>
+        Whether to monitor the PRIMARY selection (middle-click paste).
+        This is the X11/Wayland selection that updates on text highlight.
+      </description>
+    </key>
+
+    <key name="log-level" type="s">
+      <default>'info'</default>
+      <summary>Logging level</summary>
+      <description>
+        Verbosity of logging output. Options: 'none', 'error', 'info', 'debug'.
+        Logs appear in journalctl for gnome-shell.
+      </description>
+    </key>
+
+    <key name="emit-on-empty" type="b">
+      <default>false</default>
+      <summary>Emit signals for empty clipboard</summary>
+      <description>
+        Whether to emit ClipboardChanged/PrimaryChanged signals when
+        the clipboard becomes empty. Default is false to reduce noise.
+      </description>
+    </key>
+
+    <key name="deduplicate-window" type="u">
+      <default>100</default>
+      <summary>Deduplication time window</summary>
+      <description>
+        Time in milliseconds to ignore duplicate clipboard changes.
+        Helps prevent rapid-fire signals from applications that set
+        clipboard multiple times. Default: 100ms.
+      </description>
+    </key>
+
+  </schema>
+</schemalist>
