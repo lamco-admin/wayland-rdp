@@ -79,7 +79,9 @@ pub enum ClipboardEvent {
     RdpDataError,
 
     /// Portal announced available MIME types
-    PortalFormatsAvailable(Vec<String>),
+    /// The bool indicates if this is from D-Bus extension (true = authoritative, force sync)
+    /// vs Portal echo (false = may be blocked if RDP owns clipboard)
+    PortalFormatsAvailable(Vec<String>, bool),
 
     /// Portal requests data in specific MIME type
     PortalDataRequest(String),
@@ -95,7 +97,7 @@ impl std::fmt::Debug for ClipboardEvent {
             Self::RdpDataRequest(id, _) => write!(f, "RdpDataRequest({})", id),
             Self::RdpDataResponse(data) => write!(f, "RdpDataResponse({} bytes)", data.len()),
             Self::RdpDataError => write!(f, "RdpDataError"),
-            Self::PortalFormatsAvailable(mimes) => write!(f, "PortalFormatsAvailable({:?})", mimes),
+            Self::PortalFormatsAvailable(mimes, force) => write!(f, "PortalFormatsAvailable({:?}, force={})", mimes, force),
             Self::PortalDataRequest(mime) => write!(f, "PortalDataRequest({})", mime),
             Self::PortalDataResponse(data) => write!(f, "PortalDataResponse({} bytes)", data.len()),
         }
@@ -359,8 +361,9 @@ impl ClipboardManager {
                                 &hash[..16], data.len());
 
                             // Announce to RDP clients
+                            // Polling fallback reads local clipboard directly - this is authoritative (force=true)
                             let mime_types = vec!["text/plain;charset=utf-8".to_string(), "text/plain".to_string()];
-                            if let Err(e) = event_tx.send(ClipboardEvent::PortalFormatsAvailable(mime_types)).await {
+                            if let Err(e) = event_tx.send(ClipboardEvent::PortalFormatsAvailable(mime_types, true)).await {
                                 error!("Failed to send clipboard change event: {}", e);
                                 break;
                             }
@@ -421,7 +424,8 @@ impl ClipboardManager {
                         info!("📋 Local clipboard change #{}: {} formats: {:?}", change_count, mime_types.len(), mime_types);
 
                         // Send event to announce these formats to RDP clients
-                        if let Err(e) = event_tx.send(ClipboardEvent::PortalFormatsAvailable(mime_types.clone())).await {
+                        // SelectionOwnerChanged from Portal may be echo of our SetSelection (force=false)
+                        if let Err(e) = event_tx.send(ClipboardEvent::PortalFormatsAvailable(mime_types.clone(), false)).await {
                             error!("Failed to send PortalFormatsAvailable event: {}", e);
                             break;
                         } else {
@@ -585,8 +589,9 @@ impl ClipboardManager {
 
                 // Forward to ClipboardManager as PortalFormatsAvailable event
                 // This triggers the same flow as if Portal had sent SelectionOwnerChanged
+                // D-Bus extension signals are authoritative (force=true) - always override RDP ownership
                 if let Err(e) = event_tx
-                    .send(ClipboardEvent::PortalFormatsAvailable(dbus_event.mime_types))
+                    .send(ClipboardEvent::PortalFormatsAvailable(dbus_event.mime_types, true))
                     .await
                 {
                     error!("Failed to forward D-Bus event to ClipboardManager: {}", e);
@@ -680,8 +685,8 @@ impl ClipboardManager {
                 Self::handle_rdp_data_error(portal_clipboard, portal_session, pending_portal_requests).await
             }
 
-            ClipboardEvent::PortalFormatsAvailable(mime_types) => {
-                Self::handle_portal_formats(mime_types, converter, sync_manager, server_event_sender).await
+            ClipboardEvent::PortalFormatsAvailable(mime_types, force) => {
+                Self::handle_portal_formats(mime_types, force, converter, sync_manager, server_event_sender).await
             }
 
             ClipboardEvent::PortalDataRequest(mime_type) => {
@@ -1037,18 +1042,22 @@ impl ClipboardManager {
     ///
     /// This is called when Linux clipboard changes (SelectionOwnerChanged signal).
     /// We need to send FormatList PDU to RDP clients to announce available formats.
+    ///
+    /// The `force` parameter indicates if this is an authoritative source (D-Bus extension)
+    /// that should override RDP ownership, or a Portal echo that may be blocked.
     async fn handle_portal_formats(
         mime_types: Vec<String>,
+        force: bool,
         converter: &FormatConverter,
         sync_manager: &Arc<RwLock<SyncManager>>,
         server_event_sender: &Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
     ) -> Result<()> {
-        info!("📥 handle_portal_formats called with {} MIME types: {:?}", mime_types.len(), mime_types);
+        info!("📥 handle_portal_formats called with {} MIME types (force={}): {:?}", mime_types.len(), force, mime_types);
 
         // Check with sync manager (loop detection)
         let should_sync = {
             let mut mgr = sync_manager.write().await;
-            mgr.handle_portal_formats(mime_types.clone())?
+            mgr.handle_portal_formats(mime_types.clone(), force)?
         };
 
         if !should_sync {

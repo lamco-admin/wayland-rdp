@@ -373,10 +373,16 @@ impl SyncManager {
     }
 
     /// Handle Portal MIME types announcement
-    pub fn handle_portal_formats(&mut self, mime_types: Vec<String>) -> Result<bool> {
-        // If RDP currently owns the clipboard, don't echo back to RDP.
-        // This prevents the loop: RDP copy → SetSelection → SelectionOwnerChanged → FormatList back to RDP
-        if matches!(self.state, ClipboardState::RdpOwned(_)) {
+    ///
+    /// The `force` parameter indicates if this is from an authoritative source (D-Bus extension)
+    /// that should override RDP ownership. When force=false, we block if RDP owns the clipboard
+    /// to prevent echo loops. When force=true (D-Bus), we always process because the user
+    /// genuinely copied something new on the Linux side.
+    pub fn handle_portal_formats(&mut self, mime_types: Vec<String>, force: bool) -> Result<bool> {
+        // If RDP currently owns the clipboard, only block non-authoritative sources.
+        // D-Bus extension (force=true) is authoritative and should override RDP ownership.
+        // Portal SelectionOwnerChanged (force=false) may be echo of our SetSelection.
+        if !force && matches!(self.state, ClipboardState::RdpOwned(_)) {
             debug!("Ignoring Portal format list - RDP currently owns clipboard (preventing echo loop)");
             return Ok(false); // Don't sync back to RDP
         }
@@ -387,8 +393,11 @@ impl SyncManager {
             return Ok(false); // Don't sync
         }
 
-        // Update state
+        // Update state - Linux now owns clipboard
         self.state = ClipboardState::PortalOwned(mime_types.clone());
+        if force {
+            debug!("D-Bus extension signal - taking clipboard ownership from RDP");
+        }
 
         // Record operation
         self.loop_detector.record_portal_operation(mime_types);
@@ -599,8 +608,8 @@ mod tests {
 
         let mime_types = vec!["text/plain".to_string(), "text/html".to_string()];
 
-        // Should allow first format announcement
-        assert!(manager.handle_portal_formats(mime_types.clone()).unwrap());
+        // Should allow first format announcement (force=true simulates D-Bus)
+        assert!(manager.handle_portal_formats(mime_types.clone(), true).unwrap());
 
         // Verify state
         match manager.state() {
@@ -627,8 +636,8 @@ mod tests {
         // First RDP announcement
         assert!(manager.handle_rdp_formats(formats.clone()).unwrap());
 
-        // Portal announcement
-        assert!(manager.handle_portal_formats(mime_types).unwrap());
+        // Portal announcement (force=true to override RDP ownership in test)
+        assert!(manager.handle_portal_formats(mime_types, true).unwrap());
 
         // Second RDP announcement with same formats should be blocked
         assert!(!manager.handle_rdp_formats(formats).unwrap());
