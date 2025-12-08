@@ -75,6 +75,9 @@ pub enum ClipboardEvent {
     /// RDP client provides requested data
     RdpDataResponse(Vec<u8>),
 
+    /// RDP client returned error for data request (need to cancel Portal transfer)
+    RdpDataError,
+
     /// Portal announced available MIME types
     PortalFormatsAvailable(Vec<String>),
 
@@ -91,6 +94,7 @@ impl std::fmt::Debug for ClipboardEvent {
             Self::RdpFormatList(formats) => write!(f, "RdpFormatList({} formats)", formats.len()),
             Self::RdpDataRequest(id, _) => write!(f, "RdpDataRequest({})", id),
             Self::RdpDataResponse(data) => write!(f, "RdpDataResponse({} bytes)", data.len()),
+            Self::RdpDataError => write!(f, "RdpDataError"),
             Self::PortalFormatsAvailable(mimes) => write!(f, "PortalFormatsAvailable({:?})", mimes),
             Self::PortalDataRequest(mime) => write!(f, "PortalDataRequest({})", mime),
             Self::PortalDataResponse(data) => write!(f, "PortalDataResponse({} bytes)", data.len()),
@@ -664,12 +668,16 @@ impl ClipboardManager {
                 Self::handle_rdp_format_list(formats, converter, sync_manager, portal_clipboard, portal_session).await
             }
 
-            ClipboardEvent::RdpDataRequest(format_id, response_callback) => {
-                Self::handle_rdp_data_request(format_id, response_callback, converter, sync_manager, portal_clipboard, portal_session).await
+            ClipboardEvent::RdpDataRequest(format_id, _response_callback) => {
+                Self::handle_rdp_data_request(format_id, converter, sync_manager, portal_clipboard, portal_session, server_event_sender).await
             }
 
             ClipboardEvent::RdpDataResponse(data) => {
                 Self::handle_rdp_data_response(data, sync_manager, transfer_engine, portal_clipboard, portal_session, pending_portal_requests, recently_written_hashes).await
+            }
+
+            ClipboardEvent::RdpDataError => {
+                Self::handle_rdp_data_error(portal_clipboard, portal_session, pending_portal_requests).await
             }
 
             ClipboardEvent::PortalFormatsAvailable(mime_types) => {
@@ -752,13 +760,13 @@ impl ClipboardManager {
     /// We read from Portal clipboard via SelectionRead and send back to RDP client.
     async fn handle_rdp_data_request(
         format_id: u32,
-        response_callback: Option<RdpResponseCallback>,
         converter: &FormatConverter,
         _sync_manager: &Arc<RwLock<SyncManager>>,
         portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
         portal_session: &Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
+        server_event_sender: &Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
     ) -> Result<()> {
-        debug!("RDP data request for format ID: {}", format_id);
+        info!("📥 RDP data request for format ID: {} (Linux → Windows paste)", format_id);
 
         // Get Portal clipboard and session
         let portal_opt = portal_clipboard.read().await.clone();
@@ -768,6 +776,8 @@ impl ClipboardManager {
             (Some(p), Some(s)) => (p, s),
             _ => {
                 warn!("Portal not available for RDP data request");
+                // Send error response to RDP client
+                Self::send_format_data_error(server_event_sender).await;
                 return Ok(());
             }
         };
@@ -785,13 +795,17 @@ impl ClipboardManager {
             }
             Err(e) => {
                 error!("Failed to read from Portal clipboard: {:#}", e);
-                return Ok(()); // Return empty/error - RDP client will handle
+                // Send error response to RDP client
+                drop(session_guard);
+                Self::send_format_data_error(server_event_sender).await;
+                return Ok(());
             }
         };
+        drop(session_guard);
 
         // Convert Portal data to RDP format
         let rdp_data = if mime_type.starts_with("text/plain") {
-            // Convert UTF-8 to UTF-16LE for RDP
+            // Convert UTF-8 to UTF-16LE for RDP (CF_UNICODETEXT format)
             let text = String::from_utf8_lossy(&portal_data);
             let utf16: Vec<u16> = text.encode_utf16().collect();
             let mut bytes = Vec::with_capacity(utf16.len() * 2 + 2);
@@ -799,6 +813,7 @@ impl ClipboardManager {
                 bytes.extend_from_slice(&c.to_le_bytes());
             }
             bytes.extend_from_slice(&[0, 0]); // Null terminator
+            debug!("Converted UTF-8 ({} bytes) to UTF-16LE ({} bytes)", portal_data.len(), bytes.len());
             bytes
         } else {
             portal_data
@@ -807,15 +822,52 @@ impl ClipboardManager {
         let data_len = rdp_data.len();
         debug!("Converted to RDP format: {} bytes", data_len);
 
-        // Send response back to RDP client
-        if let Some(callback) = response_callback {
-            callback(rdp_data);
-            info!("✅ Sent {} bytes to RDP client for format {}", data_len, format_id);
+        // Send response back to RDP client via ServerEvent
+        let sender_opt = server_event_sender.read().await.clone();
+        if let Some(sender) = sender_opt {
+            use ironrdp_cliprdr::backend::ClipboardMessage;
+            use ironrdp_cliprdr::pdu::FormatDataResponse;
+            use ironrdp_pdu::IntoOwned;
+
+            // Create FormatDataResponse and convert to owned
+            let response = FormatDataResponse::new_data(rdp_data);
+            let owned_response = response.into_owned();
+
+            if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                ClipboardMessage::SendFormatData(owned_response)
+            )) {
+                error!("Failed to send FormatDataResponse via ServerEvent: {:?}", e);
+            } else {
+                info!("✅ Sent {} bytes to RDP client for format {} (Linux → Windows)", data_len, format_id);
+            }
         } else {
-            warn!("No response callback available for RDP data request");
+            warn!("ServerEvent sender not available - cannot send clipboard data to RDP");
         }
 
         Ok(())
+    }
+
+    /// Send error response for FormatDataRequest
+    async fn send_format_data_error(
+        server_event_sender: &Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
+    ) {
+        let sender_opt = server_event_sender.read().await.clone();
+        if let Some(sender) = sender_opt {
+            use ironrdp_cliprdr::backend::ClipboardMessage;
+            use ironrdp_cliprdr::pdu::FormatDataResponse;
+            use ironrdp_pdu::IntoOwned;
+
+            let response = FormatDataResponse::new_error();
+            let owned_response = response.into_owned();
+
+            if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                ClipboardMessage::SendFormatData(owned_response)
+            )) {
+                error!("Failed to send error FormatDataResponse: {:?}", e);
+            } else {
+                debug!("Sent error FormatDataResponse to RDP client");
+            }
+        }
     }
 
     /// Handle RDP data response - Client sent clipboard data, write to Portal
@@ -924,6 +976,58 @@ impl ClipboardManager {
 
                 return Err(ClipboardError::PortalError(format!("SelectionWrite failed: {}", e)));
             }
+        }
+
+        Ok(())
+    }
+
+    /// Handle RDP data error - RDP client returned error for data request
+    ///
+    /// This is called when RDP client sends FormatDataResponse with error flag.
+    /// We need to notify Portal that the transfer failed via selection_write_done(false),
+    /// otherwise Portal will keep retrying which can crash xdg-desktop-portal.
+    async fn handle_rdp_data_error(
+        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+        portal_session: &Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
+        pending_portal_requests: &Arc<RwLock<std::collections::HashMap<u32, String>>>,
+    ) -> Result<()> {
+        warn!("RDP data error - canceling pending Portal transfer");
+
+        // Get Portal clipboard and session
+        let portal_opt = portal_clipboard.read().await.clone();
+        let session_opt = portal_session.read().await.clone();
+
+        let (portal, session) = match (portal_opt, session_opt) {
+            (Some(p), Some(s)) => (p, s),
+            _ => {
+                warn!("Portal not available - clearing pending requests only");
+                pending_portal_requests.write().await.clear();
+                return Ok(());
+            }
+        };
+
+        // Get all pending requests and notify Portal of failure for each
+        let pending = pending_portal_requests.read().await;
+        let serials: Vec<u32> = pending.keys().cloned().collect();
+        drop(pending);
+
+        for serial in serials {
+            info!("❌ Notifying Portal of transfer failure (serial {})", serial);
+
+            // Notify Portal that the transfer failed
+            let session_guard = session.lock().await;
+            match portal.portal_clipboard().selection_write_done(&session_guard, serial, false).await {
+                Ok(()) => {
+                    info!("✅ Portal notified of transfer failure (serial {})", serial);
+                }
+                Err(e) => {
+                    // Log but don't fail - the transfer is already failed
+                    warn!("Failed to notify Portal of transfer failure: {:#}", e);
+                }
+            }
+
+            // Remove from pending
+            pending_portal_requests.write().await.remove(&serial);
         }
 
         Ok(())

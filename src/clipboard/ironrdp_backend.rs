@@ -24,6 +24,7 @@ enum ClipboardBackendEvent {
     RemoteCopy(Vec<WrdClipboardFormat>),
     FormatDataRequest(u32),
     FormatDataResponse(Vec<u8>),
+    FormatDataError, // RDP client returned error for data request
     FileContentsRequest(u32, u32, u64, u32),
     FileContentsResponse(u32, Vec<u8>),
 }
@@ -133,6 +134,15 @@ impl WrdCliprdrFactory {
                         if let Ok(mgr) = manager.try_lock() {
                             if let Ok(_) = mgr.event_sender().try_send(ClipboardEvent::RdpDataResponse(data)) {
                                 debug!("Data response sent to clipboard manager");
+                            }
+                        }
+                    }
+                    ClipboardBackendEvent::FormatDataError => {
+                        warn!("Processing format data error - notifying clipboard manager");
+                        // Send error to clipboard manager so it can notify Portal of failure
+                        if let Ok(mgr) = manager.try_lock() {
+                            if let Ok(_) = mgr.event_sender().try_send(ClipboardEvent::RdpDataError) {
+                                debug!("Data error sent to clipboard manager");
                             }
                         }
                     }
@@ -323,7 +333,11 @@ impl CliprdrBackend for WrdCliprdrBackend {
 
     fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
         if response.is_error() {
-            warn!("Format data response received with error flag");
+            warn!("Format data response received with error flag - notifying Portal of failure");
+            // Push error event so we can notify Portal and cancel pending transfer
+            if let Ok(mut queue) = self.event_queue.try_write() {
+                queue.push_back(ClipboardBackendEvent::FormatDataError);
+            }
             return;
         }
 
