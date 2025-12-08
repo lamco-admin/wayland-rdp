@@ -258,12 +258,37 @@ impl ClipboardManager {
                 let pending_requests = Arc::clone(&self.pending_portal_requests);
                 let server_event_sender = Arc::clone(&self.server_event_sender);
                 let converter = Arc::clone(&self.converter);
+                let sync_manager = Arc::clone(&self.sync_manager);
 
                 // Spawn task to handle SelectionTransfer events
                 tokio::spawn(async move {
                     while let Some(transfer_event) = transfer_rx.recv().await {
                         info!("📥 SelectionTransfer signal: {} (serial {})",
                             transfer_event.mime_type, transfer_event.serial);
+
+                        // CRITICAL: Check clipboard state before asking RDP for data
+                        // Only ask RDP if RDP owns the clipboard (has the data we need)
+                        // If Portal owns (Linux copied something), RDP doesn't have the data
+                        {
+                            let sync = sync_manager.read().await;
+                            let state = sync.state();
+                            match state {
+                                ClipboardState::RdpOwned(_) => {
+                                    debug!("Clipboard state is RdpOwned - will request data from RDP");
+                                }
+                                ClipboardState::PortalOwned(_) => {
+                                    warn!("📋 Ignoring SelectionTransfer - Portal owns clipboard, RDP doesn't have data");
+                                    continue;
+                                }
+                                ClipboardState::Idle => {
+                                    // Idle might be OK if RDP sent formats but we haven't tracked state yet
+                                    debug!("Clipboard state is Idle - will attempt RDP request");
+                                }
+                                ClipboardState::Syncing(_) => {
+                                    debug!("Clipboard state is Syncing - will attempt RDP request");
+                                }
+                            }
+                        }
 
                         // Track this transfer request (serial → mime_type)
                         // When RDP FormatDataResponse arrives, we'll use this serial to write to Portal
