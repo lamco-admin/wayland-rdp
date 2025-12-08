@@ -1,0 +1,9 @@
+{
+  "uuid": "wayland-rdp-clipboard@wayland-rdp.io",
+  "name": "Wayland RDP Clipboard Bridge",
+  "description": "Exposes GNOME clipboard changes via D-Bus for wayland-rdp-server and other applications. Monitors clipboard and PRIMARY selection, emitting signals when content changes.",
+  "version": 1,
+  "shell-version": ["45", "46", "47", "48"],
+  "url": "https://github.com/anthropics/wayland-rdp-clipboard",
+  "settings-schema": "org.gnome.shell.extensions.wayland-rdp-clipboard"
+}
