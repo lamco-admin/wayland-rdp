@@ -3,11 +3,12 @@
 ## TL;DR - Run the Server
 
 ```bash
-# Local development (from project root)
-./target/release/wrd-server -c config.toml
+# On the VM (simplest - DBUS is in .bashrc)
+cd ~/wayland-rdp && ./start.sh
 
-# Via SSH (GNOME VM)
-ssh greg@192.168.10.205 'export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus" && cd ~/wayland/wrd-server-specs && ./target/release/wrd-server -c config.toml'
+# Or manually
+cd ~/wayland-rdp
+./target/release/wrd-server -c config.toml
 ```
 
 ## Why `-c config.toml`?
@@ -70,17 +71,15 @@ The test VM (192.168.10.205) has a git clone at `~/wayland-rdp/`.
 
 ```bash
 # 1. From local machine - commit and push changes
-git add -A && git commit -m "your message" && git push origin feature/gnome-clipboard-extension
+git add -A && git commit -m "your message" && git push
 
-# 2. On VM - pull and build (run these on the VM, not via SSH for long builds)
+# 2. On VM - pull and build
 cd ~/wayland-rdp
-git pull origin feature/gnome-clipboard-extension
+git pull
 cargo build --release
 
 # 3. Run the server
-pkill -f wrd-server
-export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
-./target/release/wrd-server -c config.toml
+./start.sh
 ```
 
 ### Quick SSH Commands (for short operations only)
