@@ -61,3 +61,43 @@ During development, use `-c config.toml` to load the local config file which has
 | Production | `/etc/wrd-server/config.toml` (default) |
 | Certs (dev) | `./certs/cert.pem`, `./certs/key.pem` |
 | Certs (prod) | `/etc/wrd-server/cert.pem`, `/etc/wrd-server/key.pem` |
+
+## VM Deployment
+
+The test VM (192.168.10.205) has a git clone at `~/wayland-rdp/`.
+
+### Deploy New Code
+
+```bash
+# 1. From local machine - commit and push changes
+git add -A && git commit -m "your message" && git push origin feature/gnome-clipboard-extension
+
+# 2. On VM - pull and build (run these on the VM, not via SSH for long builds)
+cd ~/wayland-rdp
+git pull origin feature/gnome-clipboard-extension
+cargo build --release
+
+# 3. Run the server
+pkill -f wrd-server
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+./target/release/wrd-server -c config.toml
+```
+
+### Quick SSH Commands (for short operations only)
+
+```bash
+# Check current branch/commit
+ssh greg@192.168.10.205 'cd ~/wayland-rdp && git log -1 --oneline'
+
+# Pull latest
+ssh greg@192.168.10.205 'cd ~/wayland-rdp && git pull'
+
+# NOTE: Don't run cargo build via SSH - it times out. Use tmux/screen on VM instead.
+```
+
+### VM Directory Structure
+
+| Path | Purpose |
+|------|---------|
+| `~/wayland-rdp/` | Git clone (use for deployment) |
+| `~/wayland/wrd-server-specs/` | Old rsync copy (deprecated, don't use) |
