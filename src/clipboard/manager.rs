@@ -3,6 +3,7 @@
 //! Main clipboard synchronization coordinator that manages bidirectional
 //! clipboard sharing between RDP client and Wayland compositor.
 
+use crate::clipboard::dbus_bridge::{ClipboardChangedEvent, DbusBridge};
 use crate::clipboard::error::{ClipboardError, Result};
 use crate::clipboard::formats::{ClipboardFormat, FormatConverter};
 use crate::clipboard::sync::{ClipboardState, LoopDetectionConfig, LoopDetector, SyncManager};
@@ -126,6 +127,10 @@ pub struct ClipboardManager {
     /// Server event sender for sending clipboard requests to IronRDP
     /// Set by WrdCliprdrFactory after ServerEvent sender is available
     server_event_sender: Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
+
+    /// D-Bus bridge for GNOME clipboard extension integration
+    /// This enables Linux→Windows clipboard on GNOME where Portal signals don't work
+    dbus_bridge: Arc<RwLock<Option<DbusBridge>>>,
 }
 
 impl ClipboardManager {
@@ -162,6 +167,7 @@ impl ClipboardManager {
             portal_session: Arc::new(RwLock::new(None)), // Will be set with portal_clipboard
             pending_portal_requests: Arc::new(RwLock::new(std::collections::HashMap::new())),
             server_event_sender: Arc::new(RwLock::new(None)), // Set by WrdCliprdrFactory
+            dbus_bridge: Arc::new(RwLock::new(None)), // Will be set by start_dbus_clipboard_listener
         };
 
         // Start event processor
@@ -202,6 +208,10 @@ impl ClipboardManager {
         // DISABLED: Polling fallback causes session lock contention breaking input injection
         // TODO: Fix by using separate session or different clipboard monitoring approach
         // self.start_clipboard_polling_fallback(portal, session).await;
+
+        // Start D-Bus bridge for GNOME clipboard extension (Linux → Windows fallback)
+        // This provides an alternative to SelectionOwnerChanged which doesn't work on GNOME
+        self.start_dbus_clipboard_listener().await;
     }
 
     /// Start SelectionTransfer listener for delayed rendering
@@ -410,9 +420,105 @@ impl ClipboardManager {
             }
             Err(e) => {
                 error!("Failed to start SelectionOwnerChanged listener: {:#}", e);
-                warn!("Linux → Windows clipboard flow will not work");
+                warn!("Linux → Windows clipboard flow will not work via Portal signals");
+                warn!("Will attempt D-Bus bridge for GNOME extension fallback");
             }
         }
+    }
+
+    /// Start D-Bus clipboard listener for GNOME extension integration
+    ///
+    /// This enables Linux → Windows clipboard flow on GNOME desktops where
+    /// Portal's SelectionOwnerChanged signal doesn't work. The wayland-rdp-clipboard
+    /// GNOME Shell extension monitors the clipboard and emits D-Bus signals.
+    ///
+    /// # Flow
+    /// 1. GNOME extension detects clipboard change (via St.Clipboard polling)
+    /// 2. Extension emits ClipboardChanged signal on D-Bus
+    /// 3. We receive signal and send PortalFormatsAvailable event
+    /// 4. ClipboardManager announces formats to RDP client
+    /// 5. When RDP client pastes, we read from Portal clipboard
+    pub async fn start_dbus_clipboard_listener(&self) {
+        info!("Checking for GNOME clipboard extension on D-Bus...");
+
+        let mut bridge = DbusBridge::new();
+
+        // Check if extension is available
+        if !bridge.check_extension_available().await {
+            info!("GNOME clipboard extension not detected - D-Bus bridge inactive");
+            info!("Install wayland-rdp-clipboard extension for Linux → Windows clipboard on GNOME");
+            return;
+        }
+
+        // Try to get version for logging
+        match bridge.get_version().await {
+            Ok(version) => info!("GNOME clipboard extension version: {}", version),
+            Err(e) => debug!("Could not get extension version: {}", e),
+        }
+
+        // Test connectivity
+        match bridge.ping().await {
+            Ok(reply) => debug!("Extension ping successful: {}", reply),
+            Err(e) => {
+                warn!("Extension ping failed: {} - continuing anyway", e);
+            }
+        }
+
+        // Create channel for D-Bus events
+        let (dbus_tx, mut dbus_rx) = mpsc::unbounded_channel::<ClipboardChangedEvent>();
+
+        // Start signal listener
+        if let Err(e) = bridge.start_signal_listener(dbus_tx).await {
+            error!("Failed to start D-Bus signal listener: {}", e);
+            return;
+        }
+
+        // Store bridge reference
+        *self.dbus_bridge.write().await = Some(bridge);
+
+        // Clone event sender for the spawned task
+        let event_tx = self.event_tx.clone();
+
+        // Spawn task to forward D-Bus events to ClipboardManager
+        tokio::spawn(async move {
+            info!("D-Bus clipboard event forwarder started");
+            let mut event_count = 0;
+
+            while let Some(dbus_event) = dbus_rx.recv().await {
+                event_count += 1;
+
+                // Skip PRIMARY selection for now (RDP only supports CLIPBOARD)
+                if dbus_event.is_primary {
+                    debug!("Ignoring PRIMARY selection change (RDP doesn't support it)");
+                    continue;
+                }
+
+                info!(
+                    "📋 D-Bus clipboard change #{}: {} MIME types (hash: {})",
+                    event_count,
+                    dbus_event.mime_types.len(),
+                    &dbus_event.content_hash[..8.min(dbus_event.content_hash.len())]
+                );
+                debug!("   MIME types: {:?}", dbus_event.mime_types);
+
+                // Forward to ClipboardManager as PortalFormatsAvailable event
+                // This triggers the same flow as if Portal had sent SelectionOwnerChanged
+                if let Err(e) = event_tx
+                    .send(ClipboardEvent::PortalFormatsAvailable(dbus_event.mime_types))
+                    .await
+                {
+                    error!("Failed to forward D-Bus event to ClipboardManager: {}", e);
+                    break;
+                }
+
+                info!("✅ Forwarded clipboard change to RDP client announcement flow");
+            }
+
+            warn!("D-Bus clipboard event forwarder ended after {} events", event_count);
+        });
+
+        info!("✅ D-Bus clipboard bridge started - GNOME extension integration active");
+        info!("   Linux → Windows clipboard now enabled via extension");
     }
 
     /// Start event processing loop
