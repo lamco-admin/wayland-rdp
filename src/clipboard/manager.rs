@@ -273,7 +273,7 @@ impl ClipboardManager {
                             let sync = sync_manager.read().await;
                             let state = sync.state();
                             match state {
-                                ClipboardState::RdpOwned(_) => {
+                                ClipboardState::RdpOwned(_, _) => {
                                     debug!("Clipboard state is RdpOwned - will request data from RDP");
                                 }
                                 ClipboardState::PortalOwned(_) => {
