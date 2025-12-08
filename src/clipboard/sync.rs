@@ -387,8 +387,9 @@ impl SyncManager {
             return Ok(false); // Don't sync back to RDP
         }
 
-        // Check for loop using hash comparison (belt and suspenders)
-        if self.loop_detector.would_cause_loop_mime(&mime_types) {
+        // Check for loop using hash comparison - but SKIP for authoritative D-Bus signals
+        // D-Bus extension is the ground truth; if it says clipboard changed, it changed.
+        if !force && self.loop_detector.would_cause_loop_mime(&mime_types) {
             warn!("Ignoring Portal format list due to loop detection");
             return Ok(false); // Don't sync
         }
