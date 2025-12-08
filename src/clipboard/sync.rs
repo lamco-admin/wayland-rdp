@@ -11,17 +11,31 @@ use std::time::{Duration, SystemTime};
 use tracing::{debug, warn};
 
 /// Clipboard ownership state
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum ClipboardState {
     /// No active clipboard data
     Idle,
-    /// RDP client owns the clipboard
-    RdpOwned(Vec<ClipboardFormat>),
+    /// RDP client owns the clipboard (with timestamp when ownership started)
+    RdpOwned(Vec<ClipboardFormat>, SystemTime),
     /// Wayland/Portal owns the clipboard
     PortalOwned(Vec<String>),
     /// Currently syncing data
     Syncing(SyncDirection),
 }
+
+impl PartialEq for ClipboardState {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ClipboardState::Idle, ClipboardState::Idle) => true,
+            (ClipboardState::RdpOwned(f1, _), ClipboardState::RdpOwned(f2, _)) => f1 == f2,
+            (ClipboardState::PortalOwned(m1), ClipboardState::PortalOwned(m2)) => m1 == m2,
+            (ClipboardState::Syncing(d1), ClipboardState::Syncing(d2)) => d1 == d2,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ClipboardState {}
 
 /// Synchronization direction
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -363,8 +377,8 @@ impl SyncManager {
             return Ok(false); // Don't sync
         }
 
-        // Update state
-        self.state = ClipboardState::RdpOwned(formats.clone());
+        // Update state with current timestamp
+        self.state = ClipboardState::RdpOwned(formats.clone(), SystemTime::now());
 
         // Record operation
         self.loop_detector.record_rdp_operation(formats);
@@ -376,19 +390,41 @@ impl SyncManager {
     ///
     /// The `force` parameter indicates if this is from an authoritative source (D-Bus extension)
     /// that should override RDP ownership. When force=false, we block if RDP owns the clipboard
-    /// to prevent echo loops. When force=true (D-Bus), we always process because the user
-    /// genuinely copied something new on the Linux side.
+    /// to prevent echo loops. When force=true (D-Bus), we check if enough time has passed
+    /// since RDP took ownership to distinguish between echoes and real user copies.
     pub fn handle_portal_formats(&mut self, mime_types: Vec<String>, force: bool) -> Result<bool> {
-        // If RDP currently owns the clipboard, only block non-authoritative sources.
-        // D-Bus extension (force=true) is authoritative and should override RDP ownership.
-        // Portal SelectionOwnerChanged (force=false) may be echo of our SetSelection.
-        if !force && matches!(self.state, ClipboardState::RdpOwned(_)) {
-            debug!("Ignoring Portal format list - RDP currently owns clipboard (preventing echo loop)");
-            return Ok(false); // Don't sync back to RDP
+        // If RDP currently owns the clipboard, check timing to prevent echo loops
+        if let ClipboardState::RdpOwned(_, ownership_time) = &self.state {
+            let elapsed = SystemTime::now()
+                .duration_since(*ownership_time)
+                .unwrap_or(Duration::from_secs(0));
+
+            // Echo protection window: D-Bus signals within 2 seconds of RDP ownership
+            // are likely echoes from our Portal writes, not real user copies
+            const ECHO_PROTECTION_WINDOW_MS: u128 = 2000;
+
+            if !force {
+                // Portal SelectionOwnerChanged (force=false) - always block when RDP owns
+                debug!("Ignoring Portal format list - RDP currently owns clipboard (preventing echo loop)");
+                return Ok(false);
+            } else if elapsed.as_millis() < ECHO_PROTECTION_WINDOW_MS {
+                // D-Bus signal (force=true) but too soon after RDP ownership - this is an echo!
+                debug!(
+                    "Ignoring D-Bus signal - received {}ms after RDP ownership (echo protection)",
+                    elapsed.as_millis()
+                );
+                return Ok(false);
+            } else {
+                // D-Bus signal after protection window - likely a real user copy
+                debug!(
+                    "D-Bus signal {}ms after RDP ownership - allowing override (user likely copied)",
+                    elapsed.as_millis()
+                );
+            }
         }
 
         // Check for loop using hash comparison - but SKIP for authoritative D-Bus signals
-        // D-Bus extension is the ground truth; if it says clipboard changed, it changed.
+        // that passed the timing check above
         if !force && self.loop_detector.would_cause_loop_mime(&mime_types) {
             warn!("Ignoring Portal format list due to loop detection");
             return Ok(false); // Don't sync
@@ -460,7 +496,7 @@ impl SyncManager {
     ///
     /// Ok(()) on success
     pub fn set_rdp_formats(&mut self, formats: Vec<ClipboardFormat>) -> Result<()> {
-        self.state = ClipboardState::RdpOwned(formats.clone());
+        self.state = ClipboardState::RdpOwned(formats.clone(), SystemTime::now());
         self.loop_detector.record_rdp_operation(formats);
         Ok(())
     }
