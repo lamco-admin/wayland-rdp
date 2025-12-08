@@ -54,25 +54,69 @@ cargo test
 ./scripts/test.sh
 ```
 
+## Quick Start (Development)
+
+**IMPORTANT**: The default config path is `/etc/wrd-server/config.toml`. For development, you MUST specify the local config file:
+
+```bash
+# Build release (from project root)
+cargo build --release
+
+# Run with local config (REQUIRED for development)
+./target/release/wrd-server -c config.toml
+
+# Or with verbose logging
+./target/release/wrd-server -c config.toml -vv
+```
+
+### Prerequisites for Running
+
+1. **TLS Certificates** in `certs/` directory:
+   - `certs/cert.pem` - Certificate file
+   - `certs/key.pem` - Private key file
+   - Generate with: `./scripts/generate-certs.sh` or copy from test certs:
+     ```bash
+     cp certs/test-cert.pem certs/cert.pem
+     cp certs/test-key.pem certs/key.pem
+     ```
+
+2. **D-Bus Session** (for portal access via SSH):
+   ```bash
+   export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+   ```
+
+3. **GNOME Extension** (for clipboard on GNOME):
+   - Install from `extension/` directory
+   - Log out/in to activate
+
+### One-Liner for SSH Testing
+
+```bash
+ssh user@host 'export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus" && cd ~/wayland/wrd-server-specs && ./target/release/wrd-server -c config.toml'
+```
+
 ## Usage
 
 ### Basic Usage
 
 ```bash
-# Run with default configuration
-wrd-server --config config/wrd-server.toml
+# Run with local configuration (development)
+./target/release/wrd-server -c config.toml
+
+# Run with system configuration (production)
+wrd-server  # Uses /etc/wrd-server/config.toml
 
 # Show help
 wrd-server --help
 
 # Run with custom port
-wrd-server --config config/wrd-server.toml --port 5000
+./target/release/wrd-server -c config.toml --port 5000
 
 # Enable verbose logging
-wrd-server --config config/wrd-server.toml -vv
+./target/release/wrd-server -c config.toml -vv
 
 # Use JSON logging format
-wrd-server --config config/wrd-server.toml --log-format json
+./target/release/wrd-server -c config.toml --log-format json
 ```
 
 ### Configuration

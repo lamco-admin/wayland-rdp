@@ -83,6 +83,7 @@ impl Config {
             clipboard: ClipboardConfig {
                 enabled: true,
                 max_size: 10485760, // 10 MB
+                rate_limit_ms: 200, // Max 5 events/second
                 allowed_types: vec![],
             },
             multimon: MultiMonitorConfig {
