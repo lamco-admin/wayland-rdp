@@ -108,6 +108,7 @@
 //! # }
 //! ```
 
+pub mod dbus_bridge;
 pub mod error;
 pub mod formats;
 pub mod ironrdp_backend;
@@ -116,6 +117,7 @@ pub mod sync;
 pub mod transfer;
 
 // Re-export main types
+pub use dbus_bridge::{ClipboardChangedEvent, DbusBridge};
 pub use error::{ClipboardError, ErrorContext, ErrorType, RecoveryAction, Result};
 pub use formats::{ClipboardFormat, FormatConverter};
 pub use ironrdp_backend::WrdCliprdrFactory;
