@@ -77,7 +77,7 @@
 use ironrdp_server::{KeyboardEvent as IronKeyboardEvent, MouseEvent as IronMouseEvent, RdpServerInputHandler};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::input::coordinates::{CoordinateTransformer, MonitorInfo};
 use crate::input::error::InputError;
@@ -173,6 +173,10 @@ impl WrdInputHandler {
 
         match event {
             IronKeyboardEvent::Pressed { code, extended } => {
+                // Log V key specifically to trace Ctrl+V paste operations
+                if code == 0x2F {  // V key scancode
+                    info!("⌨️ V key pressed (scancode=0x{:02X}, extended={})", code, extended);
+                }
                 debug!("Keyboard pressed: code={}, extended={}", code, extended);
 
                 // Process key down through keyboard handler
@@ -185,6 +189,11 @@ impl WrdInputHandler {
                     _ => return Err(InputError::InvalidKeyEvent("Unexpected event type".to_string())),
                 };
 
+                // Log V key injection to Portal
+                if keycode == 47 {  // evdev KEY_V
+                    info!("⌨️ Injecting V key press to Portal (evdev keycode={})", keycode);
+                }
+
                 // Inject key press via portal
                 self.portal
                     .notify_keyboard_keycode(&session, keycode as i32, true)
@@ -193,6 +202,10 @@ impl WrdInputHandler {
             }
 
             IronKeyboardEvent::Released { code, extended } => {
+                // Log V key releases
+                if code == 0x2F {  // V key scancode
+                    info!("⌨️ V key released (scancode=0x{:02X}, extended={})", code, extended);
+                }
                 debug!("Keyboard released: code={}, extended={}", code, extended);
 
                 // Process key up through keyboard handler
@@ -203,6 +216,11 @@ impl WrdInputHandler {
                     crate::input::keyboard::KeyboardEvent::KeyUp { keycode, .. } => keycode,
                     _ => return Err(InputError::InvalidKeyEvent("Unexpected event type".to_string())),
                 };
+
+                // Log V key injection release to Portal
+                if keycode == 47 {  // evdev KEY_V
+                    info!("⌨️ Injecting V key release to Portal (evdev keycode={})", keycode);
+                }
 
                 // Inject key release via portal
                 self.portal
