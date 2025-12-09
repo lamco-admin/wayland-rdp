@@ -112,6 +112,7 @@ use pipewire::spa::pod::Pod;
 use pipewire::spa::utils::{Direction, Fraction, Rectangle};
 use pipewire::stream::{Stream, StreamFlags, StreamState};
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 use std::sync::mpsc as std_mpsc;
 use std::thread::{self, JoinHandle};
@@ -457,6 +458,78 @@ fn run_pipewire_main_loop(
     info!("PipeWire thread exited");
 }
 
+/// Memory-map a file descriptor to extract buffer data
+///
+/// Handles both DMA-BUF and MemFd buffers by mapping the FD into process memory.
+///
+/// # Arguments
+///
+/// * `fd` - File descriptor to map
+/// * `size` - Size of data to read
+/// * `offset` - Offset within the mapped region
+///
+/// # Returns
+///
+/// Vec<u8> containing the pixel data, or error if mmap fails
+///
+/// # Safety
+///
+/// This uses unsafe mmap operations but is safe because:
+/// - We immediately copy data and unmap
+/// - FD is owned by PipeWire buffer (valid during callback)
+/// - No pointer aliasing (we copy, not reference)
+fn mmap_fd_buffer(fd: std::os::fd::RawFd, size: usize, offset: usize) -> Result<Vec<u8>> {
+    use nix::sys::mman::{mmap, munmap, MapFlags, ProtFlags};
+    use std::os::fd::{BorrowedFd};
+
+    // Calculate page-aligned mapping
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    let map_offset = (offset / page_size) * page_size;
+    let map_size = size + (offset - map_offset);
+    let data_offset_in_map = offset - map_offset;
+
+    info!("mmap: fd={}, size={}, offset={}, page_size={}, map_offset={}, map_size={}",
+          fd, size, offset, page_size, map_offset, map_size);
+
+    // Memory map the file descriptor
+    // SAFETY:
+    // - FD is valid (owned by PipeWire buffer during callback)
+    // - We immediately copy and unmap (no lifetime issues)
+    // - BorrowedFd is only used during mmap call
+    let addr = unsafe {
+        let borrowed_fd = BorrowedFd::borrow_raw(fd);
+        mmap(
+            None,
+            NonZeroUsize::new(map_size)
+                .ok_or_else(|| PipeWireError::FrameExtractionFailed("Invalid map size".to_string()))?,
+            ProtFlags::PROT_READ,
+            MapFlags::MAP_SHARED,
+            Some(borrowed_fd),
+            map_offset as i64,
+        )
+        .map_err(|e| PipeWireError::FrameExtractionFailed(format!("mmap failed: {}", e)))?
+    };
+
+    // Copy data from mapped region
+    let result = unsafe {
+        let src_ptr = (addr as *const u8).add(data_offset_in_map);
+        let mut vec = Vec::with_capacity(size);
+        std::ptr::copy_nonoverlapping(src_ptr, vec.as_mut_ptr(), size);
+        vec.set_len(size);
+        vec
+    };
+
+    // Unmap immediately after copying (no dangling pointers)
+    unsafe {
+        munmap(addr, map_size)
+            .map_err(|e| warn!("munmap warning: {}", e))
+            .ok();
+    }
+
+    info!("mmap successful: extracted {} bytes", result.len());
+    Ok(result)
+}
+
 /// Create a stream on the PipeWire thread
 ///
 /// This function performs the complete stream creation, format negotiation,
@@ -525,49 +598,117 @@ fn create_stream_on_thread(
 
                 // Extract frame data from buffer
                 if let Some(data) = buffer.datas_mut().first_mut() {
-                    info!("🎬 Got data from buffer");
-                    // Get buffer chunk
+                    // Get buffer chunk info
                     let chunk = data.chunk();
                     let size = chunk.size() as usize;
                     let offset = chunk.offset() as usize;
+                    let data_type = data.type_();
 
-                    // Map buffer data
-                    if let Some(buffer_data) = data.data() {
-                        // Validate buffer bounds
-                        if offset + size <= buffer_data.len() {
-                            let slice = &buffer_data[offset..offset + size];
+                    // Extract pixel data based on buffer type
+                    // Access raw spa_data structure to get FD
+                    let raw_data = unsafe { &*data.as_raw() };
+                    let fd = raw_data.fd as RawFd;
 
-                            // Create VideoFrame from buffer data
-                            let frame = VideoFrame {
-                                frame_id: stream_id_for_callbacks as u64, // Incremented per frame in production
-                                pts: 0, // Extract from buffer metadata in production
-                                dts: 0,
-                                duration: 16_666_667, // ~60fps default (in nanoseconds)
-                                width: config.width,
-                                height: config.height,
-                                stride: (size / config.height as usize) as u32,
-                                format: config.preferred_format.unwrap_or(PixelFormat::BGRx),
-                                monitor_index: 0, // Set from stream metadata
-                                data: StdArc::new(slice.to_vec()),
-                                capture_time: SystemTime::now(),
-                                damage_regions: Vec::new(), // Extract from SPA metadata in production
-                                flags: FrameFlags::new(),
-                            };
+                    info!("🎬 Buffer: type={}, size={}, offset={}, fd={}", data_type.as_raw(), size, offset, fd);
 
-                            // Send frame to async runtime
-                            if let Err(e) = frame_tx_for_process.try_send(frame) {
-                                warn!("Failed to send frame: {} (channel full, backpressure)", e);
+                    let pixel_data: Option<Vec<u8>> = match data_type {
+                        // MemPtr: Direct memory access via data.data()
+                        libspa::buffer::DataType::MemPtr => {
+                            if let Some(mapped_data) = data.data() {
+                                if offset + size <= mapped_data.len() {
+                                    info!("🎬 MemPtr buffer: copying {} bytes (offset={})", size, offset);
+                                    Some(mapped_data[offset..offset + size].to_vec())
+                                } else {
+                                    warn!("MemPtr buffer bounds invalid: offset={}, size={}, len={}", offset, size, mapped_data.len());
+                                    None
+                                }
                             } else {
-                                info!("🎬 Frame sent to async runtime (size={} bytes)", size);
+                                warn!("MemPtr buffer but data.data() returned None");
+                                None
                             }
+                        }
+
+                        // MemFd: File descriptor with memory mapping
+                        libspa::buffer::DataType::MemFd => {
+                            if let Some(mapped_data) = data.data() {
+                                if offset + size <= mapped_data.len() {
+                                    info!("🎬 MemFd buffer: copying {} bytes (offset={})", size, offset);
+                                    Some(mapped_data[offset..offset + size].to_vec())
+                                } else {
+                                    warn!("MemFd buffer bounds invalid: offset={}, size={}, len={}", offset, size, mapped_data.len());
+                                    None
+                                }
+                            } else if fd >= 0 {
+                                // Fallback: manual mmap of MemFd
+                                info!("🎬 MemFd buffer: using manual mmap (FD={})", fd);
+                                match mmap_fd_buffer(fd, size, offset) {
+                                    Ok(data) => Some(data),
+                                    Err(e) => {
+                                        warn!("Failed to mmap MemFd buffer: {}", e);
+                                        None
+                                    }
+                                }
+                            } else {
+                                warn!("MemFd buffer but no valid FD (fd={})", fd);
+                                None
+                            }
+                        }
+
+                        // DmaBuf: GPU memory buffer - must mmap via FD
+                        libspa::buffer::DataType::DmaBuf => {
+                            if fd >= 0 {
+                                info!("🎬 DMA-BUF buffer: mmapping {} bytes from FD={}", size, fd);
+                                match mmap_fd_buffer(fd, size, offset) {
+                                    Ok(data) => {
+                                        info!("🎬 DMA-BUF mmap successful, extracted {} bytes", data.len());
+                                        Some(data)
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to mmap DMA-BUF: {}", e);
+                                        None
+                                    }
+                                }
+                            } else {
+                                warn!("DMA-BUF buffer but no valid FD (fd={})", fd);
+                                None
+                            }
+                        }
+
+                        // Unknown/Invalid type
+                        _ => {
+                            warn!("Unknown buffer type: {} (raw={})",
+                                  if data_type == libspa::buffer::DataType::Invalid { "Invalid" } else { "Unknown" },
+                                  data_type.as_raw());
+                            None
+                        }
+                    };
+
+                    if let Some(pixel_data) = pixel_data {
+                        // Create VideoFrame from extracted pixel data
+                        let frame = VideoFrame {
+                            frame_id: stream_id_for_callbacks as u64,
+                            pts: 0, // TODO: Extract from buffer metadata
+                            dts: 0,
+                            duration: 16_666_667, // ~60fps default
+                            width: config.width,
+                            height: config.height,
+                            stride: (size / config.height as usize) as u32,
+                            format: config.preferred_format.unwrap_or(PixelFormat::BGRx),
+                            monitor_index: 0,
+                            data: StdArc::new(pixel_data),
+                            capture_time: SystemTime::now(),
+                            damage_regions: Vec::new(),
+                            flags: FrameFlags::new(),
+                        };
+
+                        // Send frame to async runtime
+                        if let Err(e) = frame_tx_for_process.try_send(frame) {
+                            warn!("Failed to send frame: {} (channel full, backpressure)", e);
                         } else {
-                            warn!(
-                                "Buffer size mismatch: offset={}, size={}, buffer_len={}",
-                                offset, size, buffer_data.len()
-                            );
+                            debug!("Frame sent to async runtime");
                         }
                     } else {
-                        warn!("Buffer data is None for stream {}", stream_id_for_callbacks);
+                        debug!("Could not extract pixel data from buffer");
                     }
                 } else {
                     warn!("No data in buffer for stream {}", stream_id_for_callbacks);
@@ -619,57 +760,25 @@ fn create_stream_on_thread(
 /// Build stream parameters for format negotiation
 ///
 /// Constructs SPA Pod parameters for video format, size, and framerate negotiation.
-fn build_stream_parameters(config: &StreamConfig) -> Result<Vec<Pod>> {
-    use libspa::param::video::VideoFormat;
-    
-    
-    
-
-    let params = Vec::new();
-
-    // Build format parameter
-    // Support multiple formats with preference order: BGRx, BGRA, RGBx, RGBA
-    let formats = if let Some(pref) = config.preferred_format {
-        vec![pref.to_spa()]
-    } else {
-        vec![
-            VideoFormat::BGRx,
-            VideoFormat::BGRA,
-            VideoFormat::RGBx,
-            VideoFormat::RGBA,
-        ]
-    };
-
-    // Build resolution parameters
-    let width = config.width;
-    let height = config.height;
-
-    let min_res = Rectangle {
-        width: 1,
-        height: 1,
-    };
-    let max_res = Rectangle {
-        width: 7680,  // 8K max
-        height: 4320,
-    };
-    let default_res = Rectangle {
-        width,
-        height,
-    };
-
-    // Build framerate parameters
-    let framerate = Fraction {
-        num: config.framerate,
-        denom: 1,
-    };
-
-    // Note: Full SPA Pod construction would go here
-    // For pipewire-rs 0.8, we need to use the pod builder API
-    // This is complex and requires understanding the SPA type system
-
-    // For now, return empty and rely on default format negotiation
-    // Full implementation would construct proper SPA pods
-    Ok(params)
+///
+/// # Format Negotiation Strategy
+///
+/// We accept whatever buffer type PipeWire provides since we now support:
+/// - MemPtr (type 1): Direct memory access via data.data()
+/// - MemFd (type 2): Memory-mapped FD via mmap()
+/// - DmaBuf (type 3): GPU buffer via mmap() with FD
+///
+/// Returning empty params lets PipeWire choose optimal format based on compositor capabilities.
+/// This enables hardware acceleration when available (DMA-BUF) while maintaining compatibility.
+fn build_stream_parameters(_config: &StreamConfig) -> Result<Vec<Pod>> {
+    // Accept default negotiation - we handle all buffer types now
+    // PipeWire will negotiate based on compositor capabilities:
+    // - KDE/modern compositors: DMA-BUF (hardware accelerated)
+    // - Older/fallback: MemPtr or MemFd (software rendering)
+    //
+    // Future enhancement: Build proper SPA Pods to explicitly request formats/resolutions
+    info!("🎬 Using default format negotiation (supports MemPtr/MemFd/DmaBuf)");
+    Ok(Vec::new())
 }
 
 #[cfg(test)]
