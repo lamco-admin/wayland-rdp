@@ -73,7 +73,7 @@ use ironrdp_server::{
 use std::num::{NonZeroU16, NonZeroUsize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::pipewire::frame::VideoFrame;
 use crate::pipewire::pw_thread::{PipeWireThreadCommand, PipeWireThreadManager};
@@ -225,7 +225,7 @@ impl WrdDisplayHandler {
         let handler = Arc::clone(&self);
 
         tokio::spawn(async move {
-            debug!("Starting display update pipeline");
+            info!("🎬 Starting display update pipeline task");
 
             loop {
                 // Try to get frame from PipeWire thread (non-blocking)
@@ -238,13 +238,12 @@ impl WrdDisplayHandler {
                     Some(f) => f,
                     None => {
                         // No frame available, sleep and retry
-                        trace!("No frame available, waiting...");
                         tokio::time::sleep(tokio::time::Duration::from_millis(16)).await;
                         continue;
                     }
                 };
 
-                trace!("Got frame {} from PipeWire", frame.frame_id);
+                info!("🎬 Got frame {} from PipeWire ({}x{})", frame.frame_id, frame.width, frame.height);
 
                 // Convert to RDP bitmap
                 let bitmap_update = match handler.convert_to_bitmap(frame).await {

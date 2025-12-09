@@ -519,11 +519,13 @@ fn create_stream_on_thread(
         })
         .process(move |stream, _user_data| {
             // This callback is called when a new frame buffer is available
+            info!("🎬 process() callback fired for stream {}", stream_id_for_callbacks);
             if let Some(mut buffer) = stream.dequeue_buffer() {
-                trace!("Processing buffer for stream {}", stream_id_for_callbacks);
+                info!("🎬 Got buffer from stream {}", stream_id_for_callbacks);
 
                 // Extract frame data from buffer
                 if let Some(data) = buffer.datas_mut().first_mut() {
+                    info!("🎬 Got data from buffer");
                     // Get buffer chunk
                     let chunk = data.chunk();
                     let size = chunk.size() as usize;
@@ -555,6 +557,8 @@ fn create_stream_on_thread(
                             // Send frame to async runtime
                             if let Err(e) = frame_tx_for_process.try_send(frame) {
                                 warn!("Failed to send frame: {} (channel full, backpressure)", e);
+                            } else {
+                                info!("🎬 Frame sent to async runtime (size={} bytes)", size);
                             }
                         } else {
                             warn!(
@@ -562,8 +566,14 @@ fn create_stream_on_thread(
                                 offset, size, buffer_data.len()
                             );
                         }
+                    } else {
+                        warn!("Buffer data is None for stream {}", stream_id_for_callbacks);
                     }
+                } else {
+                    warn!("No data in buffer for stream {}", stream_id_for_callbacks);
                 }
+            } else {
+                debug!("No buffer available (dequeue returned None) for stream {}", stream_id_for_callbacks);
             }
         })
         .register()
