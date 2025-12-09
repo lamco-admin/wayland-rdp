@@ -266,6 +266,9 @@ impl ClipboardManager {
                         info!("📥 SelectionTransfer signal: {} (serial {})",
                             transfer_event.mime_type, transfer_event.serial);
 
+                        // Log timing to track delay between signal and write
+                        let transfer_time = std::time::Instant::now();
+
                         // CRITICAL: Check clipboard state before asking RDP for data
                         // Only ask RDP if RDP owns the clipboard (has the data we need)
                         // If Portal owns (Linux copied something), RDP doesn't have the data
@@ -980,6 +983,9 @@ impl ClipboardManager {
 
         // Write data to Portal via SelectionWrite workflow
         let session_guard = session.lock().await;
+        let write_attempt_time = std::time::Instant::now();
+        info!("📝 About to call Portal selection_write: serial={}, data_len={} bytes", serial, portal_data.len());
+
         match portal.write_selection_data(&session_guard, serial, portal_data.clone()).await {
             Ok(()) => {
                 info!("✅ Clipboard data delivered to Portal via SelectionWrite (serial {})", serial);
