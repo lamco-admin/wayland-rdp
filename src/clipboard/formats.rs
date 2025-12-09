@@ -668,18 +668,28 @@ impl FormatConverter {
 
     /// Get format name for format ID
     fn get_format_name(&self, format_id: u32) -> String {
+        // Per MS-RDPECLIP Section 2.2.3.1.1.2 (Long Format Name):
+        // "Not all Clipboard Formats have a name; in such cases, the formatName field
+        // MUST consist of a single Unicode null character."
+        //
+        // Standard Windows predefined formats (< 0xC000) do NOT have names.
+        // Only custom/registered formats (>= 0xC000) have descriptive names.
+        //
+        // Predefined format IDs (CF_TEXT=1, CF_UNICODETEXT=13, etc.) are identified
+        // solely by their numeric ID, not by name.
         match format_id {
-            CF_TEXT => "CF_TEXT".to_string(),
-            CF_BITMAP => "CF_BITMAP".to_string(),
-            CF_UNICODETEXT => "CF_UNICODETEXT".to_string(),
-            CF_DIB => "CF_DIB".to_string(),
+            // Predefined standard formats: NO NAME (empty string becomes single null char in encoding)
+            CF_TEXT | CF_BITMAP | CF_UNICODETEXT | CF_DIB | CF_HDROP => String::new(),
+
+            // Registered custom formats >= 0xC000: MUST have descriptive name
             CF_HTML => "HTML Format".to_string(),
             CF_PNG => "PNG".to_string(),
             CF_JPEG => "JPEG".to_string(),
             CF_RTF => "Rich Text Format".to_string(),
-            CF_HDROP => "CF_HDROP".to_string(),
             CF_GIF => "GIF".to_string(),
-            _ => format!("Format_{}", format_id),
+
+            // Unknown format: no name (will be identified by ID only)
+            _ => String::new(),
         }
     }
 
