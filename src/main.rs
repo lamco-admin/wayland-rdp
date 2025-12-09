@@ -96,7 +96,7 @@ fn init_logging(args: &Args) -> Result<()> {
 
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         // Enable ironrdp_cliprdr logging to debug state machine issues
-        tracing_subscriber::EnvFilter::new(format!("wrd_server={},ironrdp_cliprdr=debug,ironrdp_server=info,warn", log_level))
+        tracing_subscriber::EnvFilter::new(format!("wrd_server={},ironrdp_cliprdr=trace,ironrdp_server=trace,warn", log_level))
     });
 
     // If log file is specified, write to both stdout and file
