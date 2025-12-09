@@ -587,6 +587,14 @@ fn create_stream_on_thread(
 
     debug!("Stream {} connected to node {}", stream_id, node_id);
 
+    // CRITICAL: Activate the stream to start buffer delivery
+    // Without this, the stream enters "Streaming" state but never delivers buffers!
+    stream
+        .set_active(true)
+        .map_err(|e| PipeWireError::StreamCreationFailed(format!("Failed to activate stream {}: {}", stream_id, e)))?;
+
+    info!("Stream {} activated - buffers will now be delivered to process() callback", stream_id);
+
     Ok(ManagedStream {
         id: stream_id,
         stream,
