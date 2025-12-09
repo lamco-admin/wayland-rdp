@@ -437,10 +437,14 @@ fn run_pipewire_main_loop(
         }
 
         // Run one iteration of PipeWire main loop
+        // Use non-blocking iterate (0ms timeout) to avoid frame timing jitter
+        // Then sleep based on expected frame timing for efficiency
         let loop_ref = main_loop.loop_();
-        loop_ref.iterate(Duration::from_millis(10));
+        loop_ref.iterate(Duration::from_millis(0));
 
-        // Process stream callbacks would happen here via PipeWire events
+        // Sleep briefly to avoid busy-looping while still maintaining low latency
+        // At 60 FPS, frames arrive every ~16ms, so 5ms sleep is safe
+        std::thread::sleep(Duration::from_millis(5));
     }
 
     // Cleanup
