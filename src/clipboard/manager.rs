@@ -462,6 +462,7 @@ impl ClipboardManager {
                 });
 
                 info!("✅ SelectionOwnerChanged listener started - monitoring Linux clipboard");
+                info!("   🖥️  Using Portal path (KDE/Sway/wlroots mode) - NOT D-Bus extension");
             }
             Err(e) => {
                 error!("Failed to start SelectionOwnerChanged listener: {:#}", e);
@@ -633,6 +634,7 @@ impl ClipboardManager {
         });
 
         info!("✅ D-Bus clipboard bridge started - GNOME extension integration active");
+        info!("   🔧 Using D-Bus path (GNOME mode) - NOT Portal SelectionOwnerChanged");
         info!("   Linux → Windows clipboard now enabled via extension");
     }
 
