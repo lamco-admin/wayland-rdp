@@ -1119,12 +1119,21 @@ impl ClipboardManager {
         if let Some(sender) = sender_opt {
             use ironrdp_cliprdr::backend::ClipboardMessage;
 
-            if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+            info!("📤 Sending ServerEvent::Clipboard(SendInitiateCopy) with {} formats to event loop", ironrdp_formats.len());
+
+            let send_result = sender.send(ironrdp_server::ServerEvent::Clipboard(
                 ClipboardMessage::SendInitiateCopy(ironrdp_formats)
-            )) {
-                error!("Failed to send FormatList via ServerEvent: {:?}", e);
-            } else {
-                info!("✅ Sent FormatList with {} formats to RDP client (Linux clipboard changed)", rdp_formats.len());
+            ));
+
+            match send_result {
+                Ok(()) => {
+                    info!("✅ ServerEvent::Clipboard sent successfully to IronRDP event loop");
+                    info!("   Event loop should now call cliprdr.initiate_copy() → encode FormatList PDU → send to client");
+                }
+                Err(e) => {
+                    error!("❌ Failed to send ServerEvent::Clipboard: {:?}", e);
+                    error!("   This means the event loop channel is closed/dropped!");
+                }
             }
         } else {
             warn!("ServerEvent sender not available - cannot announce formats to RDP");
