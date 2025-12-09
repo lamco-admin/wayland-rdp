@@ -74,11 +74,62 @@ use std::num::{NonZeroU16, NonZeroUsize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, trace, warn};
+use std::time::Instant;
 
 use crate::pipewire::frame::VideoFrame;
 use crate::pipewire::pw_thread::{PipeWireThreadCommand, PipeWireThreadManager};
 use crate::portal::session::StreamInfo;
 use crate::video::converter::{BitmapConverter, BitmapUpdate, RdpPixelFormat};
+
+/// Frame rate regulator using token bucket algorithm
+///
+/// Ensures smooth video delivery by limiting frame rate to target FPS.
+/// Uses token bucket to allow brief bursts while maintaining average rate.
+struct FrameRateRegulator {
+    /// Target frames per second
+    target_fps: u32,
+    /// Interval between frames
+    frame_interval: std::time::Duration,
+    /// Last frame send time
+    last_frame_time: Instant,
+    /// Token budget for burst handling (allows brief spikes)
+    token_budget: f32,
+    /// Maximum tokens that can accumulate
+    max_tokens: f32,
+}
+
+impl FrameRateRegulator {
+    fn new(target_fps: u32) -> Self {
+        Self {
+            target_fps,
+            frame_interval: std::time::Duration::from_micros(1_000_000 / target_fps as u64),
+            last_frame_time: Instant::now(),
+            token_budget: 1.0,
+            max_tokens: 2.0, // Allow 2-frame burst
+        }
+    }
+
+    /// Check if a frame should be sent based on rate limiting
+    /// Returns true if frame should be sent, false if it should be dropped
+    fn should_send_frame(&mut self) -> bool {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_frame_time);
+
+        // Add tokens based on elapsed time
+        let tokens_earned = elapsed.as_secs_f32() * self.target_fps as f32;
+        self.token_budget = (self.token_budget + tokens_earned).min(self.max_tokens);
+
+        // Check if we have budget to send this frame
+        if self.token_budget >= 1.0 {
+            self.token_budget -= 1.0;
+            self.last_frame_time = now;
+            true
+        } else {
+            // Drop frame - too fast
+            false
+        }
+    }
+}
 
 /// WRD Display Handler
 ///
@@ -227,6 +278,11 @@ impl WrdDisplayHandler {
         tokio::spawn(async move {
             info!("🎬 Starting display update pipeline task");
 
+            // Initialize frame rate regulator for 30 FPS (optimal RDP performance)
+            let mut frame_regulator = FrameRateRegulator::new(30);
+            let mut frames_sent = 0u64;
+            let mut frames_dropped = 0u64;
+
             loop {
                 // Try to get frame from PipeWire thread (non-blocking)
                 let frame = {
@@ -237,13 +293,24 @@ impl WrdDisplayHandler {
                 let frame = match frame {
                     Some(f) => f,
                     None => {
-                        // No frame available, sleep and retry
-                        tokio::time::sleep(tokio::time::Duration::from_millis(16)).await;
+                        // No frame available, sleep briefly and retry
+                        tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
                         continue;
                     }
                 };
 
-                info!("🎬 Got frame {} from PipeWire ({}x{})", frame.frame_id, frame.width, frame.height);
+                // FRAME RATE REGULATION: Check if we should send this frame
+                if !frame_regulator.should_send_frame() {
+                    frames_dropped += 1;
+                    if frames_dropped % 30 == 0 {
+                        debug!("Frame rate regulation: dropped {} frames, sent {}", frames_dropped, frames_sent);
+                    }
+                    continue; // Drop this frame to maintain 30 FPS
+                }
+
+                frames_sent += 1;
+                debug!("🎬 Got frame {} from PipeWire ({}x{}) - sending (total sent: {}, dropped: {})",
+                       frame.frame_id, frame.width, frame.height, frames_sent, frames_dropped);
 
                 // Convert to RDP bitmap
                 let bitmap_update = match handler.convert_to_bitmap(frame).await {

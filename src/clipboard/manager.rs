@@ -259,6 +259,8 @@ impl ClipboardManager {
                 let server_event_sender = Arc::clone(&self.server_event_sender);
                 let converter = Arc::clone(&self.converter);
                 let sync_manager = Arc::clone(&self.sync_manager);
+                let portal_clipboard = Arc::clone(&self.portal_clipboard);
+                let portal_session = Arc::clone(&self.portal_session);
 
                 // Spawn task to handle SelectionTransfer events
                 tokio::spawn(async move {
@@ -323,6 +325,34 @@ impl ClipboardManager {
                                 pending_requests.write().await.remove(&transfer_event.serial);
                             } else {
                                 info!("✅ Sent FormatDataRequest for format {} (Portal serial {})", format_id, transfer_event.serial);
+
+                                // Start timeout task - cancel transfer if RDP doesn't respond in 5 seconds
+                                let serial = transfer_event.serial;
+                                let pending_clone = Arc::clone(&pending_requests);
+                                let portal_clone = Arc::clone(&portal_clipboard);
+                                let session_clone = Arc::clone(&portal_session);
+
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+                                    // Check if request still pending
+                                    if pending_clone.read().await.contains_key(&serial) {
+                                        warn!("⏱️  Clipboard request timeout for serial {} - RDP client didn't respond in 5 seconds", serial);
+
+                                        // Notify Portal of transfer failure
+                                        if let (Some(portal), Some(session)) = (portal_clone.read().await.clone(), session_clone.read().await.clone()) {
+                                            let session_guard = session.lock().await;
+                                            if let Err(e) = portal.portal_clipboard().selection_write_done(&session_guard, serial, false).await {
+                                                error!("Failed to notify Portal of timeout: {}", e);
+                                            } else {
+                                                info!("✅ Notified Portal of transfer timeout (serial {})", serial);
+                                            }
+                                        }
+
+                                        // Remove from pending requests
+                                        pending_clone.write().await.remove(&serial);
+                                    }
+                                });
                             }
                         } else {
                             warn!("ServerEvent sender not available yet - cannot request from RDP");
@@ -530,6 +560,44 @@ impl ClipboardManager {
         let recently_written_hashes = Arc::clone(&self.recently_written_hashes);
         let rate_limit_ms = self.config.rate_limit_ms;
 
+        // Start background hash cleanup task
+        // This removes the expensive cleanup from the clipboard event hot path
+        let hashes_for_cleanup = Arc::clone(&self.recently_written_hashes);
+        tokio::spawn(async move {
+            const LOOP_SUPPRESSION_WINDOW_MS: u128 = 2000;
+            const MAX_HASH_CACHE_SIZE: usize = 50;
+
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+                let mut hashes = hashes_for_cleanup.write().await;
+                let before_size = hashes.len();
+
+                // Clean up expired entries
+                let now = std::time::Instant::now();
+                hashes.retain(|_, written_at| {
+                    now.duration_since(*written_at).as_millis() < LOOP_SUPPRESSION_WINDOW_MS
+                });
+
+                // Enforce size limit
+                while hashes.len() > MAX_HASH_CACHE_SIZE {
+                    if let Some(oldest_key) = hashes.iter()
+                        .min_by_key(|(_, time)| *time)
+                        .map(|(k, _)| k.clone())
+                    {
+                        hashes.remove(&oldest_key);
+                    } else {
+                        break;
+                    }
+                }
+
+                let after_size = hashes.len();
+                if before_size != after_size {
+                    debug!("Hash cleanup: {} → {} entries", before_size, after_size);
+                }
+            }
+        });
+
         // Spawn task to forward D-Bus events to ClipboardManager
         tokio::spawn(async move {
             info!("D-Bus clipboard event forwarder started (rate limit: {}ms)", rate_limit_ms);
@@ -573,26 +641,9 @@ impl ClipboardManager {
 
                 // LOOP SUPPRESSION: Check if this hash matches data we recently wrote to Portal
                 // If so, this is feedback from our own write - don't forward back to RDP!
+                // NOTE: Hash cleanup moved to background task for performance
                 {
-                    let mut hashes = recently_written_hashes.write().await;
-
-                    // Clean up old entries (older than suppression window)
-                    let now = std::time::Instant::now();
-                    hashes.retain(|_, written_at| {
-                        now.duration_since(*written_at).as_millis() < LOOP_SUPPRESSION_WINDOW_MS
-                    });
-
-                    // Also enforce max cache size (evict oldest if too large)
-                    if hashes.len() > MAX_HASH_CACHE_SIZE {
-                        // Find and remove the oldest entry
-                        if let Some(oldest_key) = hashes.iter()
-                            .min_by_key(|(_, time)| *time)
-                            .map(|(k, _)| k.clone())
-                        {
-                            hashes.remove(&oldest_key);
-                            debug!("Evicted oldest hash from cache (size limit: {})", MAX_HASH_CACHE_SIZE);
-                        }
-                    }
+                    let hashes = recently_written_hashes.read().await;
 
                     // Check if this event's hash matches one we recently wrote
                     if hashes.contains_key(&dbus_event.content_hash) {
