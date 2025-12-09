@@ -1,0 +1,36 @@
+--- a/server.rs
++++ b/server.rs
+@@ -540,12 +540,18 @@
+                 }
+                 ServerEvent::Clipboard(c) => {
++                    info!("🔍 ServerEvent::Clipboard received in dispatch loop");
+                     let Some(cliprdr) = self.get_svc_processor::<CliprdrServer>() else {
+                         warn!("No clipboard channel, dropping event");
+                         continue;
+                     };
++                    info!("🔍 Got cliprdr processor, about to match ClipboardMessage variant");
+                     let msgs = match c {
+-                        ClipboardMessage::SendInitiateCopy(formats) => cliprdr.initiate_copy(&formats),
++                        ClipboardMessage::SendInitiateCopy(formats) => {
++                            info!("🔍 SendInitiateCopy: calling cliprdr.initiate_copy with {} formats", formats.len());
++                            let result = cliprdr.initiate_copy(&formats);
++                            info!("🔍 initiate_copy returned: {} messages", result.as_ref().map(|m| m.len()).unwrap_or(0));
++                            result
++                        }
+                         ClipboardMessage::SendFormatData(data) => cliprdr.submit_format_data(data),
+                         ClipboardMessage::SendInitiatePaste(format) => cliprdr.initiate_paste(format),
+                         ClipboardMessage::Error(error) => {
+@@ -554,9 +560,11 @@
+                         }
+                     }
+                     .context("failed to send clipboard event")?;
++                    info!("🔍 Got {} messages from cliprdr method, getting channel_id", msgs.len());
+                     let channel_id = self
+                         .get_channel_id_by_type::<CliprdrServer>()
+                         .ok_or_else(|| anyhow!("SVC channel not found"))?;
++                    info!("🔍 Encoding {} messages for channel {}", msgs.len(), channel_id);
+                     let data = server_encode_svc_messages(msgs.into(), channel_id, user_channel_id)?;
++                    info!("🔍 Encoded {} bytes, writing to stream", data.len());
+                     writer.write_all(&data).await?;
++                    info!("✅ Wrote {} bytes to client stream for clipboard event", data.len());
+                 }
