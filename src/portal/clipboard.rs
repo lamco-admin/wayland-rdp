@@ -304,11 +304,14 @@ impl ClipboardManager {
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncWriteExt;
 
-        debug!("Writing {} bytes to Portal (serial {})", data.len(), serial);
+        info!("📝 Portal write_selection_data called: serial={}, data_len={} bytes", serial, data.len());
 
         // Get write file descriptor from Portal
+        info!("📝 Calling clipboard.selection_write(session, serial={})...", serial);
         let fd = self.clipboard.selection_write(session, serial).await
             .context("Failed to get SelectionWrite fd")?;
+
+        info!("📝 Got FD from selection_write: {:?}", fd);
 
         // Convert zvariant::OwnedFd to tokio File
         let std_fd: std::os::fd::OwnedFd = fd.into();
