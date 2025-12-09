@@ -81,7 +81,7 @@ sha2 = "0.10"
 futures-util = "0.3"  # For Portal signal streams
 
 # System and utilities
-nix = { version = "0.27", features = ["signal", "process"] }
+nix = { version = "0.27", features = ["signal", "process", "mman"] }
 libc = "0.2"
 chrono = "0.4"
 uuid = { version = "1.6", features = ["v4", "serde"] }
