@@ -449,8 +449,8 @@ impl ClipboardManager {
                         info!("📋 Local clipboard change #{}: {} formats: {:?}", change_count, mime_types.len(), mime_types);
 
                         // Send event to announce these formats to RDP clients
-                        // SelectionOwnerChanged from Portal may be echo of our SetSelection (force=false)
-                        if let Err(e) = event_tx.send(ClipboardEvent::PortalFormatsAvailable(mime_types.clone(), false)).await {
+                        // Portal already filtered echoes (session_is_owner=true), so force=true
+                        if let Err(e) = event_tx.send(ClipboardEvent::PortalFormatsAvailable(mime_types.clone(), true)).await {
                             error!("Failed to send PortalFormatsAvailable event: {}", e);
                             break;
                         } else {
