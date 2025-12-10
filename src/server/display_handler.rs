@@ -283,7 +283,15 @@ impl WrdDisplayHandler {
             let mut frames_sent = 0u64;
             let mut frames_dropped = 0u64;
 
+            let mut loop_iterations = 0u64;
+
             loop {
+                loop_iterations += 1;
+                if loop_iterations % 1000 == 0 {
+                    debug!("Display pipeline heartbeat: {} iterations, sent {}, dropped {}",
+                           loop_iterations, frames_sent, frames_dropped);
+                }
+
                 // Try to get frame from PipeWire thread (non-blocking)
                 let frame = {
                     let thread_mgr = handler.pipewire_thread.lock().await;
@@ -291,7 +299,10 @@ impl WrdDisplayHandler {
                 };
 
                 let frame = match frame {
-                    Some(f) => f,
+                    Some(f) => {
+                        debug!("Received frame from PipeWire");
+                        f
+                    }
                     None => {
                         // No frame available, sleep briefly and retry
                         tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
@@ -303,14 +314,16 @@ impl WrdDisplayHandler {
                 if !frame_regulator.should_send_frame() {
                     frames_dropped += 1;
                     if frames_dropped % 30 == 0 {
-                        debug!("Frame rate regulation: dropped {} frames, sent {}", frames_dropped, frames_sent);
+                        info!("Frame rate regulation: dropped {} frames, sent {}", frames_dropped, frames_sent);
                     }
                     continue; // Drop this frame to maintain 30 FPS
                 }
 
                 frames_sent += 1;
-                debug!("🎬 Got frame {} from PipeWire ({}x{}) - sending (total sent: {}, dropped: {})",
-                       frame.frame_id, frame.width, frame.height, frames_sent, frames_dropped);
+                if frames_sent % 30 == 0 || frames_sent < 10 {
+                    info!("🎬 Processing frame {} ({}x{}) - sent: {}, dropped: {}",
+                          frame.frame_id, frame.width, frame.height, frames_sent, frames_dropped);
+                }
 
                 // Convert to RDP bitmap
                 let bitmap_update = match handler.convert_to_bitmap(frame).await {
