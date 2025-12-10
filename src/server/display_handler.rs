@@ -367,7 +367,8 @@ impl WrdDisplayHandler {
                           convert_elapsed, iron_elapsed, convert_start.elapsed());
                 }
 
-                // Send each bitmap rectangle as a separate update
+                // Send to IronRDP directly (current behavior)
+                // TODO: When multiplexer is fully integrated, route through graphics queue
                 for iron_bitmap in iron_updates {
                     let update = DisplayUpdate::Bitmap(iron_bitmap);
 
