@@ -265,7 +265,15 @@ impl WrdInputHandler {
                 let keycode = match kbd_event {
                     crate::input::keyboard::KeyboardEvent::KeyDown { keycode, .. } |
                     crate::input::keyboard::KeyboardEvent::KeyRepeat { keycode, .. } => keycode,
-                    _ => return Err(InputError::InvalidKeyEvent("Unexpected event type".to_string())),
+                    crate::input::keyboard::KeyboardEvent::KeyUp { keycode, .. } => {
+                        // handle_key_down returned KeyUp (shouldn't happen but handle gracefully)
+                        warn!("handle_key_down returned KeyUp for code {} - using keycode anyway", code);
+                        keycode
+                    }
+                    other => {
+                        error!("handle_key_down returned unexpected event: {:?}", other);
+                        return Err(InputError::InvalidKeyEvent(format!("Unexpected event type: {:?}", other)));
+                    }
                 };
 
                 // Log V key injection to Portal
