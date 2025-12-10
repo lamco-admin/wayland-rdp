@@ -148,6 +148,7 @@ pub struct ClipboardManager {
     /// We track hashes of data WE wrote to suppress forwarding it back to RDP.
     /// Maps hash → timestamp of write
     recently_written_hashes: Arc<RwLock<std::collections::HashMap<String, std::time::Instant>>>,
+
 }
 
 impl ClipboardManager {
@@ -264,30 +265,47 @@ impl ClipboardManager {
 
                 // Spawn task to handle SelectionTransfer events
                 tokio::spawn(async move {
-                    // Track last transfer to deduplicate Portal's multiple signals for same paste
-                    let mut last_transfer: Option<(String, u32, std::time::Instant)> = None;
-
                     while let Some(transfer_event) = transfer_rx.recv().await {
                         info!("📥 SelectionTransfer signal: {} (serial {})",
                             transfer_event.mime_type, transfer_event.serial);
 
-                        // DEDUPLICATION: Portal sends multiple SelectionTransfer for single paste
-                        // Skip duplicates within 2-second window
-                        // NOTE: Portal may send "text/plain;charset=utf-8" AND "text/plain" for same paste
-                        // Normalize by stripping charset for comparison
-                        let normalized_mime = transfer_event.mime_type.split(';').next().unwrap_or(&transfer_event.mime_type).to_string();
+                        // CRITICAL FIX: Portal sends 45+ SelectionTransfer signals for ONE paste operation
+                        // (LibreOffice/apps request clipboard in many MIME types: text/plain, UTF8_STRING, etc.)
+                        // We must process ONLY the first request and CANCEL all others.
+                        //
+                        // Per XDG Portal spec: Each SelectionTransfer must be answered with either:
+                        // - SelectionWrite() + data + SelectionWriteDone(true)  [fulfill]
+                        // - SelectionWriteDone(false)                           [cancel]
+                        {
+                            let pending = pending_requests.read().await;
+                            if !pending.is_empty() {
+                                // A paste operation is already in progress
+                                // Cancel this additional request immediately
+                                info!("🔄 Paste already in progress - canceling SelectionTransfer serial {} ({})",
+                                      transfer_event.serial, transfer_event.mime_type);
 
-                        if let Some((last_mime, last_serial, last_time)) = &last_transfer {
-                            let last_normalized = last_mime.split(';').next().unwrap_or(last_mime);
-                            if normalized_mime == last_normalized && last_time.elapsed() < std::time::Duration::from_secs(2) {
-                                info!("🔄 Ignoring duplicate SelectionTransfer: '{}' matches previous '{}' (serial {}, {}ms ago)",
-                                      transfer_event.mime_type, last_mime, last_serial, last_time.elapsed().as_millis());
-                                continue;
+                                drop(pending); // Release read lock
+
+                                // Notify Portal we won't fulfill this request
+                                if let (Some(portal), Some(session)) = (
+                                    portal_clipboard.read().await.clone(),
+                                    portal_session.read().await.clone()
+                                ) {
+                                    let session_guard = session.lock().await;
+                                    if let Err(e) = portal.portal_clipboard()
+                                        .selection_write_done(&session_guard, transfer_event.serial, false).await
+                                    {
+                                        error!("Failed to cancel SelectionTransfer {}: {}", transfer_event.serial, e);
+                                    } else {
+                                        debug!("✅ Canceled SelectionTransfer serial {}", transfer_event.serial);
+                                    }
+                                }
+                                continue; // Skip to next signal
                             }
                         }
 
-                        // Record this transfer
-                        last_transfer = Some((transfer_event.mime_type.clone(), transfer_event.serial, std::time::Instant::now()));
+                        // This is the FIRST request for this paste operation - handle it
+                        info!("✅ First SelectionTransfer for paste operation - will fulfill serial {}", transfer_event.serial);
 
                         // Log timing to track delay between signal and write
                         let transfer_time = std::time::Instant::now();
@@ -1075,14 +1093,43 @@ impl ClipboardManager {
                     info!("🔒 Recorded written hash {} for loop suppression", hash_short);
                 }
 
-                // Clear the pending request
-                pending_portal_requests.write().await.remove(&serial);
+                // Clear ALL pending requests and cancel unfulfilled ones
+                // This is critical: LibreOffice sends 45+ SelectionTransfer for ONE paste
+                // We fulfilled the first one, now cancel all others
+                let mut pending = pending_portal_requests.write().await;
+                let unfulfilled_serials: Vec<u32> = pending.keys()
+                    .filter(|&&s| s != serial)
+                    .copied()
+                    .collect();
+
+                pending.clear(); // Clear ALL (including the one we just fulfilled)
+                drop(pending);
+
+                // Cancel all unfulfilled requests
+                if !unfulfilled_serials.is_empty() {
+                    info!("📋 Canceling {} unfulfilled SelectionTransfer requests", unfulfilled_serials.len());
+
+                    if let (Some(portal), Some(session)) = (portal_clipboard.read().await.clone(), portal_session.read().await.clone()) {
+                        let session_guard = session.lock().await;
+                        for unfulfilled_serial in unfulfilled_serials {
+                            if let Err(e) = portal.portal_clipboard()
+                                .selection_write_done(&session_guard, unfulfilled_serial, false).await
+                            {
+                                error!("Failed to cancel serial {}: {}", unfulfilled_serial, e);
+                            } else {
+                                debug!("✅ Canceled serial {}", unfulfilled_serial);
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => {
                 error!("Failed to write clipboard data to Portal: {:#}", e);
 
-                // Clear pending request even on failure
-                pending_portal_requests.write().await.remove(&serial);
+                // Clear ALL pending requests (paste operation failed)
+                let mut pending = pending_portal_requests.write().await;
+                pending.clear();
+                drop(pending);
 
                 return Err(ClipboardError::PortalError(format!("SelectionWrite failed: {}", e)));
             }
