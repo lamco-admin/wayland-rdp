@@ -704,9 +704,24 @@ fn create_stream_on_thread(
                             (size / config.height as usize) as u32
                         };
 
+                        // Log stride calculation details for first few frames
+                        static LOGGED_FRAMES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                        let frame_count = LOGGED_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                        if frame_count < 5 {
+                            info!("📐 Buffer analysis frame {}:", frame_count);
+                            info!("   Size: {} bytes, Width: {}, Height: {}", size, config.width, config.height);
+                            info!("   Calculated stride: {} bytes/row (16-byte aligned)", calculated_stride);
+                            info!("   Actual stride: {} bytes/row", actual_stride);
+                            info!("   Expected buffer size: {} bytes", expected_size);
+                            info!("   Buffer type: DmaBuf (type {})", data_type.as_raw());
+                        }
+
                         if actual_stride != calculated_stride {
-                            debug!("Stride mismatch: calculated={}, actual={} (size={}, height={})",
-                                   calculated_stride, actual_stride, size, config.height);
+                            warn!("⚠️  Stride mismatch detected:");
+                            warn!("   Calculated: {} bytes/row", calculated_stride);
+                            warn!("   Actual: {} bytes/row (from buffer size)", actual_stride);
+                            warn!("   This may cause horizontal line artifacts!");
                         }
 
                         // Create VideoFrame from extracted pixel data

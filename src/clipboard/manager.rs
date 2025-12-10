@@ -272,11 +272,16 @@ impl ClipboardManager {
                             transfer_event.mime_type, transfer_event.serial);
 
                         // DEDUPLICATION: Portal sends multiple SelectionTransfer for single paste
-                        // Skip duplicates within 2-second window (same MIME type)
+                        // Skip duplicates within 2-second window
+                        // NOTE: Portal may send "text/plain;charset=utf-8" AND "text/plain" for same paste
+                        // Normalize by stripping charset for comparison
+                        let normalized_mime = transfer_event.mime_type.split(';').next().unwrap_or(&transfer_event.mime_type).to_string();
+
                         if let Some((last_mime, last_serial, last_time)) = &last_transfer {
-                            if transfer_event.mime_type == *last_mime && last_time.elapsed() < std::time::Duration::from_secs(2) {
-                                info!("🔄 Ignoring duplicate SelectionTransfer (serial {}, previous serial {} was {}ms ago)",
-                                      transfer_event.serial, last_serial, last_time.elapsed().as_millis());
+                            let last_normalized = last_mime.split(';').next().unwrap_or(last_mime);
+                            if normalized_mime == last_normalized && last_time.elapsed() < std::time::Duration::from_secs(2) {
+                                info!("🔄 Ignoring duplicate SelectionTransfer: '{}' matches previous '{}' (serial {}, {}ms ago)",
+                                      transfer_event.mime_type, last_mime, last_serial, last_time.elapsed().as_millis());
                                 continue;
                             }
                         }
