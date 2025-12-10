@@ -273,13 +273,45 @@ impl ClipboardManager {
                         // (LibreOffice/apps request clipboard in many MIME types: text/plain, UTF8_STRING, etc.)
                         // We must process ONLY the first request and CANCEL all others.
                         //
+                        // ADDITIONAL: Time-based deduplication to prevent multiple pastes within 3 seconds
+                        // (handles case where user/app triggers paste twice rapidly)
+                        //
                         // Per XDG Portal spec: Each SelectionTransfer must be answered with either:
                         // - SelectionWrite() + data + SelectionWriteDone(true)  [fulfill]
                         // - SelectionWriteDone(false)                           [cancel]
+
+                        // Time-based deduplication (3-second window)
+                        use std::sync::atomic::{AtomicU64, Ordering};
+                        static LAST_PASTE_TIME_MS: AtomicU64 = AtomicU64::new(0);
+
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis() as u64;
+                        let last_paste = LAST_PASTE_TIME_MS.load(Ordering::Relaxed);
+
+                        if last_paste > 0 && now_ms - last_paste < 3000 {
+                            info!("🔄 Duplicate paste detected within 3-second window - canceling serial {} (last paste {}ms ago)",
+                                  transfer_event.serial, now_ms - last_paste);
+
+                            if let (Some(portal), Some(session)) = (
+                                portal_clipboard.read().await.clone(),
+                                portal_session.read().await.clone()
+                            ) {
+                                let session_guard = session.lock().await;
+                                if let Err(e) = portal.portal_clipboard()
+                                    .selection_write_done(&session_guard, transfer_event.serial, false).await
+                                {
+                                    error!("Failed to cancel duplicate paste serial {}: {}", transfer_event.serial, e);
+                                }
+                            }
+                            continue;
+                        }
+
                         {
                             let pending = pending_requests.read().await;
                             if !pending.is_empty() {
-                                // A paste operation is already in progress
+                                // A paste operation is already in progress (rapid signals)
                                 // Cancel this additional request immediately
                                 info!("🔄 Paste already in progress - canceling SelectionTransfer serial {} ({})",
                                       transfer_event.serial, transfer_event.mime_type);
@@ -303,6 +335,9 @@ impl ClipboardManager {
                                 continue; // Skip to next signal
                             }
                         }
+
+                        // Update last paste time
+                        LAST_PASTE_TIME_MS.store(now_ms, Ordering::Relaxed);
 
                         // This is the FIRST request for this paste operation - handle it
                         info!("✅ First SelectionTransfer for paste operation - will fulfill serial {}", transfer_event.serial);
@@ -1070,6 +1105,39 @@ impl ClipboardManager {
         } else {
             data
         };
+
+        // CHECK HASH BEFORE WRITING - Prevent duplicate paste of same content
+        {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(&portal_data);
+            let hash = format!("{:x}", hasher.finalize());
+            let hash_short = &hash[..8];
+
+            // Check if we recently wrote this exact content
+            let hashes = recently_written_hashes.read().await;
+            if let Some(last_write_time) = hashes.get(&hash) {
+                if last_write_time.elapsed() < std::time::Duration::from_secs(5) {
+                    info!("🔒 Hash {} seen before within 5 seconds - skipping duplicate paste (serial {})", hash_short, serial);
+
+                    // Cancel this request
+                    let session_guard = session.lock().await;
+                    if let Err(e) = portal.portal_clipboard()
+                        .selection_write_done(&session_guard, serial, false).await
+                    {
+                        error!("Failed to cancel duplicate hash serial {}: {}", serial, e);
+                    }
+                    drop(session_guard);
+
+                    // Clear this pending request
+                    let mut pending = pending_portal_requests.write().await;
+                    pending.remove(&serial);
+
+                    return Ok(());
+                }
+            }
+            drop(hashes);
+        }
 
         // Write data to Portal via SelectionWrite workflow
         let session_guard = session.lock().await;
