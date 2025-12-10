@@ -264,9 +264,25 @@ impl ClipboardManager {
 
                 // Spawn task to handle SelectionTransfer events
                 tokio::spawn(async move {
+                    // Track last transfer to deduplicate Portal's multiple signals for same paste
+                    let mut last_transfer: Option<(String, u32, std::time::Instant)> = None;
+
                     while let Some(transfer_event) = transfer_rx.recv().await {
                         info!("📥 SelectionTransfer signal: {} (serial {})",
                             transfer_event.mime_type, transfer_event.serial);
+
+                        // DEDUPLICATION: Portal sends multiple SelectionTransfer for single paste
+                        // Skip duplicates within 2-second window (same MIME type)
+                        if let Some((last_mime, last_serial, last_time)) = &last_transfer {
+                            if transfer_event.mime_type == *last_mime && last_time.elapsed() < std::time::Duration::from_secs(2) {
+                                info!("🔄 Ignoring duplicate SelectionTransfer (serial {}, previous serial {} was {}ms ago)",
+                                      transfer_event.serial, last_serial, last_time.elapsed().as_millis());
+                                continue;
+                            }
+                        }
+
+                        // Record this transfer
+                        last_transfer = Some((transfer_event.mime_type.clone(), transfer_event.serial, std::time::Instant::now()));
 
                         // Log timing to track delay between signal and write
                         let transfer_time = std::time::Instant::now();

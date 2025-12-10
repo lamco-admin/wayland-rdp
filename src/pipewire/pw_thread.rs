@@ -688,6 +688,27 @@ fn create_stream_on_thread(
                     };
 
                     if let Some(pixel_data) = pixel_data {
+                        // Calculate proper stride with alignment
+                        // CRITICAL: Don't use (size/height) - that's wrong if buffer has padding
+                        // Proper stride = width * bytes_per_pixel, aligned to 16 bytes
+                        let bytes_per_pixel = 4; // BGRA/BGRx = 4 bytes
+                        let calculated_stride = ((config.width * bytes_per_pixel + 15) / 16) * 16;
+
+                        // Verify our calculated stride matches buffer
+                        let expected_size = calculated_stride * config.height;
+                        let actual_stride = if expected_size as usize == size {
+                            calculated_stride
+                        } else {
+                            // Buffer size doesn't match our calculation - compute actual stride
+                            // This handles cases where compositor uses different alignment
+                            (size / config.height as usize) as u32
+                        };
+
+                        if actual_stride != calculated_stride {
+                            debug!("Stride mismatch: calculated={}, actual={} (size={}, height={})",
+                                   calculated_stride, actual_stride, size, config.height);
+                        }
+
                         // Create VideoFrame from extracted pixel data
                         let frame = VideoFrame {
                             frame_id: stream_id_for_callbacks as u64,
@@ -696,7 +717,7 @@ fn create_stream_on_thread(
                             duration: 16_666_667, // ~60fps default
                             width: config.width,
                             height: config.height,
-                            stride: (size / config.height as usize) as u32,
+                            stride: actual_stride,
                             format: config.preferred_format.unwrap_or(PixelFormat::BGRx),
                             monitor_index: 0,
                             data: StdArc::new(pixel_data),
