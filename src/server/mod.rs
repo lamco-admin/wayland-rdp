@@ -60,6 +60,7 @@
 //! - RemoteFX compression for efficient bandwidth usage
 
 mod display_handler;
+mod event_multiplexer;
 mod input_handler;
 
 pub use display_handler::WrdDisplayHandler;
