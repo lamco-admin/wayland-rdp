@@ -79,6 +79,7 @@ use std::time::Instant;
 use crate::pipewire::frame::VideoFrame;
 use crate::pipewire::pw_thread::{PipeWireThreadCommand, PipeWireThreadManager};
 use crate::portal::session::StreamInfo;
+use crate::server::event_multiplexer::GraphicsFrame;
 use crate::video::converter::{BitmapConverter, BitmapUpdate, RdpPixelFormat};
 
 /// Frame rate regulator using token bucket algorithm
@@ -145,11 +146,14 @@ pub struct WrdDisplayHandler {
     /// Bitmap converter for RDP format conversion
     bitmap_converter: Arc<Mutex<BitmapConverter>>,
 
-    /// Display update sender (for creating update streams)
+    /// Display update sender (for creating update streams to IronRDP)
     update_sender: mpsc::Sender<DisplayUpdate>,
 
     /// Display update receiver (wrapped for cloning)
     update_receiver: Arc<Mutex<Option<mpsc::Receiver<DisplayUpdate>>>>,
+
+    /// Graphics queue sender (for priority multiplexing)
+    graphics_tx: Option<mpsc::Sender<GraphicsFrame>>,
 
     /// Monitor configuration from streams
     stream_info: Vec<StreamInfo>,
@@ -248,8 +252,18 @@ impl WrdDisplayHandler {
             bitmap_converter,
             update_sender,
             update_receiver,
+            graphics_tx: None, // Will be set when multiplexer is integrated
             stream_info,
         })
+    }
+
+    /// Set graphics queue sender for priority multiplexing
+    ///
+    /// When set, frames will be routed through the graphics queue instead of
+    /// directly to IronRDP's DisplayUpdate channel.
+    pub fn set_graphics_queue(&mut self, sender: mpsc::Sender<GraphicsFrame>) {
+        info!("Graphics queue sender configured for priority multiplexing");
+        self.graphics_tx = Some(sender);
     }
 
     /// Update the desktop size
@@ -474,6 +488,7 @@ impl Clone for WrdDisplayHandler {
             bitmap_converter: Arc::clone(&self.bitmap_converter),
             update_sender: self.update_sender.clone(),
             update_receiver: Arc::clone(&self.update_receiver),
+            graphics_tx: self.graphics_tx.clone(),
             stream_info: self.stream_info.clone(),
         }
     }
