@@ -587,11 +587,14 @@ fn create_stream_on_thread(
                 _ => {}
             }
         })
-        .param_changed(move |_stream, _user_data, param_id, param| {
+        .param_changed(move |_stream, _user_data, param_id, _param| {
             if param_id == ParamType::Format.as_raw() {
-                debug!("Stream {} format negotiated", stream_id_for_callbacks);
-                // Parse param to get negotiated format
-                // Full implementation would extract format details from param Pod
+                info!("📐 Stream {} format negotiated via param_changed", stream_id_for_callbacks);
+                // Note: Extracting format from param Pod requires parsing SPA POD format
+                // This is complex and requires spa::pod::deserialize
+                // For now, we log that negotiation occurred and rely on config.preferred_format
+                // TODO: Add full SPA POD parsing to extract actual negotiated format
+                info!("   Configured format: {:?}", config.preferred_format.unwrap_or(PixelFormat::BGRx));
             }
         })
         .process(move |stream, _user_data| {
@@ -714,7 +717,17 @@ fn create_stream_on_thread(
                             info!("   Calculated stride: {} bytes/row (16-byte aligned)", calculated_stride);
                             info!("   Actual stride: {} bytes/row", actual_stride);
                             info!("   Expected buffer size: {} bytes", expected_size);
-                            info!("   Buffer type: DmaBuf (type {})", data_type.as_raw());
+                            info!("   Buffer type: {} (1=MemPtr, 2=MemFd, 3=DmaBuf)", data_type.as_raw());
+                            info!("   Pixel format: {:?}", config.preferred_format.unwrap_or(PixelFormat::BGRx));
+
+                            // Log first 32 bytes as hex to verify byte order
+                            if pixel_data.len() >= 32 {
+                                let hex_preview: Vec<String> = pixel_data[0..32]
+                                    .iter()
+                                    .map(|b| format!("{:02x}", b))
+                                    .collect();
+                                info!("   First 32 bytes (hex): {}", hex_preview.join(" "));
+                            }
                         }
 
                         if actual_stride != calculated_stride {

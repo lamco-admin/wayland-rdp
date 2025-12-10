@@ -61,7 +61,9 @@
 
 mod display_handler;
 mod event_multiplexer;
+mod graphics_drain;
 mod input_handler;
+mod multiplexer_loop;
 
 pub use display_handler::WrdDisplayHandler;
 pub use input_handler::WrdInputHandler;
@@ -179,12 +181,34 @@ impl WrdServer {
 
         info!("Initial desktop size: {}x{}", initial_size.0, initial_size.1);
 
-        // Create display handler with PipeWire FD and stream info
+        // Create ALL 4 multiplexer queues (full implementation)
+        let (input_tx, input_rx) = tokio::sync::mpsc::channel(32);      // Priority 1: Input
+        let (control_tx, control_rx) = tokio::sync::mpsc::channel(16);  // Priority 2: Control
+        let (clipboard_tx, clipboard_rx) = tokio::sync::mpsc::channel(8);  // Priority 3: Clipboard
+        let (graphics_tx, graphics_rx) = tokio::sync::mpsc::channel(4);  // Priority 4: Graphics
+        info!("📊 Full multiplexer queues created:");
+        info!("   Input queue: 32 (Priority 1 - never starve)");
+        info!("   Control queue: 16 (Priority 2 - session critical)");
+        info!("   Clipboard queue: 8 (Priority 3 - user operations)");
+        info!("   Graphics queue: 4 (Priority 4 - drop/coalesce)");
+
+        // Create display handler with PipeWire FD, stream info, and graphics queue
         let display_handler = Arc::new(
-            WrdDisplayHandler::new(initial_size.0, initial_size.1, pipewire_fd, stream_info.clone())
-                .await
-                .context("Failed to create display handler")?,
+            WrdDisplayHandler::new(
+                initial_size.0,
+                initial_size.1,
+                pipewire_fd,
+                stream_info.clone(),
+                Some(graphics_tx), // Graphics queue for multiplexer
+            )
+            .await
+            .context("Failed to create display handler")?,
         );
+
+        // Start the graphics drain task
+        let update_sender = display_handler.get_update_sender();
+        let _graphics_drain_handle = graphics_drain::start_graphics_drain_task(graphics_rx, update_sender);
+        info!("Graphics drain task started");
 
         // Start the display pipeline
         Arc::clone(&display_handler).start_pipeline();
@@ -227,12 +251,35 @@ impl WrdServer {
         let input_handler = WrdInputHandler::new(
             portal_manager.remote_desktop().clone(),
             Arc::clone(&shared_session), // Share session with input handler
-            monitors,
+            monitors.clone(),
             primary_stream_id,
+            input_tx.clone(), // Multiplexer input queue sender (for handler callbacks)
+            input_rx, // Multiplexer input queue receiver (for batching task)
         )
         .context("Failed to create input handler")?;
 
         info!("Input handler created successfully - mouse/keyboard enabled");
+
+        // Start full multiplexer drain loop
+        // Note: Input queue is handled by input_handler's batching task
+        // Multiplexer loop handles control/clipboard priorities
+        let portal_for_mux = portal_manager.remote_desktop().clone();
+        let keyboard_handler = input_handler.keyboard_handler.clone();
+        let mouse_handler = input_handler.mouse_handler.clone();
+        let coord_transformer = input_handler.coordinate_transformer.clone();
+        let session_for_mux = Arc::clone(&shared_session);
+
+        tokio::spawn(multiplexer_loop::run_multiplexer_drain_loop(
+            control_rx,
+            clipboard_rx,
+            portal_for_mux,
+            keyboard_handler,
+            mouse_handler,
+            coord_transformer,
+            session_for_mux,
+            primary_stream_id,
+        ));
+        info!("🚀 Full multiplexer drain loop started (control + clipboard priorities)");
 
         // Create TLS acceptor from security config
         info!("Setting up TLS");

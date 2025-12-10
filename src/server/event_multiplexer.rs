@@ -89,12 +89,9 @@ pub enum ClipboardEvent {
     RequestData(u32), // format_id
 }
 
-/// Graphics frame update
+/// Graphics frame update (wraps IronRDP bitmap to avoid double conversion)
 pub struct GraphicsFrame {
-    pub width: u32,
-    pub height: u32,
-    pub data: Vec<u8>,
-    pub stride: u32,
+    pub iron_bitmap: ironrdp_server::BitmapUpdate,
     pub sequence: u64,
 }
 

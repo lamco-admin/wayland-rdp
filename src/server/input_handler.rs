@@ -94,9 +94,9 @@ use crate::portal::RemoteDesktopManager;
 ///
 /// Since IronRDP's trait methods are synchronous but portal operations are async,
 /// we use channels and spawned tasks to bridge the gap.
-/// Input event for batching
+/// Input event for batching/multiplexing
 #[derive(Debug)]
-enum InputEvent {
+pub enum InputEvent {
     Keyboard(IronKeyboardEvent),
     Mouse(IronMouseEvent),
 }
@@ -105,14 +105,14 @@ pub struct WrdInputHandler {
     /// Portal RemoteDesktop manager for input injection
     portal: Arc<RemoteDesktopManager>,
 
-    /// Keyboard event handler
-    keyboard_handler: Arc<Mutex<KeyboardHandler>>,
+    /// Keyboard event handler (pub for multiplexer access)
+    pub keyboard_handler: Arc<Mutex<KeyboardHandler>>,
 
-    /// Mouse event handler
-    mouse_handler: Arc<Mutex<MouseHandler>>,
+    /// Mouse event handler (pub for multiplexer access)
+    pub mouse_handler: Arc<Mutex<MouseHandler>>,
 
-    /// Coordinate transformer for multi-monitor support
-    coordinate_transformer: Arc<Mutex<CoordinateTransformer>>,
+    /// Coordinate transformer for multi-monitor support (pub for multiplexer access)
+    pub coordinate_transformer: Arc<Mutex<CoordinateTransformer>>,
 
     /// Portal session (kept alive for the connection lifetime)
     session: Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
@@ -120,8 +120,8 @@ pub struct WrdInputHandler {
     /// Primary stream node ID for input injection (PipeWire node ID)
     primary_stream_id: u32,
 
-    /// Input event queue sender (for batching)
-    input_tx: mpsc::UnboundedSender<InputEvent>,
+    /// Input event queue sender (for multiplexer - bounded with drop policy)
+    input_tx: mpsc::Sender<InputEvent>,
 }
 
 impl WrdInputHandler {
@@ -145,6 +145,8 @@ impl WrdInputHandler {
         session: Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
         monitors: Vec<MonitorInfo>,
         primary_stream_id: u32,
+        input_tx: mpsc::Sender<InputEvent>,
+        mut input_rx: mpsc::Receiver<InputEvent>,
     ) -> Result<Self, InputError> {
         let keyboard_handler = Arc::new(Mutex::new(KeyboardHandler::new()));
         let mouse_handler = Arc::new(Mutex::new(MouseHandler::new()));
@@ -156,10 +158,8 @@ impl WrdInputHandler {
 
         debug!("Input handler using PipeWire stream node ID: {}", primary_stream_id);
 
-        // Create input event batching channel
-        let (input_tx, mut input_rx) = mpsc::unbounded_channel::<InputEvent>();
-
-        // Start input batching task - processes events in 10ms windows
+        // Start input batching task (10ms windows for responsive typing)
+        // Receives from multiplexer input queue, batches, and sends to Portal
         let portal_clone = Arc::clone(&portal);
         let keyboard_clone = Arc::clone(&keyboard_handler);
         let mouse_clone = Arc::clone(&mouse_handler);
@@ -174,7 +174,6 @@ impl WrdInputHandler {
 
             loop {
                 tokio::select! {
-                    // Receive events from channel
                     Some(event) = input_rx.recv() => {
                         match event {
                             InputEvent::Keyboard(kbd) => keyboard_batch.push(kbd),
@@ -182,7 +181,6 @@ impl WrdInputHandler {
                         }
                     }
 
-                    // Flush timer - process batched events every 10ms
                     _ = tokio::time::sleep_until(tokio::time::Instant::from_std(last_flush + batch_interval)) => {
                         // Process keyboard batch
                         for kbd_event in keyboard_batch.drain(..) {
@@ -216,7 +214,7 @@ impl WrdInputHandler {
             }
         });
 
-        info!("Input batching task started (10ms flush interval)");
+        info!("Input batching task started (REAL task, 10ms flush interval)");
 
         Ok(Self {
             portal,
@@ -522,16 +520,17 @@ impl WrdInputHandler {
 /// trait to async execution.
 impl RdpServerInputHandler for WrdInputHandler {
     fn keyboard(&mut self, event: IronKeyboardEvent) {
-        // Send event to batching queue (processed every 10ms)
-        // This eliminates per-keystroke task spawning and reduces latency
-        if let Err(e) = self.input_tx.send(InputEvent::Keyboard(event)) {
+        // Send to batching queue (processed every 10ms)
+        // Use try_send (non-blocking, bounded queue)
+        if let Err(e) = self.input_tx.try_send(InputEvent::Keyboard(event)) {
             error!("Failed to queue keyboard event for batching: {}", e);
         }
     }
 
     fn mouse(&mut self, event: IronMouseEvent) {
-        // Send event to batching queue (processed every 10ms)
-        if let Err(e) = self.input_tx.send(InputEvent::Mouse(event)) {
+        // Send to batching queue (processed every 10ms)
+        // Use try_send (non-blocking, bounded queue)
+        if let Err(e) = self.input_tx.try_send(InputEvent::Mouse(event)) {
             error!("Failed to queue mouse event for batching: {}", e);
         }
     }

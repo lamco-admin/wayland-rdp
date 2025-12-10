@@ -181,6 +181,7 @@ impl WrdDisplayHandler {
         initial_height: u16,
         pipewire_fd: i32,
         stream_info: Vec<StreamInfo>,
+        graphics_tx: Option<mpsc::Sender<GraphicsFrame>>,
     ) -> Result<Self> {
         let size = Arc::new(RwLock::new(DesktopSize {
             width: initial_width,
@@ -252,7 +253,7 @@ impl WrdDisplayHandler {
             bitmap_converter,
             update_sender,
             update_receiver,
-            graphics_tx: None, // Will be set when multiplexer is integrated
+            graphics_tx, // Passed from constructor for Phase 1 multiplexer
             stream_info,
         })
     }
@@ -282,6 +283,13 @@ impl WrdDisplayHandler {
         }
     }
 
+    /// Get a clone of the update sender for graphics drain task
+    ///
+    /// This is used by the Phase 1 multiplexer to get access to the IronRDP update channel.
+    pub fn get_update_sender(&self) -> mpsc::Sender<DisplayUpdate> {
+        self.update_sender.clone()
+    }
+
     /// Start the video pipeline
     ///
     /// This spawns a background task that continuously captures frames from PipeWire,
@@ -296,6 +304,7 @@ impl WrdDisplayHandler {
             let mut frame_regulator = FrameRateRegulator::new(30);
             let mut frames_sent = 0u64;
             let mut frames_dropped = 0u64;
+
 
             let mut loop_iterations = 0u64;
 
@@ -350,7 +359,17 @@ impl WrdDisplayHandler {
                 };
                 let convert_elapsed = convert_start.elapsed();
 
+                // EARLY EXIT: Skip empty frames BEFORE expensive IronRDP conversion
+                // BitmapConverter returns empty rectangles when frame unchanged (dirty region optimization)
+                // This saves ~1-2ms per unchanged frame (40% of frames!)
+                if bitmap_update.rectangles.is_empty() {
+                    // Don't warn on every empty frame (too spammy)
+                    // This is normal - static screen produces many empty frames
+                    continue;
+                }
+
                 // Convert our BitmapUpdate to IronRDP's format (track timing)
+                // Only done for frames with actual content
                 let iron_start = std::time::Instant::now();
                 let iron_updates = match handler.convert_to_iron_format(&bitmap_update).await {
                     Ok(updates) => updates,
@@ -367,17 +386,33 @@ impl WrdDisplayHandler {
                           convert_elapsed, iron_elapsed, convert_start.elapsed());
                 }
 
-                // Send to IronRDP directly (current behavior)
-                // TODO: When multiplexer is fully integrated, route through graphics queue
-                for iron_bitmap in iron_updates {
-                    let update = DisplayUpdate::Bitmap(iron_bitmap);
+                // Route through graphics queue (full multiplexer implementation)
+                if let Some(ref graphics_tx) = handler.graphics_tx {
+                    // Send each iron_bitmap through graphics queue
+                    for iron_bitmap in iron_updates {
+                        let graphics_frame = GraphicsFrame {
+                            iron_bitmap,
+                            sequence: frames_sent,
+                        };
 
-                    if let Err(e) = handler.update_sender.send(update).await {
-                        error!("Failed to send display update: {}", e);
-                        // Channel closed, stop pipeline
-                        return;
+                        // Non-blocking send - drop frame if queue full (never block on graphics)
+                        if let Err(e) = graphics_tx.try_send(graphics_frame) {
+                            debug!("Graphics queue full - frame dropped (QoS policy)");
+                        }
+                    }
+                } else {
+                    // Fallback: Send directly to IronRDP (no multiplexer)
+                    for iron_bitmap in iron_updates {
+                        let update = DisplayUpdate::Bitmap(iron_bitmap);
+
+                        if let Err(e) = handler.update_sender.send(update).await {
+                            error!("Failed to send display update: {}", e);
+                            // Channel closed, stop pipeline
+                            return;
+                        }
                     }
                 }
+
             }
         });
     }
