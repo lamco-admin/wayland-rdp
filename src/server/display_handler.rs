@@ -325,7 +325,8 @@ impl WrdDisplayHandler {
                           frame.frame_id, frame.width, frame.height, frames_sent, frames_dropped);
                 }
 
-                // Convert to RDP bitmap
+                // Convert to RDP bitmap (track timing)
+                let convert_start = std::time::Instant::now();
                 let bitmap_update = match handler.convert_to_bitmap(frame).await {
                     Ok(bitmap) => bitmap,
                     Err(e) => {
@@ -333,8 +334,10 @@ impl WrdDisplayHandler {
                         continue;
                     }
                 };
+                let convert_elapsed = convert_start.elapsed();
 
-                // Convert our BitmapUpdate to IronRDP's format
+                // Convert our BitmapUpdate to IronRDP's format (track timing)
+                let iron_start = std::time::Instant::now();
                 let iron_updates = match handler.convert_to_iron_format(&bitmap_update).await {
                     Ok(updates) => updates,
                     Err(e) => {
@@ -342,6 +345,13 @@ impl WrdDisplayHandler {
                         continue;
                     }
                 };
+                let iron_elapsed = iron_start.elapsed();
+
+                // Log conversion performance every 30 frames
+                if frames_sent % 30 == 0 {
+                    info!("🎨 Frame conversion timing: bitmap={:?}, iron={:?}, total={:?}",
+                          convert_elapsed, iron_elapsed, convert_start.elapsed());
+                }
 
                 // Send each bitmap rectangle as a separate update
                 for iron_bitmap in iron_updates {
