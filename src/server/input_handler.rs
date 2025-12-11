@@ -78,7 +78,7 @@ use ironrdp_server::{KeyboardEvent as IronKeyboardEvent, MouseEvent as IronMouse
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::input::coordinates::{CoordinateTransformer, MonitorInfo};
 use crate::input::error::InputError;
@@ -176,13 +176,22 @@ impl WrdInputHandler {
                 tokio::select! {
                     Some(event) = input_rx.recv() => {
                         match event {
-                            InputEvent::Keyboard(kbd) => keyboard_batch.push(kbd),
-                            InputEvent::Mouse(mouse) => mouse_batch.push(mouse),
+                            InputEvent::Keyboard(kbd) => {
+                                trace!("📥 Input queue: received keyboard event");
+                                keyboard_batch.push(kbd);
+                            }
+                            InputEvent::Mouse(mouse) => {
+                                trace!("📥 Input queue: received mouse event");
+                                mouse_batch.push(mouse);
+                            }
                         }
                     }
 
                     _ = tokio::time::sleep_until(tokio::time::Instant::from_std(last_flush + batch_interval)) => {
                         // Process keyboard batch
+                        if !keyboard_batch.is_empty() {
+                            trace!("🔄 Input batching: flushing {} keyboard events", keyboard_batch.len());
+                        }
                         for kbd_event in keyboard_batch.drain(..) {
                             if let Err(e) = Self::handle_keyboard_event_impl(
                                 &portal_clone,
@@ -195,6 +204,9 @@ impl WrdInputHandler {
                         }
 
                         // Process mouse batch
+                        if !mouse_batch.is_empty() {
+                            trace!("🔄 Input batching: flushing {} mouse events", mouse_batch.len());
+                        }
                         for mouse_event in mouse_batch.drain(..) {
                             if let Err(e) = Self::handle_mouse_event_impl(
                                 &portal_clone,
@@ -522,6 +534,7 @@ impl RdpServerInputHandler for WrdInputHandler {
     fn keyboard(&mut self, event: IronKeyboardEvent) {
         // Send to batching queue (processed every 10ms)
         // Use try_send (non-blocking, bounded queue)
+        trace!("⌨️  Input multiplexer: routing keyboard to queue");
         if let Err(e) = self.input_tx.try_send(InputEvent::Keyboard(event)) {
             error!("Failed to queue keyboard event for batching: {}", e);
         }
@@ -530,6 +543,7 @@ impl RdpServerInputHandler for WrdInputHandler {
     fn mouse(&mut self, event: IronMouseEvent) {
         // Send to batching queue (processed every 10ms)
         // Use try_send (non-blocking, bounded queue)
+        trace!("🖱️  Input multiplexer: routing mouse to queue");
         if let Err(e) = self.input_tx.try_send(InputEvent::Mouse(event)) {
             error!("Failed to queue mouse event for batching: {}", e);
         }

@@ -263,26 +263,9 @@ impl CliprdrBackend for WrdCliprdrBackend {
     }
 
     fn on_ready(&mut self) {
-        info!("Clipboard channel ready - cliprdr state machine transitioned to Ready");
-
-        // Send empty FormatList to exercise the state machine and verify bidirectional flow
-        // This ensures IronRDP's cliprdr is in the correct state to later send real FormatLists
-        info!("📋 Proactively sending empty FormatList to verify server→client path works");
-        if let Some(ref sender) = self.event_sender {
-            use ironrdp_cliprdr::backend::ClipboardMessage;
-            if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
-                ClipboardMessage::SendInitiateCopy(Vec::new())
-            )) {
-                error!("Failed to send initial empty FormatList: {:?}", e);
-            } else {
-                info!("✅ Sent initial empty FormatList to test server→client clipboard flow");
-            }
-        } else {
-            warn!("ServerEvent sender not available in on_ready - cannot test clipboard flow");
-        }
-
-        // Request initial format list from client
-        self.on_request_format_list();
+        info!("Clipboard channel ready - state machine transitioned to Ready");
+        // Channel is ready for bidirectional clipboard operations
+        // No action needed - we'll announce formats when Linux clipboard changes
     }
 
     fn on_request_format_list(&mut self) {

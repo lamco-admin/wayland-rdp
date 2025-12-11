@@ -34,7 +34,7 @@ use bytes::Bytes;
 use ironrdp_server::{BitmapUpdate as IronBitmapUpdate, DisplayUpdate, PixelFormat as IronPixelFormat};
 use std::num::{NonZeroU16, NonZeroUsize};
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::server::event_multiplexer::GraphicsFrame;
 
@@ -75,6 +75,7 @@ pub fn start_graphics_drain_task(
             let mut latest_frame = match graphics_rx.recv().await {
                 Some(frame) => {
                     stats.frames_received += 1;
+                    trace!("📥 Graphics queue: received frame {}", stats.frames_received);
                     frame
                 }
                 None => {
@@ -93,6 +94,7 @@ pub fn start_graphics_drain_task(
 
             if coalesced_count > 0 {
                 stats.frames_coalesced += coalesced_count as u64;
+                trace!("🔄 Graphics queue: coalesced {} frames (keeping latest)", coalesced_count);
                 if stats.frames_coalesced % 100 == 0 {
                     info!("📊 Graphics coalescing: {} frames coalesced total", stats.frames_coalesced);
                 }

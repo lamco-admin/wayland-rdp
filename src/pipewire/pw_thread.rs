@@ -358,6 +358,14 @@ fn run_pipewire_main_loop(
     // Stream storage (all streams live on this thread)
     let mut streams: HashMap<u32, ManagedStream> = HashMap::new();
 
+    // DMA-BUF mmap cache: Maps FD -> (ptr, size) to avoid remapping every frame
+    // Using Rc<RefCell<>> because we're on a single thread (PipeWire doesn't support multi-threading)
+    // This cache is shared with all stream process() callbacks
+    use std::rc::Rc;
+    use std::cell::RefCell;
+    let dmabuf_mmap_cache: Rc<RefCell<HashMap<RawFd, (*mut libc::c_void, usize)>>> =
+        Rc::new(RefCell::new(HashMap::new()));
+
     // Main event loop
     'main: loop {
         // Process all pending commands
@@ -377,6 +385,7 @@ fn run_pipewire_main_loop(
                         &core,
                         config,
                         frame_tx.clone(),
+                        Rc::clone(&dmabuf_mmap_cache),
                     );
 
                     match result {
@@ -399,10 +408,24 @@ fn run_pipewire_main_loop(
                     debug!("Destroying stream {}", stream_id);
 
                     if let Some(managed_stream) = streams.remove(&stream_id) {
+                        // Clean up any DMA-BUF mmaps associated with this stream
+                        // Note: We don't know which FDs belong to which stream, so we clear all
+                        // This is safe because streams are destroyed infrequently
+                        let mut cache = dmabuf_mmap_cache.borrow_mut();
+                        for (fd, (ptr, size)) in cache.drain() {
+                            unsafe {
+                                use nix::sys::mman::munmap;
+                                if let Err(e) = munmap(ptr, size) {
+                                    warn!("Failed to munmap DMA-BUF FD={}: {}", fd, e);
+                                }
+                            }
+                            debug!("Unmapped DMA-BUF cache entry for FD={}", fd);
+                        }
+
                         // Stream is automatically dropped here
                         drop(managed_stream);
                         let _ = response_tx.send(Ok(()));
-                        info!("Stream {} destroyed", stream_id);
+                        info!("Stream {} destroyed, DMA-BUF cache cleared", stream_id);
                     } else {
                         let _ = response_tx.send(Err(PipeWireError::StreamNotFound(stream_id)));
                     }
@@ -544,6 +567,7 @@ fn create_stream_on_thread(
     core: &Core,
     config: StreamConfig,
     frame_tx: std_mpsc::SyncSender<VideoFrame>,
+    dmabuf_cache: std::rc::Rc<std::cell::RefCell<HashMap<RawFd, (*mut libc::c_void, usize)>>>,
 ) -> Result<ManagedStream> {
     let stream_name = format!("wrd-capture-{}", stream_id);
     let node_target = node_id.to_string();
@@ -562,9 +586,10 @@ fn create_stream_on_thread(
         .map_err(|e| PipeWireError::StreamCreationFailed(format!("Stream::new failed: {}", e)))?;
 
     // Set up comprehensive stream event listeners
-    // Clone frame_tx for use in closures
+    // Clone frame_tx and dmabuf_cache for use in closures
     let frame_tx_for_process = frame_tx.clone();
     let stream_id_for_callbacks = stream_id;
+    let dmabuf_cache_for_process = std::rc::Rc::clone(&dmabuf_cache);
 
     let _listener = stream
         .add_local_listener::<()>()
@@ -661,19 +686,74 @@ fn create_stream_on_thread(
                             }
                         }
 
-                        // DmaBuf: GPU memory buffer - must mmap via FD
+                        // DmaBuf: GPU memory buffer - use cached mmap to avoid syscalls
                         libspa::buffer::DataType::DmaBuf => {
                             if fd >= 0 {
-                                info!("🎬 DMA-BUF buffer: mmapping {} bytes from FD={}", size, fd);
-                                match mmap_fd_buffer(fd, size, offset) {
-                                    Ok(data) => {
-                                        info!("🎬 DMA-BUF mmap successful, extracted {} bytes", data.len());
-                                        Some(data)
+                                // Check cache first
+                                let mut cache = dmabuf_cache_for_process.borrow_mut();
+
+                                // Check cache first, or create new mapping
+                                let mapped_ptr_opt = if let Some(&(ptr, _sz)) = cache.get(&fd) {
+                                    // Use cached mapping (no syscall!)
+                                    debug!("🎬 DMA-BUF FD={}: using cached mmap", fd);
+                                    Some(ptr)
+                                } else {
+                                    // First time seeing this FD - mmap it
+                                    info!("🎬 DMA-BUF buffer: mmapping {} bytes from FD={} (first time)", size, fd);
+
+                                    use nix::sys::mman::{mmap, MapFlags, ProtFlags};
+                                    use std::os::fd::BorrowedFd;
+
+                                    // Calculate page-aligned mapping
+                                    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+                                    let map_offset = (offset / page_size) * page_size;
+                                    let map_size = size + (offset - map_offset);
+
+                                    match NonZeroUsize::new(map_size) {
+                                        Some(nz_size) => {
+                                            unsafe {
+                                                let borrowed_fd = BorrowedFd::borrow_raw(fd);
+                                                match mmap(
+                                                    None,
+                                                    nz_size,
+                                                    ProtFlags::PROT_READ,
+                                                    MapFlags::MAP_SHARED,
+                                                    Some(borrowed_fd),
+                                                    map_offset as i64,
+                                                ) {
+                                                    Ok(ptr) => {
+                                                        cache.insert(fd, (ptr, map_size));
+                                                        info!("🎬 DMA-BUF mmap cached for FD={}", fd);
+                                                        Some(ptr)
+                                                    }
+                                                    Err(e) => {
+                                                        warn!("Failed to mmap DMA-BUF FD={}: {}", fd, e);
+                                                        None
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        None => {
+                                            warn!("Invalid map size for DMA-BUF FD={}", fd);
+                                            None
+                                        }
                                     }
-                                    Err(e) => {
-                                        warn!("Failed to mmap DMA-BUF: {}", e);
-                                        None
-                                    }
+                                };
+
+                                // Copy data from mapping (cached or fresh)
+                                if let Some(mapped_ptr) = mapped_ptr_opt {
+                                    let result = unsafe {
+                                        let src_ptr = (mapped_ptr as *const u8).add(offset);
+                                        let mut vec = Vec::with_capacity(size);
+                                        std::ptr::copy_nonoverlapping(src_ptr, vec.as_mut_ptr(), size);
+                                        vec.set_len(size);
+                                        vec
+                                    };
+                                    debug!("🎬 DMA-BUF: extracted {} bytes from mapping", result.len());
+                                    Some(result)
+                                } else {
+                                    warn!("Failed to get DMA-BUF mapping for FD={}", fd);
+                                    None
                                 }
                             } else {
                                 warn!("DMA-BUF buffer but no valid FD (fd={})", fd);
