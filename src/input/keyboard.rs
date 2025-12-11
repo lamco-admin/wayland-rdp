@@ -124,9 +124,14 @@ impl KeyboardHandler {
             if let Some(last_time) = self.last_key_times.get(&keycode) {
                 let elapsed = timestamp.duration_since(*last_time).as_millis() as u64;
                 if elapsed < self.repeat_rate_ms {
-                    // Too soon for repeat, ignore
-                    debug!("Ignoring key repeat (too soon): keycode {}", keycode);
-                    return self.handle_key_up(scancode, extended, e1_prefix);
+                    // Too soon for repeat, return repeat event to maintain state
+                    debug!("Key repeat within rate limit: keycode {}", keycode);
+                    return Ok(KeyboardEvent::KeyRepeat {
+                        keycode,
+                        scancode,
+                        modifiers: self.modifiers,
+                        timestamp,
+                    });
                 }
             }
         }

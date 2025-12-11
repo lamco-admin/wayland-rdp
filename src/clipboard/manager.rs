@@ -131,9 +131,10 @@ pub struct ClipboardManager {
     /// Portal session (shared with input handler, wrapped for concurrent access and dynamic update)
     portal_session: Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
 
-    /// Pending Portal SelectionTransfer requests (serial → mime_type)
-    /// Used to correlate SelectionTransfer signals with RDP FormatDataResponse
-    pending_portal_requests: Arc<RwLock<std::collections::HashMap<u32, String>>>,
+    /// Pending Portal SelectionTransfer requests (FIFO queue)
+    /// Each entry: (serial, mime_type, request_time)
+    /// Used to correlate SelectionTransfer signals with RDP FormatDataResponse in order
+    pending_portal_requests: Arc<RwLock<std::collections::VecDeque<(u32, String, std::time::Instant)>>>,
 
     /// Server event sender for sending clipboard requests to IronRDP
     /// Set by WrdCliprdrFactory after ServerEvent sender is available
@@ -183,7 +184,7 @@ impl ClipboardManager {
             shutdown_tx: None,
             portal_clipboard: Arc::new(RwLock::new(None)), // Will be set after Portal initialization
             portal_session: Arc::new(RwLock::new(None)), // Will be set with portal_clipboard
-            pending_portal_requests: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            pending_portal_requests: Arc::new(RwLock::new(std::collections::VecDeque::new())),
             server_event_sender: Arc::new(RwLock::new(None)), // Set by WrdCliprdrFactory
             dbus_bridge: Arc::new(RwLock::new(None)), // Will be set by start_dbus_clipboard_listener
             recently_written_hashes: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -280,7 +281,11 @@ impl ClipboardManager {
                         // - SelectionWrite() + data + SelectionWriteDone(true)  [fulfill]
                         // - SelectionWriteDone(false)                           [cancel]
 
-                        // Time-based deduplication (3-second window)
+                        // Time-based deduplication (100ms window for compositor rapid-fire bugs ONLY)
+                        // CRITICAL: Paste is user-driven (Ctrl+V), not polling
+                        // Each SelectionTransfer = user pressed Ctrl+V = distinct user intent
+                        // We must honor EVERY user action, even if pasting same content repeatedly
+                        // Only block technical glitches: compositor sending duplicate signals < 100ms apart
                         use std::sync::atomic::{AtomicU64, Ordering};
                         static LAST_PASTE_TIME_MS: AtomicU64 = AtomicU64::new(0);
 
@@ -290,9 +295,9 @@ impl ClipboardManager {
                             .as_millis() as u64;
                         let last_paste = LAST_PASTE_TIME_MS.load(Ordering::Relaxed);
 
-                        if last_paste > 0 && now_ms - last_paste < 3000 {
-                            info!("🔄 Duplicate paste detected within 3-second window - canceling serial {} (last paste {}ms ago)",
-                                  transfer_event.serial, now_ms - last_paste);
+                        if last_paste > 0 && now_ms - last_paste < 100 {
+                            debug!("🔄 Rapid duplicate signal ({}ms apart) - likely compositor bug - canceling serial {}",
+                                  now_ms - last_paste, transfer_event.serial);
 
                             if let (Some(portal), Some(session)) = (
                                 portal_clipboard.read().await.clone(),
@@ -302,39 +307,15 @@ impl ClipboardManager {
                                 if let Err(e) = portal.portal_clipboard()
                                     .selection_write_done(&session_guard, transfer_event.serial, false).await
                                 {
-                                    error!("Failed to cancel duplicate paste serial {}: {}", transfer_event.serial, e);
+                                    error!("Failed to cancel duplicate signal serial {}: {}", transfer_event.serial, e);
                                 }
                             }
                             continue;
                         }
 
-                        {
-                            let pending = pending_requests.read().await;
-                            if !pending.is_empty() {
-                                // A paste operation is already in progress (rapid signals)
-                                // Cancel this additional request immediately
-                                info!("🔄 Paste already in progress - canceling SelectionTransfer serial {} ({})",
-                                      transfer_event.serial, transfer_event.mime_type);
-
-                                drop(pending); // Release read lock
-
-                                // Notify Portal we won't fulfill this request
-                                if let (Some(portal), Some(session)) = (
-                                    portal_clipboard.read().await.clone(),
-                                    portal_session.read().await.clone()
-                                ) {
-                                    let session_guard = session.lock().await;
-                                    if let Err(e) = portal.portal_clipboard()
-                                        .selection_write_done(&session_guard, transfer_event.serial, false).await
-                                    {
-                                        error!("Failed to cancel SelectionTransfer {}: {}", transfer_event.serial, e);
-                                    } else {
-                                        debug!("✅ Canceled SelectionTransfer serial {}", transfer_event.serial);
-                                    }
-                                }
-                                continue; // Skip to next signal
-                            }
-                        }
+                        // Check if we're already processing another paste request
+                        // REMOVED: Don't block based on pending requests
+                        // Each Ctrl+V is distinct user intent, queue them in order
 
                         // Update last paste time
                         LAST_PASTE_TIME_MS.store(now_ms, Ordering::Relaxed);
@@ -369,19 +350,23 @@ impl ClipboardManager {
                             }
                         }
 
-                        // Track this transfer request (serial → mime_type)
-                        // When RDP FormatDataResponse arrives, we'll use this serial to write to Portal
-                        pending_requests.write().await.insert(
-                            transfer_event.serial,
-                            transfer_event.mime_type.clone()
-                        );
+                        // Already added to pending queue above (before sending request)
+                        // This ensures FIFO ordering: first request gets first response
 
                         // Convert MIME type → RDP format ID
                         let format_id = match converter.mime_to_format_id(&transfer_event.mime_type) {
                             Ok(id) => id,
                             Err(e) => {
                                 error!("Failed to convert MIME {} to format ID: {}", transfer_event.mime_type, e);
-                                pending_requests.write().await.remove(&transfer_event.serial);
+                                // Don't add to queue since we can't fulfill this
+                                if let (Some(portal), Some(session)) = (
+                                    portal_clipboard.read().await.clone(),
+                                    portal_session.read().await.clone()
+                                ) {
+                                    let session_guard = session.lock().await;
+                                    let _ = portal.portal_clipboard()
+                                        .selection_write_done(&session_guard, transfer_event.serial, false).await;
+                                }
                                 continue;
                             }
                         };
@@ -392,11 +377,18 @@ impl ClipboardManager {
                             use ironrdp_cliprdr::backend::ClipboardMessage;
                             use ironrdp_cliprdr::pdu::ClipboardFormatId;
 
+                            // Add to pending queue BEFORE sending request
+                            pending_requests.write().await.push_back((
+                                transfer_event.serial,
+                                transfer_event.mime_type.clone(),
+                                std::time::Instant::now(),
+                            ));
+
                             if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
                                 ClipboardMessage::SendInitiatePaste(ClipboardFormatId(format_id))
                             )) {
                                 error!("Failed to send FormatDataRequest via ServerEvent: {:?}", e);
-                                pending_requests.write().await.remove(&transfer_event.serial);
+                                pending_requests.write().await.retain(|(s, _, _)| *s != transfer_event.serial);
                             } else {
                                 info!("✅ Sent FormatDataRequest for format {} (Portal serial {})", format_id, transfer_event.serial);
 
@@ -409,8 +401,8 @@ impl ClipboardManager {
                                 tokio::spawn(async move {
                                     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
-                                    // Check if request still pending
-                                    if pending_clone.read().await.contains_key(&serial) {
+                                    // Check if request still pending in FIFO queue
+                                    if pending_clone.read().await.iter().any(|(s, _, _)| *s == serial) {
                                         warn!("⏱️  Clipboard request timeout for serial {} - RDP client didn't respond in 5 seconds", serial);
 
                                         // Notify Portal of transfer failure
@@ -424,13 +416,13 @@ impl ClipboardManager {
                                         }
 
                                         // Remove from pending requests
-                                        pending_clone.write().await.remove(&serial);
+                                        pending_clone.write().await.retain(|(s, _, _)| *s != serial);
                                     }
                                 });
                             }
                         } else {
                             warn!("ServerEvent sender not available yet - cannot request from RDP");
-                            pending_requests.write().await.remove(&transfer_event.serial);
+                            pending_requests.write().await.retain(|(s, _, _)| *s != transfer_event.serial);
                         }
                     }
 
@@ -819,7 +811,7 @@ impl ClipboardManager {
         _config: &ClipboardConfig,
         portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
         portal_session: &Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
-        pending_portal_requests: &Arc<RwLock<std::collections::HashMap<u32, String>>>,
+        pending_portal_requests: &Arc<RwLock<std::collections::VecDeque<(u32, String, std::time::Instant)>>>,
         server_event_sender: &Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
         recently_written_hashes: &Arc<RwLock<std::collections::HashMap<String, std::time::Instant>>>,
     ) -> Result<()> {
@@ -1041,7 +1033,7 @@ impl ClipboardManager {
         _transfer_engine: &TransferEngine,
         portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
         portal_session: &Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
-        pending_portal_requests: &Arc<RwLock<std::collections::HashMap<u32, String>>>,
+        pending_portal_requests: &Arc<RwLock<std::collections::VecDeque<(u32, String, std::time::Instant)>>>,
         recently_written_hashes: &Arc<RwLock<std::collections::HashMap<String, std::time::Instant>>>,
     ) -> Result<()> {
         debug!("RDP data response received: {} bytes", data.len());
@@ -1065,21 +1057,23 @@ impl ClipboardManager {
             }
         };
 
-        // Get the pending Portal request (should have exactly one for the latest SelectionTransfer)
-        // In a more sophisticated implementation, we'd track format_id → serial mapping
-        // For now, we take the first/only pending request
-        let pending = pending_portal_requests.read().await;
-        let serial_opt = pending.iter().next().map(|(serial, _mime)| *serial);
+        // CRITICAL: Get FIRST pending request (FIFO order)
+        // IronRDP doesn't correlate requests/responses, so we use FIFO queue
+        // First FormatDataRequest gets first FormatDataResponse (proper server implementation)
+        let mut pending = pending_portal_requests.write().await;
+        let request_opt = pending.pop_front(); // Take oldest request
         drop(pending);
 
-        let serial = match serial_opt {
-            Some(s) => s,
+        let (serial, _mime, _request_time) = match request_opt {
+            Some(req) => req,
             None => {
-                warn!("No pending Portal request - data arrived without SelectionTransfer");
-                warn!("This can happen if user hasn't pasted yet - data will be discarded");
+                warn!("No pending Portal request - FormatDataResponse arrived with no matching request");
+                warn!("This can happen if requests timed out - data will be discarded");
                 return Ok(());
             }
         };
+
+        info!("📥 Matched FormatDataResponse to Portal serial {} (FIFO queue)", serial);
 
         // Convert RDP data to Portal format (UTF-16LE → UTF-8 for text)
         let portal_data = if data.len() >= 2 {
@@ -1106,38 +1100,10 @@ impl ClipboardManager {
             data
         };
 
-        // CHECK HASH BEFORE WRITING - Prevent duplicate paste of same content
-        {
-            use sha2::{Digest, Sha256};
-            let mut hasher = Sha256::new();
-            hasher.update(&portal_data);
-            let hash = format!("{:x}", hasher.finalize());
-            let hash_short = &hash[..8];
-
-            // Check if we recently wrote this exact content
-            let hashes = recently_written_hashes.read().await;
-            if let Some(last_write_time) = hashes.get(&hash) {
-                if last_write_time.elapsed() < std::time::Duration::from_secs(5) {
-                    info!("🔒 Hash {} seen before within 5 seconds - skipping duplicate paste (serial {})", hash_short, serial);
-
-                    // Cancel this request
-                    let session_guard = session.lock().await;
-                    if let Err(e) = portal.portal_clipboard()
-                        .selection_write_done(&session_guard, serial, false).await
-                    {
-                        error!("Failed to cancel duplicate hash serial {}: {}", serial, e);
-                    }
-                    drop(session_guard);
-
-                    // Clear this pending request
-                    let mut pending = pending_portal_requests.write().await;
-                    pending.remove(&serial);
-
-                    return Ok(());
-                }
-            }
-            drop(hashes);
-        }
+        // REMOVED: Hash-based deduplication
+        // Paste is user-driven (Ctrl+V) - each action is distinct user intent
+        // User may legitimately want to paste same content multiple times
+        // Hash dedup was blocking valid user actions and breaking clipboard UX
 
         // Write data to Portal via SelectionWrite workflow
         let session_guard = session.lock().await;
@@ -1148,44 +1114,30 @@ impl ClipboardManager {
             Ok(()) => {
                 info!("✅ Clipboard data delivered to Portal via SelectionWrite (serial {})", serial);
 
-                // Record hash of data we just wrote (for loop suppression)
-                // D-Bus bridge will see this as a clipboard change and we need to suppress it
-                {
-                    use sha2::{Digest, Sha256};
-                    let mut hasher = Sha256::new();
-                    hasher.update(&portal_data);
-                    let hash = format!("{:x}", hasher.finalize());
-                    let hash_short = &hash[..8];
-
-                    recently_written_hashes.write().await.insert(hash.clone(), std::time::Instant::now());
-                    info!("🔒 Recorded written hash {} for loop suppression", hash_short);
-                }
-
-                // Clear ALL pending requests and cancel unfulfilled ones
-                // This is critical: LibreOffice sends 45+ SelectionTransfer for ONE paste
-                // We fulfilled the first one, now cancel all others
+                // CRITICAL: Cancel ALL other pending requests
+                // LibreOffice/apps send 16-45 SelectionTransfer signals for ONE Ctrl+V (multiple MIME types)
+                // We fulfilled the first one, must cancel all others or get 16+ pastes
                 let mut pending = pending_portal_requests.write().await;
-                let unfulfilled_serials: Vec<u32> = pending.keys()
-                    .filter(|&&s| s != serial)
-                    .copied()
+                let unfulfilled: Vec<u32> = pending.iter()
+                    .filter(|(s, _, _)| *s != serial)
+                    .map(|(s, _, _)| *s)
                     .collect();
-
                 pending.clear(); // Clear ALL (including the one we just fulfilled)
                 drop(pending);
 
-                // Cancel all unfulfilled requests
-                if !unfulfilled_serials.is_empty() {
-                    info!("📋 Canceling {} unfulfilled SelectionTransfer requests", unfulfilled_serials.len());
+                // Cancel unfulfilled Portal requests
+                if !unfulfilled.is_empty() {
+                    info!("📋 Canceling {} unfulfilled SelectionTransfer requests (LibreOffice multi-MIME)", unfulfilled.len());
 
                     if let (Some(portal), Some(session)) = (portal_clipboard.read().await.clone(), portal_session.read().await.clone()) {
                         let session_guard = session.lock().await;
-                        for unfulfilled_serial in unfulfilled_serials {
+                        for unfulfilled_serial in unfulfilled {
                             if let Err(e) = portal.portal_clipboard()
                                 .selection_write_done(&session_guard, unfulfilled_serial, false).await
                             {
                                 error!("Failed to cancel serial {}: {}", unfulfilled_serial, e);
                             } else {
-                                debug!("✅ Canceled serial {}", unfulfilled_serial);
+                                debug!("✅ Canceled unfulfilled serial {}", unfulfilled_serial);
                             }
                         }
                     }
@@ -1194,9 +1146,9 @@ impl ClipboardManager {
             Err(e) => {
                 error!("Failed to write clipboard data to Portal: {:#}", e);
 
-                // Clear ALL pending requests (paste operation failed)
+                // Remove THIS failed request from pending queue
                 let mut pending = pending_portal_requests.write().await;
-                pending.clear();
+                pending.retain(|(s, _, _)| *s != serial);
                 drop(pending);
 
                 return Err(ClipboardError::PortalError(format!("SelectionWrite failed: {}", e)));
@@ -1214,7 +1166,7 @@ impl ClipboardManager {
     async fn handle_rdp_data_error(
         portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
         portal_session: &Arc<RwLock<Option<Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>>>>,
-        pending_portal_requests: &Arc<RwLock<std::collections::HashMap<u32, String>>>,
+        pending_portal_requests: &Arc<RwLock<std::collections::VecDeque<(u32, String, std::time::Instant)>>>,
     ) -> Result<()> {
         warn!("RDP data error - canceling pending Portal transfer");
 
@@ -1233,7 +1185,7 @@ impl ClipboardManager {
 
         // Get all pending requests and notify Portal of failure for each
         let pending = pending_portal_requests.read().await;
-        let serials: Vec<u32> = pending.keys().cloned().collect();
+        let serials: Vec<u32> = pending.iter().map(|(s, _, _)| *s).collect();
         drop(pending);
 
         for serial in serials {
@@ -1251,8 +1203,8 @@ impl ClipboardManager {
                 }
             }
 
-            // Remove from pending
-            pending_portal_requests.write().await.remove(&serial);
+            // Remove from pending FIFO queue
+            pending_portal_requests.write().await.retain(|(s, _, _)| *s != serial);
         }
 
         Ok(())

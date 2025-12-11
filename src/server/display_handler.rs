@@ -116,6 +116,10 @@ impl FrameRateRegulator {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_frame_time);
 
+        // CRITICAL: Update last_frame_time on EVERY call, not just when sending
+        // Otherwise dropped frames cause time to accumulate and earn too many tokens
+        self.last_frame_time = now;
+
         // Add tokens based on elapsed time
         let tokens_earned = elapsed.as_secs_f32() * self.target_fps as f32;
         self.token_budget = (self.token_budget + tokens_earned).min(self.max_tokens);
@@ -123,7 +127,6 @@ impl FrameRateRegulator {
         // Check if we have budget to send this frame
         if self.token_budget >= 1.0 {
             self.token_budget -= 1.0;
-            self.last_frame_time = now;
             true
         } else {
             // Drop frame - too fast
@@ -363,8 +366,12 @@ impl WrdDisplayHandler {
                 // BitmapConverter returns empty rectangles when frame unchanged (dirty region optimization)
                 // This saves ~1-2ms per unchanged frame (40% of frames!)
                 if bitmap_update.rectangles.is_empty() {
-                    // Don't warn on every empty frame (too spammy)
-                    // This is normal - static screen produces many empty frames
+                    // Log periodically to verify optimization is working
+                    static EMPTY_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                    let count = EMPTY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if count % 100 == 0 && count > 0 {
+                        debug!("Empty frame optimization: {} unchanged frames skipped", count);
+                    }
                     continue;
                 }
 
@@ -396,8 +403,9 @@ impl WrdDisplayHandler {
                         };
 
                         // Non-blocking send - drop frame if queue full (never block on graphics)
+                        trace!("📤 Graphics multiplexer: sending frame {} to queue", frames_sent);
                         if let Err(e) = graphics_tx.try_send(graphics_frame) {
-                            debug!("Graphics queue full - frame dropped (QoS policy)");
+                            warn!("Graphics queue full - frame dropped (QoS policy)");
                         }
                     }
                 } else {

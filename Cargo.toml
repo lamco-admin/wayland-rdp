@@ -42,16 +42,16 @@ bytes = "1.5"
 rustls-pemfile = "2.2" # Updated to match rustls 0.23
 
 # RDP protocol
-# Using PR #1028's approach with git dependencies to resolve sspi/picky issues
-# Using glamberson/IronRDP fork with SSPI fixes + server clipboard fix
-# Branch: update-sspi-with-clipboard-fix = allan2's sspi fixes + our server clipboard patch
+# Using glamberson/IronRDP fork - Clean fork from Devolutions/IronRDP master
+# Branch: from-devolutions-clean = Devolutions master + ONLY server clipboard patch
 # Clipboard fix: Servers bypass client state machine to announce clipboard ownership (CB_FORMAT_LIST)
-ironrdp = { git = "https://github.com/glamberson/IronRDP", branch = "update-sspi-with-clipboard-fix", default-features = false, features = ["server"] }
-ironrdp-server = { git = "https://github.com/glamberson/IronRDP", branch = "update-sspi-with-clipboard-fix" }
-ironrdp-pdu = { git = "https://github.com/glamberson/IronRDP", branch = "update-sspi-with-clipboard-fix" }
-ironrdp-displaycontrol = { git = "https://github.com/glamberson/IronRDP", branch = "update-sspi-with-clipboard-fix" }
-ironrdp-cliprdr = { git = "https://github.com/glamberson/IronRDP", branch = "update-sspi-with-clipboard-fix" }
-ironrdp-core = { git = "https://github.com/glamberson/IronRDP", branch = "update-sspi-with-clipboard-fix" }
+ironrdp = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean", default-features = false, features = ["server"] }
+ironrdp-server = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean" }
+ironrdp-tokio = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean", features = ["reqwest"] }
+ironrdp-pdu = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean" }
+ironrdp-displaycontrol = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean" }
+ironrdp-cliprdr = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean" }
+ironrdp-core = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean" }
 async-trait = "0.1"
 
 # Video encoding
