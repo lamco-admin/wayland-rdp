@@ -31,7 +31,9 @@
 
 use anyhow::Result;
 use bytes::Bytes;
-use ironrdp_server::{BitmapUpdate as IronBitmapUpdate, DisplayUpdate, PixelFormat as IronPixelFormat};
+use ironrdp_server::{
+    BitmapUpdate as IronBitmapUpdate, DisplayUpdate, PixelFormat as IronPixelFormat,
+};
 use std::num::{NonZeroU16, NonZeroUsize};
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace, warn};
@@ -75,7 +77,10 @@ pub fn start_graphics_drain_task(
             let mut latest_frame = match graphics_rx.recv().await {
                 Some(frame) => {
                     stats.frames_received += 1;
-                    trace!("📥 Graphics queue: received frame {}", stats.frames_received);
+                    trace!(
+                        "📥 Graphics queue: received frame {}",
+                        stats.frames_received
+                    );
                     frame
                 }
                 None => {
@@ -94,9 +99,15 @@ pub fn start_graphics_drain_task(
 
             if coalesced_count > 0 {
                 stats.frames_coalesced += coalesced_count as u64;
-                trace!("🔄 Graphics queue: coalesced {} frames (keeping latest)", coalesced_count);
+                trace!(
+                    "🔄 Graphics queue: coalesced {} frames (keeping latest)",
+                    coalesced_count
+                );
                 if stats.frames_coalesced % 100 == 0 {
-                    info!("📊 Graphics coalescing: {} frames coalesced total", stats.frames_coalesced);
+                    info!(
+                        "📊 Graphics coalescing: {} frames coalesced total",
+                        stats.frames_coalesced
+                    );
                 }
             }
 
@@ -111,13 +122,17 @@ pub fn start_graphics_drain_task(
 
             stats.frames_sent += 1;
             if stats.frames_sent % 100 == 0 {
-                debug!("📊 Graphics drain stats: received={}, coalesced={}, sent={}",
-                       stats.frames_received, stats.frames_coalesced, stats.frames_sent);
+                debug!(
+                    "📊 Graphics drain stats: received={}, coalesced={}, sent={}",
+                    stats.frames_received, stats.frames_coalesced, stats.frames_sent
+                );
             }
         }
 
-        info!("📊 Graphics drain task final stats: received={}, coalesced={}, sent={}",
-              stats.frames_received, stats.frames_coalesced, stats.frames_sent);
+        info!(
+            "📊 Graphics drain task final stats: received={}, coalesced={}, sent={}",
+            stats.frames_received, stats.frames_coalesced, stats.frames_sent
+        );
     })
 }
 

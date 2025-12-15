@@ -101,7 +101,6 @@ pub struct WrdServer {
     /// Display handler (kept for lifecycle management)
     #[allow(dead_code)]
     display_handler: Arc<WrdDisplayHandler>,
-
     // Portal session handle removed - session is consumed by input_handler
     // TODO: Refactor to allow session sharing between input and clipboard
 }
@@ -179,13 +178,16 @@ impl WrdServer {
             .map(|s| (s.size.0 as u16, s.size.1 as u16))
             .unwrap_or((1920, 1080)); // Default fallback
 
-        info!("Initial desktop size: {}x{}", initial_size.0, initial_size.1);
+        info!(
+            "Initial desktop size: {}x{}",
+            initial_size.0, initial_size.1
+        );
 
         // Create ALL 4 multiplexer queues (full implementation)
-        let (input_tx, input_rx) = tokio::sync::mpsc::channel(32);      // Priority 1: Input
-        let (control_tx, control_rx) = tokio::sync::mpsc::channel(16);  // Priority 2: Control
-        let (clipboard_tx, clipboard_rx) = tokio::sync::mpsc::channel(8);  // Priority 3: Clipboard
-        let (graphics_tx, graphics_rx) = tokio::sync::mpsc::channel(4);  // Priority 4: Graphics
+        let (input_tx, input_rx) = tokio::sync::mpsc::channel(32); // Priority 1: Input
+        let (control_tx, control_rx) = tokio::sync::mpsc::channel(16); // Priority 2: Control
+        let (clipboard_tx, clipboard_rx) = tokio::sync::mpsc::channel(8); // Priority 3: Clipboard
+        let (graphics_tx, graphics_rx) = tokio::sync::mpsc::channel(4); // Priority 4: Graphics
         info!("📊 Full multiplexer queues created:");
         info!("   Input queue: 32 (Priority 1 - never starve)");
         info!("   Control queue: 16 (Priority 2 - session critical)");
@@ -207,7 +209,8 @@ impl WrdServer {
 
         // Start the graphics drain task
         let update_sender = display_handler.get_update_sender();
-        let _graphics_drain_handle = graphics_drain::start_graphics_drain_task(graphics_rx, update_sender);
+        let _graphics_drain_handle =
+            graphics_drain::start_graphics_drain_task(graphics_rx, update_sender);
         info!("Graphics drain task started");
 
         // Start the display pipeline
@@ -227,7 +230,7 @@ impl WrdServer {
                 y: stream.position.1 as i32,
                 width: stream.size.0 as u32,
                 height: stream.size.1 as u32,
-                dpi: 96.0, // Default DPI
+                dpi: 96.0,         // Default DPI
                 scale_factor: 1.0, // Default scale, Portal doesn't provide this
                 stream_x: stream.position.0 as u32,
                 stream_y: stream.position.1 as u32,
@@ -238,12 +241,12 @@ impl WrdServer {
             .collect();
 
         // Get the primary stream node ID for Portal input injection
-        let primary_stream_id = stream_info
-            .first()
-            .map(|s| s.node_id)
-            .unwrap_or(0);
+        let primary_stream_id = stream_info.first().map(|s| s.node_id).unwrap_or(0);
 
-        info!("Using PipeWire stream node ID {} for input injection", primary_stream_id);
+        info!(
+            "Using PipeWire stream node ID {} for input injection",
+            primary_stream_id
+        );
 
         // Wrap session in Arc<Mutex> for sharing between input and clipboard
         let shared_session = Arc::new(Mutex::new(session_handle.session));
@@ -254,7 +257,7 @@ impl WrdServer {
             monitors.clone(),
             primary_stream_id,
             input_tx.clone(), // Multiplexer input queue sender (for handler callbacks)
-            input_rx, // Multiplexer input queue receiver (for batching task)
+            input_rx,         // Multiplexer input queue receiver (for batching task)
         )
         .context("Failed to create input handler")?;
 
@@ -283,13 +286,12 @@ impl WrdServer {
 
         // Create TLS acceptor from security config
         info!("Setting up TLS");
-        let tls_config = TlsConfig::from_files(
-            &config.security.cert_path,
-            &config.security.key_path,
-        )
-        .context("Failed to load TLS certificates")?;
+        let tls_config =
+            TlsConfig::from_files(&config.security.cert_path, &config.security.key_path)
+                .context("Failed to load TLS certificates")?;
 
-        let tls_acceptor = ironrdp_server::tokio_rustls::TlsAcceptor::from(tls_config.server_config());
+        let tls_acceptor =
+            ironrdp_server::tokio_rustls::TlsAcceptor::from(tls_config.server_config());
 
         // Configure RemoteFX codec (IronRDP's built-in codec)
         // Server uses "remotefx" string to enable RemoteFX codec (default enabled)
@@ -305,10 +307,12 @@ impl WrdServer {
 
         // Set Portal clipboard reference if available (async operation)
         if let Some(portal_clip) = portal_clipboard {
-            clipboard_mgr.set_portal_clipboard(
-                portal_clip,
-                Arc::clone(&shared_session), // Share session with clipboard
-            ).await;
+            clipboard_mgr
+                .set_portal_clipboard(
+                    portal_clip,
+                    Arc::clone(&shared_session), // Share session with clipboard
+                )
+                .await;
             // Note: Success message logged inside set_portal_clipboard
         }
 
@@ -376,13 +380,13 @@ impl WrdServer {
         };
 
         self.rdp_server.set_credentials(credentials);
-        info!("Authentication configured: {}", self.config.security.auth_method);
+        info!(
+            "Authentication configured: {}",
+            self.config.security.auth_method
+        );
 
         // Run the IronRDP server
-        let result = self.rdp_server
-            .run()
-            .await
-            .context("RDP server error");
+        let result = self.rdp_server.run().await.context("RDP server error");
 
         if let Err(ref e) = result {
             error!("Server stopped with error: {:#}", e);

@@ -185,7 +185,10 @@ impl EventMultiplexer {
         if self.graphics_tx.try_send(frame).is_err() {
             self.graphics_dropped += 1;
             if self.graphics_dropped % 100 == 0 {
-                debug!("Graphics queue full - dropped {} frames total", self.graphics_dropped);
+                debug!(
+                    "Graphics queue full - dropped {} frames total",
+                    self.graphics_dropped
+                );
             }
         }
     }
@@ -228,7 +231,10 @@ impl EventMultiplexer {
         if coalesce_count > 0 {
             self.graphics_coalesced += coalesce_count as u64;
             if self.graphics_coalesced % 100 == 0 {
-                debug!("Graphics coalescing: {} frames coalesced total", self.graphics_coalesced);
+                debug!(
+                    "Graphics coalescing: {} frames coalesced total",
+                    self.graphics_coalesced
+                );
             }
         }
 

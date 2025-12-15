@@ -646,7 +646,9 @@ mod tests {
         let mime_types = vec!["text/plain".to_string(), "text/html".to_string()];
 
         // Should allow first format announcement (force=true simulates D-Bus)
-        assert!(manager.handle_portal_formats(mime_types.clone(), true).unwrap());
+        assert!(manager
+            .handle_portal_formats(mime_types.clone(), true)
+            .unwrap());
 
         // Verify state
         match manager.state() {

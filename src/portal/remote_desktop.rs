@@ -150,7 +150,10 @@ impl RemoteDesktopManager {
         x: f64,
         y: f64,
     ) -> Result<()> {
-        debug!("Injecting pointer motion: stream={}, x={:.2}, y={:.2}", stream, x, y);
+        debug!(
+            "Injecting pointer motion: stream={}, x={:.2}, y={:.2}",
+            stream, x, y
+        );
         let proxy = RemoteDesktop::new().await?;
         proxy
             .notify_pointer_motion_absolute(session, stream, x, y)
@@ -167,14 +170,19 @@ impl RemoteDesktopManager {
         button: i32,
         pressed: bool,
     ) -> Result<()> {
-        debug!("Injecting pointer button: button={}, pressed={}", button, pressed);
+        debug!(
+            "Injecting pointer button: button={}, pressed={}",
+            button, pressed
+        );
         let proxy = RemoteDesktop::new().await?;
         let state = if pressed {
             KeyState::Pressed
         } else {
             KeyState::Released
         };
-        proxy.notify_pointer_button(session, button, state).await
+        proxy
+            .notify_pointer_button(session, button, state)
+            .await
             .context("Portal notify_pointer_button failed")?;
         debug!("Pointer button injected successfully");
         Ok(())
@@ -201,7 +209,10 @@ impl RemoteDesktopManager {
         keycode: i32,
         pressed: bool,
     ) -> Result<()> {
-        debug!("Injecting keyboard: keycode={}, pressed={}", keycode, pressed);
+        debug!(
+            "Injecting keyboard: keycode={}, pressed={}",
+            keycode, pressed
+        );
         let proxy = RemoteDesktop::new().await?;
         let state = if pressed {
             KeyState::Pressed

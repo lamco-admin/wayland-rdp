@@ -4,7 +4,6 @@
 //! This module extends the pipewire-rs crate with additional functionality
 //! needed for DMA-BUF handling and advanced features.
 
-
 // Re-export from pipewire crate
 pub use pipewire::{
     context::Context,

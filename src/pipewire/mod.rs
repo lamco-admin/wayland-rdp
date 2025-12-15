@@ -126,12 +126,12 @@ pub mod thread_comm;
 pub use buffer::{BufferManager, BufferType, ManagedBuffer, SharedBufferManager};
 pub use connection::{ConnectionState, PipeWireConnection, PipeWireEvent};
 pub use coordinator::{MonitorEvent, MonitorInfo, MultiStreamConfig, MultiStreamCoordinator};
-pub use pw_thread::{PipeWireThreadCommand, PipeWireThreadManager};
 pub use error::{
     classify_error, ErrorContext, ErrorType, PipeWireError, RecoveryAction, Result, RetryConfig,
 };
 pub use format::{convert_format, PixelFormat};
 pub use frame::{FrameCallback, FrameFlags, FrameStats, VideoFrame};
+pub use pw_thread::{PipeWireThreadCommand, PipeWireThreadManager};
 pub use stream::{NegotiatedFormat, PipeWireStream, PwStreamState, StreamConfig, StreamMetrics};
 
 // Re-export commonly used FFI types
@@ -186,7 +186,7 @@ pub fn is_dmabuf_supported() -> bool {
     #[cfg(target_os = "linux")]
     {
         // Try to open DRM device
-        
+
         use std::path::Path;
 
         let drm_paths = ["/dev/dri/card0", "/dev/dri/card1", "/dev/dri/renderD128"];

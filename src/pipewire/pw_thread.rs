@@ -105,12 +105,12 @@
 //! - **Thread overhead:** ~0.5ms per iteration
 //! - **Supports:** Up to 144Hz refresh rates
 
-use pipewire::{context::Context, core::Core, main_loop::MainLoop};
 use pipewire::properties::Properties;
 use pipewire::spa::param::ParamType;
 use pipewire::spa::pod::Pod;
 use pipewire::spa::utils::{Direction, Fraction, Rectangle};
 use pipewire::stream::{Stream, StreamFlags, StreamState};
+use pipewire::{context::Context, core::Core, main_loop::MainLoop};
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::os::fd::{FromRawFd, OwnedFd, RawFd};
@@ -226,7 +226,9 @@ impl PipeWireThreadManager {
             .spawn(move || {
                 run_pipewire_main_loop(fd, command_rx, frame_tx, shutdown_rx);
             })
-            .map_err(|e| PipeWireError::InitializationFailed(format!("Thread spawn failed: {}", e)))?;
+            .map_err(|e| {
+                PipeWireError::InitializationFailed(format!("Thread spawn failed: {}", e))
+            })?;
 
         info!("PipeWire thread started successfully");
 
@@ -248,9 +250,9 @@ impl PipeWireThreadManager {
     ///
     /// Returns error if command cannot be sent (thread died)
     pub fn send_command(&self, command: PipeWireThreadCommand) -> Result<()> {
-        self.command_tx
-            .send(command)
-            .map_err(|_| PipeWireError::ThreadCommunicationFailed("Command send failed".to_string()))
+        self.command_tx.send(command).map_err(|_| {
+            PipeWireError::ThreadCommunicationFailed("Command send failed".to_string())
+        })
     }
 
     /// Try to receive a frame (non-blocking)
@@ -361,8 +363,8 @@ fn run_pipewire_main_loop(
     // DMA-BUF mmap cache: Maps FD -> (ptr, size) to avoid remapping every frame
     // Using Rc<RefCell<>> because we're on a single thread (PipeWire doesn't support multi-threading)
     // This cache is shared with all stream process() callbacks
-    use std::rc::Rc;
     use std::cell::RefCell;
+    use std::rc::Rc;
     let dmabuf_mmap_cache: Rc<RefCell<HashMap<RawFd, (*mut libc::c_void, usize)>>> =
         Rc::new(RefCell::new(HashMap::new()));
 
@@ -507,7 +509,7 @@ fn run_pipewire_main_loop(
 /// - No pointer aliasing (we copy, not reference)
 fn mmap_fd_buffer(fd: std::os::fd::RawFd, size: usize, offset: usize) -> Result<Vec<u8>> {
     use nix::sys::mman::{mmap, munmap, MapFlags, ProtFlags};
-    use std::os::fd::{BorrowedFd};
+    use std::os::fd::BorrowedFd;
 
     // Calculate page-aligned mapping
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
@@ -515,8 +517,10 @@ fn mmap_fd_buffer(fd: std::os::fd::RawFd, size: usize, offset: usize) -> Result<
     let map_size = size + (offset - map_offset);
     let data_offset_in_map = offset - map_offset;
 
-    info!("mmap: fd={}, size={}, offset={}, page_size={}, map_offset={}, map_size={}",
-          fd, size, offset, page_size, map_offset, map_size);
+    info!(
+        "mmap: fd={}, size={}, offset={}, page_size={}, map_offset={}, map_size={}",
+        fd, size, offset, page_size, map_offset, map_size
+    );
 
     // Memory map the file descriptor
     // SAFETY:
@@ -527,8 +531,9 @@ fn mmap_fd_buffer(fd: std::os::fd::RawFd, size: usize, offset: usize) -> Result<
         let borrowed_fd = BorrowedFd::borrow_raw(fd);
         mmap(
             None,
-            NonZeroUsize::new(map_size)
-                .ok_or_else(|| PipeWireError::FrameExtractionFailed("Invalid map size".to_string()))?,
+            NonZeroUsize::new(map_size).ok_or_else(|| {
+                PipeWireError::FrameExtractionFailed("Invalid map size".to_string())
+            })?,
             ProtFlags::PROT_READ,
             MapFlags::MAP_SHARED,
             Some(borrowed_fd),
@@ -873,11 +878,17 @@ fn create_stream_on_thread(
 
     // CRITICAL: Activate the stream to start buffer delivery
     // Without this, the stream enters "Streaming" state but never delivers buffers!
-    stream
-        .set_active(true)
-        .map_err(|e| PipeWireError::StreamCreationFailed(format!("Failed to activate stream {}: {}", stream_id, e)))?;
+    stream.set_active(true).map_err(|e| {
+        PipeWireError::StreamCreationFailed(format!(
+            "Failed to activate stream {}: {}",
+            stream_id, e
+        ))
+    })?;
 
-    info!("Stream {} activated - buffers will now be delivered to process() callback", stream_id);
+    info!(
+        "Stream {} activated - buffers will now be delivered to process() callback",
+        stream_id
+    );
 
     Ok(ManagedStream {
         id: stream_id,
