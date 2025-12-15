@@ -96,7 +96,10 @@ fn init_logging(args: &Args) -> Result<()> {
 
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         // Enable ironrdp_cliprdr logging to debug state machine issues
-        tracing_subscriber::EnvFilter::new(format!("wrd_server={},ironrdp_cliprdr=trace,ironrdp_server=trace,warn", log_level))
+        tracing_subscriber::EnvFilter::new(format!(
+            "wrd_server={},ironrdp_cliprdr=trace,ironrdp_server=trace,warn",
+            log_level
+        ))
     });
 
     // If log file is specified, write to both stdout and file
@@ -107,22 +110,48 @@ fn init_logging(args: &Args) -> Result<()> {
             "json" => {
                 tracing_subscriber::registry()
                     .with(env_filter)
-                    .with(tracing_subscriber::fmt::layer().json().with_writer(std::io::stdout))
-                    .with(tracing_subscriber::fmt::layer().json().with_writer(file).with_ansi(false))
+                    .with(
+                        tracing_subscriber::fmt::layer()
+                            .json()
+                            .with_writer(std::io::stdout),
+                    )
+                    .with(
+                        tracing_subscriber::fmt::layer()
+                            .json()
+                            .with_writer(file)
+                            .with_ansi(false),
+                    )
                     .init();
             }
             "compact" => {
                 tracing_subscriber::registry()
                     .with(env_filter)
-                    .with(tracing_subscriber::fmt::layer().compact().with_writer(std::io::stdout))
-                    .with(tracing_subscriber::fmt::layer().compact().with_writer(file).with_ansi(false))
+                    .with(
+                        tracing_subscriber::fmt::layer()
+                            .compact()
+                            .with_writer(std::io::stdout),
+                    )
+                    .with(
+                        tracing_subscriber::fmt::layer()
+                            .compact()
+                            .with_writer(file)
+                            .with_ansi(false),
+                    )
                     .init();
             }
             _ => {
                 tracing_subscriber::registry()
                     .with(env_filter)
-                    .with(tracing_subscriber::fmt::layer().pretty().with_writer(std::io::stdout))
-                    .with(tracing_subscriber::fmt::layer().with_writer(file).with_ansi(false))
+                    .with(
+                        tracing_subscriber::fmt::layer()
+                            .pretty()
+                            .with_writer(std::io::stdout),
+                    )
+                    .with(
+                        tracing_subscriber::fmt::layer()
+                            .with_writer(file)
+                            .with_ansi(false),
+                    )
                     .init();
             }
         }

@@ -25,9 +25,9 @@
 
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+use zbus::fdo::DBusProxy;
 use zbus::names::BusName;
 use zbus::{Connection, MatchRule, MessageStream};
-use zbus::fdo::DBusProxy;
 
 /// D-Bus service details for the GNOME clipboard extension
 const DBUS_SERVICE: &str = "org.wayland_rdp.Clipboard";
@@ -69,7 +69,10 @@ impl DbusBridge {
                 // Check if the service name is registered
                 match DBusProxy::new(&conn).await {
                     Ok(dbus_proxy) => {
-                        match dbus_proxy.name_has_owner(DBUS_SERVICE.try_into().unwrap()).await {
+                        match dbus_proxy
+                            .name_has_owner(DBUS_SERVICE.try_into().unwrap())
+                            .await
+                        {
                             Ok(has_owner) => {
                                 self.extension_available = has_owner;
                                 if has_owner {
@@ -103,7 +106,9 @@ impl DbusBridge {
 
     /// Test connection to the extension by calling Ping
     pub async fn ping(&self) -> Result<String, zbus::Error> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| zbus::Error::Failure("Not connected".into()))?;
 
         let bus_name: BusName = DBUS_SERVICE.try_into().unwrap();
@@ -126,7 +131,9 @@ impl DbusBridge {
 
     /// Get extension version
     pub async fn get_version(&self) -> Result<String, zbus::Error> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| zbus::Error::Failure("Not connected".into()))?;
 
         let bus_name: BusName = DBUS_SERVICE.try_into().unwrap();
@@ -149,20 +156,16 @@ impl DbusBridge {
 
     /// Get current clipboard text via D-Bus (for debugging/testing)
     pub async fn get_text(&self) -> Result<String, zbus::Error> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| zbus::Error::Failure("Not connected".into()))?;
 
         let bus_name: BusName = DBUS_SERVICE.try_into().unwrap();
         let interface: zbus::names::InterfaceName = DBUS_INTERFACE.try_into().unwrap();
 
         let reply: String = conn
-            .call_method(
-                Some(bus_name),
-                DBUS_PATH,
-                Some(interface),
-                "GetText",
-                &(),
-            )
+            .call_method(Some(bus_name), DBUS_PATH, Some(interface), "GetText", &())
             .await?
             .body()
             .deserialize()?;
@@ -178,7 +181,9 @@ impl DbusBridge {
         &self,
         event_tx: mpsc::UnboundedSender<ClipboardChangedEvent>,
     ) -> Result<(), zbus::Error> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| zbus::Error::Failure("Not connected".into()))?
             .clone();
 
@@ -254,10 +259,14 @@ impl DbusBridge {
                         // Parse signal body: (as mime_types, s content_hash)
                         match msg.body().deserialize::<(Vec<String>, String)>() {
                             Ok((mime_types, content_hash)) => {
-                                let selection_type = if is_primary { "PRIMARY" } else { "CLIPBOARD" };
+                                let selection_type =
+                                    if is_primary { "PRIMARY" } else { "CLIPBOARD" };
                                 info!(
                                     "📋 D-Bus {} signal #{}: {} types, hash={}",
-                                    selection_type, signal_count, mime_types.len(), &content_hash[..8.min(content_hash.len())]
+                                    selection_type,
+                                    signal_count,
+                                    mime_types.len(),
+                                    &content_hash[..8.min(content_hash.len())]
                                 );
                                 debug!("   MIME types: {:?}", mime_types);
 

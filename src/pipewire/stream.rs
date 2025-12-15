@@ -235,8 +235,6 @@ impl PipeWireStream {
     /// - Connection to node fails
     /// - Format negotiation fails
     pub async fn connect(&mut self, core: &pipewire::core::Core, node_id: u32) -> Result<()> {
-        
-        
         use pipewire::spa::pod::Pod;
         use pipewire::spa::utils::Direction;
         use pipewire::stream::StreamFlags;
@@ -270,12 +268,7 @@ impl PipeWireStream {
         props.insert("node.target".to_string(), node_id.to_string());
 
         // Create the stream on the core
-        let pw_stream = pipewire::stream::Stream::new(
-            core,
-            &stream_name,
-            props,
-        )
-        .map_err(|e| {
+        let pw_stream = pipewire::stream::Stream::new(core, &stream_name, props).map_err(|e| {
             PipeWireError::StreamCreationFailed(format!("Failed to create stream: {}", e))
         })?;
 

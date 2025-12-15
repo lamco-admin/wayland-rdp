@@ -195,7 +195,10 @@ impl MonitorManager {
 
         let layout = Layout::from_virtual_desktop(virtual_desktop);
 
-        debug!("Layout recalculated: {}x{}", layout.virtual_desktop.width, layout.virtual_desktop.height);
+        debug!(
+            "Layout recalculated: {}x{}",
+            layout.virtual_desktop.width, layout.virtual_desktop.height
+        );
 
         *self.current_layout.write().await = Some(layout);
 

@@ -74,7 +74,9 @@
 //! # }
 //! ```
 
-use ironrdp_server::{KeyboardEvent as IronKeyboardEvent, MouseEvent as IronMouseEvent, RdpServerInputHandler};
+use ironrdp_server::{
+    KeyboardEvent as IronKeyboardEvent, MouseEvent as IronMouseEvent, RdpServerInputHandler,
+};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
@@ -115,7 +117,14 @@ pub struct WrdInputHandler {
     pub coordinate_transformer: Arc<Mutex<CoordinateTransformer>>,
 
     /// Portal session (kept alive for the connection lifetime)
-    session: Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
+    session: Arc<
+        Mutex<
+            ashpd::desktop::Session<
+                'static,
+                ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
+            >,
+        >,
+    >,
 
     /// Primary stream node ID for input injection (PipeWire node ID)
     primary_stream_id: u32,
@@ -142,7 +151,14 @@ impl WrdInputHandler {
     /// Returns error if coordinate transformer initialization fails
     pub fn new(
         portal: Arc<RemoteDesktopManager>,
-        session: Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
+        session: Arc<
+            Mutex<
+                ashpd::desktop::Session<
+                    'static,
+                    ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
+                >,
+            >,
+        >,
         monitors: Vec<MonitorInfo>,
         primary_stream_id: u32,
         input_tx: mpsc::Sender<InputEvent>,
@@ -152,11 +168,12 @@ impl WrdInputHandler {
         let mouse_handler = Arc::new(Mutex::new(MouseHandler::new()));
 
         // Create coordinate transformer with monitor configuration
-        let coordinate_transformer = Arc::new(Mutex::new(
-            CoordinateTransformer::new(monitors)?
-        ));
+        let coordinate_transformer = Arc::new(Mutex::new(CoordinateTransformer::new(monitors)?));
 
-        debug!("Input handler using PipeWire stream node ID: {}", primary_stream_id);
+        debug!(
+            "Input handler using PipeWire stream node ID: {}",
+            primary_stream_id
+        );
 
         // Start input batching task (10ms windows for responsive typing)
         // Receives from multiplexer input queue, batches, and sends to Portal
@@ -254,7 +271,14 @@ impl WrdInputHandler {
     async fn handle_keyboard_event_impl(
         portal: &Arc<RemoteDesktopManager>,
         keyboard_handler: &Arc<Mutex<KeyboardHandler>>,
-        session: &Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
+        session: &Arc<
+            Mutex<
+                ashpd::desktop::Session<
+                    'static,
+                    ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
+                >,
+            >,
+        >,
         event: IronKeyboardEvent,
     ) -> Result<(), InputError> {
         let mut keyboard = keyboard_handler.lock().await;
@@ -263,8 +287,12 @@ impl WrdInputHandler {
         match event {
             IronKeyboardEvent::Pressed { code, extended } => {
                 // Log V key specifically to trace Ctrl+V paste operations
-                if code == 0x2F {  // V key scancode
-                    info!("⌨️ V key pressed (scancode=0x{:02X}, extended={})", code, extended);
+                if code == 0x2F {
+                    // V key scancode
+                    info!(
+                        "⌨️ V key pressed (scancode=0x{:02X}, extended={})",
+                        code, extended
+                    );
                 }
                 debug!("Keyboard pressed: code={}, extended={}", code, extended);
 
@@ -273,35 +301,51 @@ impl WrdInputHandler {
 
                 // Extract keycode from our event
                 let keycode = match kbd_event {
-                    crate::input::keyboard::KeyboardEvent::KeyDown { keycode, .. } |
-                    crate::input::keyboard::KeyboardEvent::KeyRepeat { keycode, .. } => keycode,
+                    crate::input::keyboard::KeyboardEvent::KeyDown { keycode, .. }
+                    | crate::input::keyboard::KeyboardEvent::KeyRepeat { keycode, .. } => keycode,
                     crate::input::keyboard::KeyboardEvent::KeyUp { keycode, .. } => {
                         // handle_key_down returned KeyUp (shouldn't happen but handle gracefully)
-                        warn!("handle_key_down returned KeyUp for code {} - using keycode anyway", code);
+                        warn!(
+                            "handle_key_down returned KeyUp for code {} - using keycode anyway",
+                            code
+                        );
                         keycode
                     }
                     other => {
                         error!("handle_key_down returned unexpected event: {:?}", other);
-                        return Err(InputError::InvalidKeyEvent(format!("Unexpected event type: {:?}", other)));
+                        return Err(InputError::InvalidKeyEvent(format!(
+                            "Unexpected event type: {:?}",
+                            other
+                        )));
                     }
                 };
 
                 // Log V key injection to Portal
-                if keycode == 47 {  // evdev KEY_V
-                    info!("⌨️ Injecting V key press to Portal (evdev keycode={})", keycode);
+                if keycode == 47 {
+                    // evdev KEY_V
+                    info!(
+                        "⌨️ Injecting V key press to Portal (evdev keycode={})",
+                        keycode
+                    );
                 }
 
                 // Inject key press via portal
                 portal
                     .notify_keyboard_keycode(&session, keycode as i32, true)
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject key press: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject key press: {}", e))
+                    })?;
             }
 
             IronKeyboardEvent::Released { code, extended } => {
                 // Log V key releases
-                if code == 0x2F {  // V key scancode
-                    info!("⌨️ V key released (scancode=0x{:02X}, extended={})", code, extended);
+                if code == 0x2F {
+                    // V key scancode
+                    info!(
+                        "⌨️ V key released (scancode=0x{:02X}, extended={})",
+                        code, extended
+                    );
                 }
                 debug!("Keyboard released: code={}, extended={}", code, extended);
 
@@ -311,31 +355,47 @@ impl WrdInputHandler {
                 // Extract keycode from our event
                 let keycode = match kbd_event {
                     crate::input::keyboard::KeyboardEvent::KeyUp { keycode, .. } => keycode,
-                    _ => return Err(InputError::InvalidKeyEvent("Unexpected event type".to_string())),
+                    _ => {
+                        return Err(InputError::InvalidKeyEvent(
+                            "Unexpected event type".to_string(),
+                        ))
+                    }
                 };
 
                 // Log V key injection release to Portal
-                if keycode == 47 {  // evdev KEY_V
-                    info!("⌨️ Injecting V key release to Portal (evdev keycode={})", keycode);
+                if keycode == 47 {
+                    // evdev KEY_V
+                    info!(
+                        "⌨️ Injecting V key release to Portal (evdev keycode={})",
+                        keycode
+                    );
                 }
 
                 // Inject key release via portal
                 portal
                     .notify_keyboard_keycode(&session, keycode as i32, false)
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject key release: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject key release: {}", e))
+                    })?;
             }
 
             IronKeyboardEvent::UnicodePressed(unicode) => {
                 debug!("Unicode key pressed: 0x{:04X}", unicode);
                 // Unicode events - for now log as unsupported
                 // Full implementation would use XKB keysym injection
-                warn!("Unicode keyboard events not yet fully supported: 0x{:04X}", unicode);
+                warn!(
+                    "Unicode keyboard events not yet fully supported: 0x{:04X}",
+                    unicode
+                );
             }
 
             IronKeyboardEvent::UnicodeReleased(unicode) => {
                 debug!("Unicode key released: 0x{:04X}", unicode);
-                warn!("Unicode keyboard events not yet fully supported: 0x{:04X}", unicode);
+                warn!(
+                    "Unicode keyboard events not yet fully supported: 0x{:04X}",
+                    unicode
+                );
             }
 
             IronKeyboardEvent::Synchronize(flags) => {
@@ -356,7 +416,14 @@ impl WrdInputHandler {
         portal: &Arc<RemoteDesktopManager>,
         mouse_handler: &Arc<Mutex<MouseHandler>>,
         coordinate_transformer: &Arc<Mutex<CoordinateTransformer>>,
-        session: &Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
+        session: &Arc<
+            Mutex<
+                ashpd::desktop::Session<
+                    'static,
+                    ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
+                >,
+            >,
+        >,
         event: IronMouseEvent,
         stream_id: u32,
     ) -> Result<(), InputError> {
@@ -369,12 +436,17 @@ impl WrdInputHandler {
                 debug!("Mouse move: x={}, y={}", x, y);
 
                 // Process absolute move through mouse handler
-                let mouse_event = mouse.handle_absolute_move(x as u32, y as u32, &mut transformer)?;
+                let mouse_event =
+                    mouse.handle_absolute_move(x as u32, y as u32, &mut transformer)?;
 
                 // Extract coordinates from our event
                 let (stream_x, stream_y) = match mouse_event {
                     crate::input::mouse::MouseEvent::Move { x, y, .. } => (x, y),
-                    _ => return Err(InputError::InvalidMouseEvent("Unexpected event type".to_string())),
+                    _ => {
+                        return Err(InputError::InvalidMouseEvent(
+                            "Unexpected event type".to_string(),
+                        ))
+                    }
                 };
 
                 // Inject mouse movement via portal (absolute positioning)
@@ -382,7 +454,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_motion_absolute(&session, stream_id, stream_x, stream_y)
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject mouse move: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject mouse move: {}", e))
+                    })?;
             }
 
             IronMouseEvent::RelMove { x, y } => {
@@ -394,14 +468,20 @@ impl WrdInputHandler {
                 // Extract coordinates
                 let (stream_x, stream_y) = match mouse_event {
                     crate::input::mouse::MouseEvent::Move { x, y, .. } => (x, y),
-                    _ => return Err(InputError::InvalidMouseEvent("Unexpected event type".to_string())),
+                    _ => {
+                        return Err(InputError::InvalidMouseEvent(
+                            "Unexpected event type".to_string(),
+                        ))
+                    }
                 };
 
                 // Inject via portal absolute API (we converted relative to absolute already)
                 portal
                     .notify_pointer_motion_absolute(&session, stream_id, stream_x, stream_y)
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject relative move: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject relative move: {}", e))
+                    })?;
             }
 
             IronMouseEvent::LeftPressed => {
@@ -410,7 +490,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_button(&session, 272, true) // BTN_LEFT = 0x110 = 272 (evdev code)
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject left press: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject left press: {}", e))
+                    })?;
             }
 
             IronMouseEvent::LeftReleased => {
@@ -419,7 +501,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_button(&session, 272, false) // BTN_LEFT = 0x110 = 272
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject left release: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject left release: {}", e))
+                    })?;
             }
 
             IronMouseEvent::RightPressed => {
@@ -428,7 +512,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_button(&session, 273, true) // BTN_RIGHT = 0x111 = 273
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject right press: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject right press: {}", e))
+                    })?;
             }
 
             IronMouseEvent::RightReleased => {
@@ -437,7 +523,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_button(&session, 273, false) // BTN_RIGHT = 0x111 = 273
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject right release: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject right release: {}", e))
+                    })?;
             }
 
             IronMouseEvent::MiddlePressed => {
@@ -446,7 +534,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_button(&session, 274, true) // BTN_MIDDLE = 0x112 = 274
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject middle press: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject middle press: {}", e))
+                    })?;
             }
 
             IronMouseEvent::MiddleReleased => {
@@ -455,7 +545,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_button(&session, 274, false) // BTN_MIDDLE = 0x112 = 274
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject middle release: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject middle release: {}", e))
+                    })?;
             }
 
             IronMouseEvent::Button4Pressed => {
@@ -464,7 +556,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_button(&session, 275, true) // BTN_SIDE = 8
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject button4 press: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject button4 press: {}", e))
+                    })?;
             }
 
             IronMouseEvent::Button4Released => {
@@ -473,7 +567,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_button(&session, 275, false)
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject button4 release: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject button4 release: {}", e))
+                    })?;
             }
 
             IronMouseEvent::Button5Pressed => {
@@ -482,7 +578,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_button(&session, 276, true) // BTN_EXTRA = 9
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject button5 press: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject button5 press: {}", e))
+                    })?;
             }
 
             IronMouseEvent::Button5Released => {
@@ -491,7 +589,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_button(&session, 276, false)
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject button5 release: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject button5 release: {}", e))
+                    })?;
             }
 
             IronMouseEvent::VerticalScroll { value } => {
@@ -504,7 +604,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_axis(&session, 0.0, delta_y)
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject vertical scroll: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject vertical scroll: {}", e))
+                    })?;
             }
 
             IronMouseEvent::Scroll { x, y } => {
@@ -517,7 +619,9 @@ impl WrdInputHandler {
                 portal
                     .notify_pointer_axis(&session, delta_x, delta_y)
                     .await
-                    .map_err(|e| InputError::PortalError(format!("Failed to inject scroll: {}", e)))?;
+                    .map_err(|e| {
+                        InputError::PortalError(format!("Failed to inject scroll: {}", e))
+                    })?;
             }
         }
 

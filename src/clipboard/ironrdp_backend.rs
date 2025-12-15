@@ -5,8 +5,8 @@
 
 use ironrdp_cliprdr::backend::{CliprdrBackend, CliprdrBackendFactory};
 use ironrdp_cliprdr::pdu::{
-    ClipboardFormat, ClipboardGeneralCapabilityFlags, FileContentsRequest,
-    FileContentsResponse, FormatDataRequest, FormatDataResponse, LockDataId,
+    ClipboardFormat, ClipboardGeneralCapabilityFlags, FileContentsRequest, FileContentsResponse,
+    FormatDataRequest, FormatDataResponse, LockDataId,
 };
 use ironrdp_core::AsAny;
 use ironrdp_server::ServerEventSender;
@@ -15,8 +15,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
-use crate::clipboard::manager::{ClipboardManager, ClipboardEvent};
 use crate::clipboard::formats::ClipboardFormat as WrdClipboardFormat;
+use crate::clipboard::manager::{ClipboardEvent, ClipboardManager};
 
 /// Clipboard event for non-blocking queue
 #[derive(Debug, Clone)]
@@ -98,7 +98,10 @@ impl WrdCliprdrFactory {
                         debug!("Processing remote copy event: {} formats", formats.len());
                         // Send to clipboard manager
                         if let Ok(mgr) = manager.try_lock() {
-                            if let Ok(_) = mgr.event_sender().try_send(ClipboardEvent::RdpFormatList(formats.clone())) {
+                            if let Ok(_) = mgr
+                                .event_sender()
+                                .try_send(ClipboardEvent::RdpFormatList(formats.clone()))
+                            {
                                 debug!("Format list sent to clipboard manager");
 
                                 // Proactively request common formats to populate Wayland clipboard
@@ -121,9 +124,10 @@ impl WrdCliprdrFactory {
 
                         // Send request to clipboard manager (will read from Portal)
                         if let Ok(mgr) = manager.try_lock() {
-                            if let Ok(_) = mgr.event_sender().try_send(
-                                ClipboardEvent::RdpDataRequest(format_id, None)
-                            ) {
+                            if let Ok(_) = mgr
+                                .event_sender()
+                                .try_send(ClipboardEvent::RdpDataRequest(format_id, None))
+                            {
                                 debug!("Data request sent to clipboard manager");
                             }
                         }
@@ -132,7 +136,10 @@ impl WrdCliprdrFactory {
                         debug!("Processing format data response: {} bytes", data.len());
                         // Send data to clipboard manager for Portal write
                         if let Ok(mgr) = manager.try_lock() {
-                            if let Ok(_) = mgr.event_sender().try_send(ClipboardEvent::RdpDataResponse(data)) {
+                            if let Ok(_) = mgr
+                                .event_sender()
+                                .try_send(ClipboardEvent::RdpDataResponse(data))
+                            {
                                 debug!("Data response sent to clipboard manager");
                             }
                         }
@@ -141,17 +148,27 @@ impl WrdCliprdrFactory {
                         warn!("Processing format data error - notifying clipboard manager");
                         // Send error to clipboard manager so it can notify Portal of failure
                         if let Ok(mgr) = manager.try_lock() {
-                            if let Ok(_) = mgr.event_sender().try_send(ClipboardEvent::RdpDataError) {
+                            if let Ok(_) = mgr.event_sender().try_send(ClipboardEvent::RdpDataError)
+                            {
                                 debug!("Data error sent to clipboard manager");
                             }
                         }
                     }
-                    ClipboardBackendEvent::FileContentsRequest(stream_id, _index, _position, _size) => {
+                    ClipboardBackendEvent::FileContentsRequest(
+                        stream_id,
+                        _index,
+                        _position,
+                        _size,
+                    ) => {
                         debug!("Processing file contents request: stream={}", stream_id);
                         // File transfer not yet implemented - will be added after text/images work
                     }
                     ClipboardBackendEvent::FileContentsResponse(stream_id, data) => {
-                        debug!("Processing file contents response: stream={}, {} bytes", stream_id, data.len());
+                        debug!(
+                            "Processing file contents response: stream={}, {} bytes",
+                            stream_id,
+                            data.len()
+                        );
                         // File transfer not yet implemented
                     }
                 }
@@ -275,7 +292,10 @@ impl CliprdrBackend for WrdCliprdrBackend {
         // Deferred to complete clipboard integration
     }
 
-    fn on_process_negotiated_capabilities(&mut self, capabilities: ClipboardGeneralCapabilityFlags) {
+    fn on_process_negotiated_capabilities(
+        &mut self,
+        capabilities: ClipboardGeneralCapabilityFlags,
+    ) {
         info!("Clipboard capabilities negotiated: {:?}", capabilities);
         self.capabilities = capabilities;
     }
@@ -297,7 +317,11 @@ impl CliprdrBackend for WrdCliprdrBackend {
             .iter()
             .map(|f| WrdClipboardFormat {
                 format_id: f.id.0,
-                format_name: f.name.as_ref().map(|n| n.value().to_string()).unwrap_or_default(),
+                format_name: f
+                    .name
+                    .as_ref()
+                    .map(|n| n.value().to_string())
+                    .unwrap_or_default(),
             })
             .collect();
 
@@ -362,10 +386,7 @@ impl CliprdrBackend for WrdCliprdrBackend {
         // Non-blocking: push to event queue
         if let Ok(mut queue) = self.event_queue.try_write() {
             queue.push_back(ClipboardBackendEvent::FileContentsRequest(
-                stream_id,
-                list_index,
-                position,
-                size,
+                stream_id, list_index, position, size,
             ));
         }
     }
@@ -405,9 +426,7 @@ mod tests {
     #[tokio::test]
     async fn test_factory_creation() {
         let config = crate::clipboard::manager::ClipboardConfig::default();
-        let manager = Arc::new(Mutex::new(
-            ClipboardManager::new(config).await.unwrap()
-        ));
+        let manager = Arc::new(Mutex::new(ClipboardManager::new(config).await.unwrap()));
 
         let factory = WrdCliprdrFactory::new(manager);
         let _backend = factory.build_cliprdr_backend();

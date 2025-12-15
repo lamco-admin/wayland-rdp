@@ -88,7 +88,10 @@ impl PortalManager {
         info!("Creating combined portal session (ScreenCast + RemoteDesktop)");
 
         // Create RemoteDesktop session (this type of session can include screen sharing)
-        let remote_desktop_session = self.remote_desktop.create_session().await
+        let remote_desktop_session = self
+            .remote_desktop
+            .create_session()
+            .await
             .context("Failed to create RemoteDesktop session")?;
 
         info!("RemoteDesktop session created");
@@ -113,12 +116,12 @@ impl PortalManager {
 
         screencast_proxy
             .select_sources(
-                &remote_desktop_session,  // Use same session
-                CursorMode::Metadata,      // Include cursor metadata
+                &remote_desktop_session,    // Use same session
+                CursorMode::Metadata,       // Include cursor metadata
                 SourceType::Monitor.into(), // Request monitor sources
                 true,                       // Allow multiple monitors
                 None,                       // No restore token
-                PersistMode::DoNot,        // Don't persist
+                PersistMode::DoNot,         // Don't persist
             )
             .await
             .context("Failed to select screen sources")?;
@@ -128,7 +131,11 @@ impl PortalManager {
         // Request clipboard access BEFORE starting session (required by Portal spec)
         if let Some(clipboard_mgr) = clipboard {
             info!("Requesting clipboard access for session");
-            if let Err(e) = clipboard_mgr.portal_clipboard().request(&remote_desktop_session).await {
+            if let Err(e) = clipboard_mgr
+                .portal_clipboard()
+                .request(&remote_desktop_session)
+                .await
+            {
                 warn!("Failed to request clipboard access: {}", e);
                 warn!("Clipboard will not be available");
             } else {
@@ -137,7 +144,10 @@ impl PortalManager {
         }
 
         // Start the combined session (triggers permission dialog)
-        let (pipewire_fd, streams) = self.remote_desktop.start_session(&remote_desktop_session).await
+        let (pipewire_fd, streams) = self
+            .remote_desktop
+            .start_session(&remote_desktop_session)
+            .await
             .context("Failed to start RemoteDesktop session")?;
 
         info!("Portal session started successfully");
@@ -145,7 +155,9 @@ impl PortalManager {
         info!("  Streams: {}", streams.len());
 
         if streams.is_empty() {
-            anyhow::bail!("No streams available - user may have denied permission or no screens to share");
+            anyhow::bail!(
+                "No streams available - user may have denied permission or no screens to share"
+            );
         }
 
         // Create session handle with session reference
@@ -157,10 +169,13 @@ impl PortalManager {
             pipewire_fd,
             streams,
             Some(session_id.clone()), // Store session ID for input operations
-            remote_desktop_session, // Pass the actual ashpd session for input injection
+            remote_desktop_session,   // Pass the actual ashpd session for input injection
         );
 
-        info!("Portal session handle created with {} streams", stream_count);
+        info!(
+            "Portal session handle created with {} streams",
+            stream_count
+        );
 
         Ok(handle)
     }

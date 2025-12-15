@@ -67,14 +67,14 @@
 use anyhow::Result;
 use bytes::Bytes;
 use ironrdp_server::{
-    BitmapUpdate as IronBitmapUpdate, DesktopSize, DisplayUpdate,
-    PixelFormat as IronPixelFormat, RdpServerDisplay, RdpServerDisplayUpdates,
+    BitmapUpdate as IronBitmapUpdate, DesktopSize, DisplayUpdate, PixelFormat as IronPixelFormat,
+    RdpServerDisplay, RdpServerDisplayUpdates,
 };
 use std::num::{NonZeroU16, NonZeroUsize};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, trace, warn};
-use std::time::Instant;
 
 use crate::pipewire::frame::VideoFrame;
 use crate::pipewire::pw_thread::{PipeWireThreadCommand, PipeWireThreadManager};
@@ -308,14 +308,15 @@ impl WrdDisplayHandler {
             let mut frames_sent = 0u64;
             let mut frames_dropped = 0u64;
 
-
             let mut loop_iterations = 0u64;
 
             loop {
                 loop_iterations += 1;
                 if loop_iterations % 1000 == 0 {
-                    debug!("Display pipeline heartbeat: {} iterations, sent {}, dropped {}",
-                           loop_iterations, frames_sent, frames_dropped);
+                    debug!(
+                        "Display pipeline heartbeat: {} iterations, sent {}, dropped {}",
+                        loop_iterations, frames_sent, frames_dropped
+                    );
                 }
 
                 // Try to get frame from PipeWire thread (non-blocking)
@@ -340,15 +341,20 @@ impl WrdDisplayHandler {
                 if !frame_regulator.should_send_frame() {
                     frames_dropped += 1;
                     if frames_dropped % 30 == 0 {
-                        info!("Frame rate regulation: dropped {} frames, sent {}", frames_dropped, frames_sent);
+                        info!(
+                            "Frame rate regulation: dropped {} frames, sent {}",
+                            frames_dropped, frames_sent
+                        );
                     }
                     continue; // Drop this frame to maintain 30 FPS
                 }
 
                 frames_sent += 1;
                 if frames_sent % 30 == 0 || frames_sent < 10 {
-                    info!("🎬 Processing frame {} ({}x{}) - sent: {}, dropped: {}",
-                          frame.frame_id, frame.width, frame.height, frames_sent, frames_dropped);
+                    info!(
+                        "🎬 Processing frame {} ({}x{}) - sent: {}, dropped: {}",
+                        frame.frame_id, frame.width, frame.height, frames_sent, frames_dropped
+                    );
                 }
 
                 // Convert to RDP bitmap (track timing)
@@ -367,10 +373,14 @@ impl WrdDisplayHandler {
                 // This saves ~1-2ms per unchanged frame (40% of frames!)
                 if bitmap_update.rectangles.is_empty() {
                     // Log periodically to verify optimization is working
-                    static EMPTY_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                    static EMPTY_COUNT: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
                     let count = EMPTY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if count % 100 == 0 && count > 0 {
-                        debug!("Empty frame optimization: {} unchanged frames skipped", count);
+                        debug!(
+                            "Empty frame optimization: {} unchanged frames skipped",
+                            count
+                        );
                     }
                     continue;
                 }
@@ -389,8 +399,12 @@ impl WrdDisplayHandler {
 
                 // Log conversion performance every 30 frames
                 if frames_sent % 30 == 0 {
-                    info!("🎨 Frame conversion timing: bitmap={:?}, iron={:?}, total={:?}",
-                          convert_elapsed, iron_elapsed, convert_start.elapsed());
+                    info!(
+                        "🎨 Frame conversion timing: bitmap={:?}, iron={:?}, total={:?}",
+                        convert_elapsed,
+                        iron_elapsed,
+                        convert_start.elapsed()
+                    );
                 }
 
                 // Route through graphics queue (full multiplexer implementation)
@@ -403,7 +417,10 @@ impl WrdDisplayHandler {
                         };
 
                         // Non-blocking send - drop frame if queue full (never block on graphics)
-                        trace!("📤 Graphics multiplexer: sending frame {} to queue", frames_sent);
+                        trace!(
+                            "📤 Graphics multiplexer: sending frame {} to queue",
+                            frames_sent
+                        );
                         if let Err(e) = graphics_tx.try_send(graphics_frame) {
                             warn!("Graphics queue full - frame dropped (QoS policy)");
                         }
@@ -420,7 +437,6 @@ impl WrdDisplayHandler {
                         }
                     }
                 }
-
             }
         });
     }
@@ -460,8 +476,14 @@ impl WrdDisplayHandler {
             };
 
             // Calculate width and height from rectangle
-            let width = rect_data.rectangle.right.saturating_sub(rect_data.rectangle.left);
-            let height = rect_data.rectangle.bottom.saturating_sub(rect_data.rectangle.top);
+            let width = rect_data
+                .rectangle
+                .right
+                .saturating_sub(rect_data.rectangle.left);
+            let height = rect_data
+                .rectangle
+                .bottom
+                .saturating_sub(rect_data.rectangle.top);
 
             // Calculate stride (bytes per row)
             let bytes_per_pixel = iron_format.bytes_per_pixel() as usize;
