@@ -29,12 +29,14 @@ pub struct MonitorLayout {
     /// Monitor ID
     pub id: u32,
 
-    /// Position in virtual desktop (pixels)
+    /// X position in virtual desktop (pixels)
     pub x: i32,
+    /// Y position in virtual desktop (pixels)
     pub y: i32,
 
-    /// Dimensions (pixels)
+    /// Width in pixels
     pub width: u32,
+    /// Height in pixels
     pub height: u32,
 
     /// Is primary monitor
@@ -50,8 +52,9 @@ pub struct VirtualDesktop {
     /// Total height of virtual desktop
     pub height: u32,
 
-    /// Top-left offset
+    /// Top-left X offset from origin
     pub offset_x: i32,
+    /// Top-left Y offset from origin
     pub offset_y: i32,
 
     /// Monitor layouts
@@ -61,17 +64,18 @@ pub struct VirtualDesktop {
 /// Coordinate space for transformations
 #[derive(Debug, Clone)]
 pub struct CoordinateSpace {
-    /// Space identifier
+    /// Space identifier name
     pub name: String,
 
-    /// Width
+    /// Width in pixels
     pub width: u32,
 
-    /// Height
+    /// Height in pixels
     pub height: u32,
 
-    /// Offset from origin
+    /// X offset from origin
     pub offset_x: i32,
+    /// Y offset from origin
     pub offset_y: i32,
 }
 

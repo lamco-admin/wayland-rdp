@@ -230,17 +230,26 @@ fn percentile(sorted_values: &[f64], p: f64) -> f64 {
     sorted_values[index]
 }
 
-/// Histogram statistics
+/// Histogram statistics computed from recorded observations
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct HistogramStats {
+    /// Total number of observations
     pub count: u64,
+    /// Sum of all observations
     pub sum: f64,
+    /// Minimum observed value
     pub min: f64,
+    /// Maximum observed value
     pub max: f64,
+    /// Arithmetic mean of observations
     pub mean: f64,
+    /// Standard deviation of observations
     pub stddev: f64,
+    /// 50th percentile (median)
     pub p50: f64,
+    /// 95th percentile
     pub p95: f64,
+    /// 99th percentile
     pub p99: f64,
 }
 
@@ -260,54 +269,81 @@ impl Default for HistogramStats {
     }
 }
 
-/// Metrics snapshot
+/// Point-in-time snapshot of all collected metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsSnapshot {
+    /// When this snapshot was taken
     pub timestamp: SystemTime,
+    /// Server uptime at snapshot time
     pub uptime: Duration,
+    /// Counter values (monotonically increasing)
     pub counters: HashMap<String, u64>,
+    /// Gauge values (current state)
     pub gauges: HashMap<String, f64>,
+    /// Histogram statistics
     pub histograms: HashMap<String, HistogramStats>,
 }
 
-/// Pre-defined metric names for consistency
+/// Pre-defined metric names for consistency across the codebase
 pub mod metric_names {
-    // Frame processing metrics
+    //! Standard metric name constants.
+    //!
+    //! Use these constants instead of string literals to ensure
+    //! consistent metric naming across all components.
+
+    /// Total video frames received from PipeWire
     pub const FRAMES_RECEIVED: &str = "frames_received_total";
+    /// Total video frames successfully processed
     pub const FRAMES_PROCESSED: &str = "frames_processed_total";
+    /// Total video frames dropped (queue full, timeout, etc.)
     pub const FRAMES_DROPPED: &str = "frames_dropped_total";
+    /// Frame processing time histogram (milliseconds)
     pub const FRAME_PROCESSING_TIME_MS: &str = "frame_processing_time_ms";
 
-    // Conversion metrics
+    /// Total format conversions performed
     pub const CONVERSIONS_TOTAL: &str = "conversions_total";
+    /// Conversion time histogram (milliseconds)
     pub const CONVERSION_TIME_MS: &str = "conversion_time_ms";
+    /// Total bytes converted
     pub const CONVERSION_BYTES: &str = "conversion_bytes_total";
 
-    // Dispatcher metrics
+    /// Total frames dispatched to RDP clients
     pub const FRAMES_DISPATCHED: &str = "frames_dispatched_total";
+    /// Current frames waiting in dispatch queue
     pub const FRAMES_QUEUED: &str = "frames_queued";
+    /// Dispatch time histogram (microseconds)
     pub const DISPATCH_TIME_US: &str = "dispatch_time_us";
 
-    // Network metrics
+    /// Total bytes sent to RDP clients
     pub const BYTES_SENT: &str = "bytes_sent_total";
+    /// Total bytes received from RDP clients
     pub const BYTES_RECEIVED: &str = "bytes_received_total";
+    /// Total RDP packets sent
     pub const PACKETS_SENT: &str = "packets_sent_total";
+    /// Total RDP packets received
     pub const PACKETS_RECEIVED: &str = "packets_received_total";
+    /// Total network errors encountered
     pub const NETWORK_ERRORS: &str = "network_errors_total";
 
-    // Connection metrics
+    /// Currently active RDP connections
     pub const CONNECTIONS_ACTIVE: &str = "connections_active";
+    /// Total RDP connections since server start
     pub const CONNECTIONS_TOTAL: &str = "connections_total";
+    /// Total connection errors (auth failures, protocol errors, etc.)
     pub const CONNECTION_ERRORS: &str = "connection_errors_total";
 
-    // Resource metrics
+    /// Current CPU usage percentage
     pub const CPU_USAGE: &str = "cpu_usage_percent";
+    /// Current memory usage in bytes
     pub const MEMORY_USAGE: &str = "memory_usage_bytes";
+    /// Current memory usage as percentage of system total
     pub const MEMORY_USAGE_PERCENT: &str = "memory_usage_percent";
 
-    // Latency metrics
+    /// Input event latency histogram (milliseconds)
     pub const INPUT_LATENCY_MS: &str = "input_latency_ms";
+    /// Video encoding/transmission latency histogram (milliseconds)
     pub const VIDEO_LATENCY_MS: &str = "video_latency_ms";
+    /// End-to-end latency histogram (milliseconds)
     pub const END_TO_END_LATENCY_MS: &str = "end_to_end_latency_ms";
 }
 
