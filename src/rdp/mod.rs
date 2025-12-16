@@ -1,6 +1,10 @@
-//! RDP protocol implementation
+//! RDP Server module
 //!
-//! This module handles RDP protocol communication, including
-//! connection negotiation, capabilities exchange, and data transfer.
+//! Provides RDP protocol server implementation with compositor integration.
 
 pub mod channels;
+pub mod server;
+pub mod encoder;
+
+pub use server::{RdpServer, RdpServerConfig, RdpInputEvent, ServerStats};
+pub use encoder::{FrameEncoder, EncodedFrame, EncoderFormat};
