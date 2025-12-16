@@ -6,6 +6,9 @@
 //! - CLI arguments
 
 use anyhow::{Context, Result};
+use ashpd::desktop::remote_desktop::DeviceType;
+use ashpd::desktop::screencast::{CursorMode, SourceType};
+use enumflags2::BitFlags;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -148,6 +151,47 @@ impl Config {
         }
 
         self
+    }
+
+    /// Convert server configuration to Portal configuration
+    ///
+    /// Maps relevant server settings to `lamco_portal::PortalConfig` for
+    /// screen capture and input injection via XDG Desktop Portals.
+    ///
+    /// # Mapping
+    ///
+    /// | Server Config | Portal Config |
+    /// |--------------|---------------|
+    /// | video.cursor_mode | cursor_mode |
+    /// | multimon.enabled | allow_multiple |
+    /// | input.use_libei | devices (Keyboard + Pointer) |
+    /// | input.enable_touch | devices (+ Touchscreen) |
+    pub fn to_portal_config(&self) -> lamco_portal::PortalConfig {
+        // Map cursor mode from string to enum
+        let cursor_mode = match self.video.cursor_mode.to_lowercase().as_str() {
+            "embedded" => CursorMode::Embedded,
+            "hidden" => CursorMode::Hidden,
+            _ => CursorMode::Metadata, // Default for "metadata" or invalid
+        };
+
+        // Build device flags based on input configuration
+        let mut devices: BitFlags<DeviceType> = DeviceType::Keyboard.into();
+        if self.input.use_libei {
+            devices |= DeviceType::Pointer;
+        }
+        if self.input.enable_touch {
+            devices |= DeviceType::Touchscreen;
+        }
+
+        // Source types - always allow both monitors and windows
+        let source_type: BitFlags<SourceType> = SourceType::Monitor | SourceType::Window;
+
+        lamco_portal::PortalConfig::builder()
+            .cursor_mode(cursor_mode)
+            .source_type(source_type)
+            .devices(devices)
+            .allow_multiple(self.multimon.enabled)
+            .build()
     }
 }
 

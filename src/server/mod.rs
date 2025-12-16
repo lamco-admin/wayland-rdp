@@ -119,10 +119,11 @@ impl WrdServer {
         info!("Initializing WRD Server");
         let config = Arc::new(config);
 
-        // Initialize Portal manager with default config
-        // TODO: Map our config settings to PortalConfig if needed
+        // Initialize Portal manager with config mapped from server settings
         info!("Setting up Portal connection");
-        let portal_config = lamco_portal::PortalConfig::default();
+        let portal_config = config.to_portal_config();
+        tracing::debug!("Portal config: cursor_mode={:?}, allow_multiple={}",
+            portal_config.cursor_mode, portal_config.allow_multiple);
         let portal_manager = Arc::new(
             PortalManager::new(portal_config)
                 .await
