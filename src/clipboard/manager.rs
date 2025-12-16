@@ -369,7 +369,7 @@ impl ClipboardManager {
                         info!("✅ First SelectionTransfer for paste operation - will fulfill serial {}", transfer_event.serial);
 
                         // Log timing to track delay between signal and write
-                        let transfer_time = std::time::Instant::now();
+                        let _transfer_time = std::time::Instant::now();
 
                         // CRITICAL: Check clipboard state before asking RDP for data
                         // Only ask RDP if RDP owns the clipboard (has the data we need)
@@ -1298,7 +1298,7 @@ impl ClipboardManager {
         pending_portal_requests: &Arc<
             RwLock<std::collections::VecDeque<(u32, String, std::time::Instant)>>,
         >,
-        recently_written_hashes: &Arc<
+        _recently_written_hashes: &Arc<
             RwLock<std::collections::HashMap<String, std::time::Instant>>,
         >,
     ) -> Result<()> {
@@ -1380,7 +1380,7 @@ impl ClipboardManager {
 
         // Write data to Portal via SelectionWrite workflow
         let session_guard = session.lock().await;
-        let write_attempt_time = std::time::Instant::now();
+        let _write_attempt_time = std::time::Instant::now();
         info!(
             "📝 About to call Portal selection_write: serial={}, data_len={} bytes",
             serial,
@@ -1874,7 +1874,7 @@ mod tests {
 
         let mime_types = vec!["text/plain".to_string()];
 
-        let event = ClipboardEvent::PortalFormatsAvailable(mime_types);
+        let event = ClipboardEvent::PortalFormatsAvailable(mime_types, true);
         manager.event_tx.send(event).await.unwrap();
 
         // Give event processor time to handle
@@ -1906,9 +1906,10 @@ mod tests {
         // Send Portal format list (corresponding MIME types)
         manager
             .event_tx
-            .send(ClipboardEvent::PortalFormatsAvailable(vec![
-                "text/plain".to_string()
-            ]))
+            .send(ClipboardEvent::PortalFormatsAvailable(
+                vec!["text/plain".to_string()],
+                false, // Not forced - simulate portal echo
+            ))
             .await
             .unwrap();
 

@@ -420,7 +420,7 @@ impl WrdDisplayHandler {
                             "📤 Graphics multiplexer: sending frame {} to queue",
                             frames_sent
                         );
-                        if let Err(e) = graphics_tx.try_send(graphics_frame) {
+                        if let Err(_e) = graphics_tx.try_send(graphics_frame) {
                             warn!("Graphics queue full - frame dropped (QoS policy)");
                         }
                     }
@@ -596,6 +596,7 @@ impl RdpServerDisplayUpdates for DisplayUpdatesStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::video::{BitmapData, Rectangle};
 
     #[tokio::test]
     async fn test_pixel_format_conversion() {
@@ -611,6 +612,7 @@ mod tests {
                 RdpPixelFormat::BgrX32 => 4,
                 RdpPixelFormat::Bgr24 => 3,
                 RdpPixelFormat::Rgb16 => 2,
+                RdpPixelFormat::Rgb15 => 2,
             };
             // IronRDP formats are all 32-bit
             let iron_bpp = iron_format.bytes_per_pixel();

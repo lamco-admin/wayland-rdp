@@ -87,7 +87,7 @@ pub fn format_user_error(error: &anyhow::Error) -> String {
     output
 }
 
-fn format_portal_error(output: &mut String, error: &str) {
+fn format_portal_error(output: &mut String, _error: &str) {
     writeln!(output, "Screen Capture Permission Error").ok();
     writeln!(output, "").ok();
     writeln!(
@@ -148,7 +148,7 @@ fn format_portal_error(output: &mut String, error: &str) {
     .ok();
 }
 
-fn format_pipewire_error(output: &mut String, error: &str) {
+fn format_pipewire_error(output: &mut String, _error: &str) {
     writeln!(output, "Screen Capture System Error (PipeWire)").ok();
     writeln!(output, "").ok();
     writeln!(output, "Could not connect to PipeWire for video capture.").ok();
@@ -186,7 +186,7 @@ fn format_pipewire_error(output: &mut String, error: &str) {
     writeln!(output, "     → Log out and log back in").ok();
 }
 
-fn format_tls_error(output: &mut String, error: &str) {
+fn format_tls_error(output: &mut String, _error: &str) {
     writeln!(output, "TLS Certificate Error").ok();
     writeln!(output, "").ok();
     writeln!(
@@ -225,7 +225,7 @@ fn format_tls_error(output: &mut String, error: &str) {
     .ok();
 }
 
-fn format_network_error(output: &mut String, error: &str) {
+fn format_network_error(output: &mut String, _error: &str) {
     writeln!(output, "Network Binding Error").ok();
     writeln!(output, "").ok();
     writeln!(
@@ -254,7 +254,7 @@ fn format_network_error(output: &mut String, error: &str) {
     writeln!(output, "     → Should be: 'IP:PORT' like '0.0.0.0:3389'").ok();
 }
 
-fn format_config_error(output: &mut String, error: &str) {
+fn format_config_error(output: &mut String, _error: &str) {
     writeln!(output, "Configuration Error").ok();
     writeln!(output, "").ok();
     writeln!(output, "Problem with configuration file.").ok();

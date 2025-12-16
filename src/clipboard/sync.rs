@@ -255,32 +255,69 @@ impl LoopDetector {
 
     /// Hash clipboard formats
     fn hash_formats(&self, formats: &[ClipboardFormat]) -> String {
-        let mut hasher = Sha256::new();
-
-        // Sort formats for consistent hashing
-        let mut sorted_formats = formats.to_vec();
-        sorted_formats.sort_by_key(|f| f.format_id);
-
-        for format in sorted_formats {
-            hasher.update(format.format_id.to_le_bytes());
-            hasher.update(format.format_name.as_bytes());
-        }
-
-        format!("{:x}", hasher.finalize())
+        // Convert format IDs to normalized MIME types for consistent hashing
+        let normalized_types = self.formats_to_normalized(formats);
+        self.hash_normalized(&normalized_types)
     }
 
     /// Hash MIME types
     fn hash_mime_types(&self, mime_types: &[String]) -> String {
-        let mut hasher = Sha256::new();
+        // Normalize MIME types for consistent hashing
+        let normalized_types = self.mime_to_normalized(mime_types);
+        self.hash_normalized(&normalized_types)
+    }
 
-        // Sort for consistent hashing
-        let mut sorted_types = mime_types.to_vec();
-        sorted_types.sort();
-
-        for mime_type in sorted_types {
-            hasher.update(mime_type.as_bytes());
+    /// Convert RDP format IDs to normalized MIME categories
+    fn formats_to_normalized(&self, formats: &[ClipboardFormat]) -> Vec<String> {
+        let mut normalized = Vec::new();
+        for format in formats {
+            // Map format IDs to canonical categories
+            let category = match format.format_id {
+                1 | 13 => "text", // CF_TEXT, CF_UNICODETEXT
+                2 | 8 | 17 => "image", // CF_BITMAP, CF_DIB, CF_DIBV5
+                15 => "files", // CF_HDROP
+                49282..=49283 => "html", // HTML Format (registered format)
+                _ if format.format_name.contains("PNG") => "image",
+                _ if format.format_name.contains("HTML") => "html",
+                _ => "other",
+            };
+            if !normalized.contains(&category.to_string()) {
+                normalized.push(category.to_string());
+            }
         }
+        normalized.sort();
+        normalized
+    }
 
+    /// Convert MIME types to normalized categories
+    fn mime_to_normalized(&self, mime_types: &[String]) -> Vec<String> {
+        let mut normalized = Vec::new();
+        for mime in mime_types {
+            let category = if mime.starts_with("text/plain") {
+                "text"
+            } else if mime.starts_with("image/") {
+                "image"
+            } else if mime == "text/uri-list" {
+                "files"
+            } else if mime.starts_with("text/html") {
+                "html"
+            } else {
+                "other"
+            };
+            if !normalized.contains(&category.to_string()) {
+                normalized.push(category.to_string());
+            }
+        }
+        normalized.sort();
+        normalized
+    }
+
+    /// Hash normalized type list
+    fn hash_normalized(&self, types: &[String]) -> String {
+        let mut hasher = Sha256::new();
+        for t in types {
+            hasher.update(t.as_bytes());
+        }
         format!("{:x}", hasher.finalize())
     }
 
@@ -633,7 +670,7 @@ mod tests {
 
         // Verify state
         match manager.state() {
-            ClipboardState::RdpOwned(f) => assert_eq!(f, &formats),
+            ClipboardState::RdpOwned(f, _timestamp) => assert_eq!(f, &formats),
             _ => panic!("Expected RdpOwned state"),
         }
     }
@@ -665,21 +702,31 @@ mod tests {
         });
         let mut manager = SyncManager::new(detector);
 
-        let formats = vec![ClipboardFormat {
+        // Use text formats for first RDP announcement
+        let text_formats = vec![ClipboardFormat {
             format_id: 13,
             format_name: "CF_UNICODETEXT".to_string(),
         }];
 
-        let mime_types = vec!["text/plain".to_string()];
+        // Use image formats for second RDP announcement (different type)
+        let image_formats = vec![ClipboardFormat {
+            format_id: 2,
+            format_name: "CF_BITMAP".to_string(),
+        }];
 
-        // First RDP announcement
-        assert!(manager.handle_rdp_formats(formats.clone()).unwrap());
+        let text_mime = vec!["text/plain".to_string()];
+        let image_mime = vec!["image/png".to_string()];
 
-        // Portal announcement (force=true to override RDP ownership in test)
-        assert!(manager.handle_portal_formats(mime_types, true).unwrap());
+        // First RDP announcement (text) - should succeed
+        assert!(manager.handle_rdp_formats(text_formats.clone()).unwrap());
 
-        // Second RDP announcement with same formats should be blocked
-        assert!(!manager.handle_rdp_formats(formats).unwrap());
+        // Second RDP announcement (different format type) - should succeed
+        assert!(manager.handle_rdp_formats(image_formats.clone()).unwrap());
+
+        // Simulating Portal echo of image - this triggers loop detection
+        // Now RDP trying to announce image again should be blocked (loop)
+        manager.loop_detector.record_portal_operation(image_mime);
+        assert!(!manager.handle_rdp_formats(image_formats).unwrap());
     }
 
     #[test]

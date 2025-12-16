@@ -15,12 +15,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use wrd_server::config::Config;
-use wrd_server::pipewire::{
-    MonitorInfo, MultiStreamConfig, MultiStreamCoordinator, PipeWireConnection, StreamConfig,
-    VideoFrame,
+use lamco_rdp_server::config::Config;
+use lamco_rdp_server::pipewire::{
+    MonitorInfo, MultiStreamConfig, MultiStreamCoordinator, PipeWireConnection, PixelFormat,
+    StreamConfig, VideoFrame,
 };
-use wrd_server::portal::PortalManager;
+use lamco_rdp_server::portal::PortalManager;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -197,18 +197,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn format_pixel_format(format: wrd_server::pipewire::PixelFormat) -> &'static str {
+fn format_pixel_format(format: PixelFormat) -> &'static str {
     match format {
-        wrd_server::pipewire::PixelFormat::BGRA => "BGRA",
-        wrd_server::pipewire::PixelFormat::BGRx => "BGRx",
-        wrd_server::pipewire::PixelFormat::RGBA => "RGBA",
-        wrd_server::pipewire::PixelFormat::RGBx => "RGBx",
-        wrd_server::pipewire::PixelFormat::RGB => "RGB",
-        wrd_server::pipewire::PixelFormat::BGR => "BGR",
-        wrd_server::pipewire::PixelFormat::GRAY8 => "GRAY8",
-        wrd_server::pipewire::PixelFormat::NV12 => "NV12",
-        wrd_server::pipewire::PixelFormat::YUY2 => "YUY2",
-        wrd_server::pipewire::PixelFormat::I420 => "I420",
+        PixelFormat::BGRA => "BGRA",
+        PixelFormat::BGRx => "BGRx",
+        PixelFormat::RGBA => "RGBA",
+        PixelFormat::RGBx => "RGBx",
+        PixelFormat::RGB => "RGB",
+        PixelFormat::BGR => "BGR",
+        PixelFormat::GRAY8 => "GRAY8",
+        PixelFormat::NV12 => "NV12",
+        PixelFormat::YUY2 => "YUY2",
+        PixelFormat::I420 => "I420",
     }
 }
 

@@ -149,7 +149,7 @@ impl WrdServer {
         };
 
         // Set clipboard in portal manager so create_session() can use it
-        if let Some(ref clipboard) = portal_clipboard {
+        if let Some(ref _clipboard) = portal_clipboard {
             // Need mutable access to portal_manager
             // Actually PortalManager doesn't have &mut method
             // Clipboard request needs to happen in create_session()
@@ -189,8 +189,8 @@ impl WrdServer {
 
         // Create ALL 4 multiplexer queues (full implementation)
         let (input_tx, input_rx) = tokio::sync::mpsc::channel(32); // Priority 1: Input
-        let (control_tx, control_rx) = tokio::sync::mpsc::channel(16); // Priority 2: Control
-        let (clipboard_tx, clipboard_rx) = tokio::sync::mpsc::channel(8); // Priority 3: Clipboard
+        let (_control_tx, control_rx) = tokio::sync::mpsc::channel(16); // Priority 2: Control
+        let (_clipboard_tx, clipboard_rx) = tokio::sync::mpsc::channel(8); // Priority 3: Clipboard
         let (graphics_tx, graphics_rx) = tokio::sync::mpsc::channel(4); // Priority 4: Graphics
         info!("📊 Full multiplexer queues created:");
         info!("   Input queue: 32 (Priority 1 - never starve)");

@@ -82,6 +82,8 @@ ironrdp-pdu = { git = "https://github.com/Devolutions/IronRDP", branch = "master
 ironrdp-displaycontrol = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
 ironrdp-cliprdr = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
 ironrdp-core = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-dvc = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-svc = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
 
 # -----------------------------------------------------------------------------
 # Wayland and Portal integration
@@ -110,6 +112,11 @@ xkbcommon = "0.7"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
 percent-encoding = "2.3"
 sha2 = "0.10"
+
+# -----------------------------------------------------------------------------
+# H.264 encoding (optional, for EGFX)
+# -----------------------------------------------------------------------------
+openh264 = { version = "0.6", optional = true }
 
 # -----------------------------------------------------------------------------
 # System and utilities
@@ -157,8 +164,12 @@ default = ["pam-auth"]
 wayland = ["wayland-client", "wayland-protocols"]
 pam-auth = ["pam"]
 
+# H.264 video encoding via EGFX channel
+# Requires OpenH264 (BSD licensed, source bundled)
+# For best performance, ensure `nasm` is installed (3x speedup)
+h264 = ["openh264"]
+
 # Future features (not yet implemented)
-# h264 = []           # H.264 video encoding
 # multimon = []       # Multi-monitor support
 
 # =============================================================================

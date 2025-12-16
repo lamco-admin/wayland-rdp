@@ -6,7 +6,27 @@
 use crate::clipboard::error::{ClipboardError, Result};
 use bytes::{BufMut, BytesMut};
 use image::{DynamicImage, ImageFormat};
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+
+/// Characters to percent-encode in file URI paths.
+/// We only encode control characters and characters with special URI meaning.
+/// Path-safe characters like `/`, `.`, `-`, `_` are preserved.
+const FILE_PATH_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')  // Space
+    .add(b'#')  // Fragment identifier
+    .add(b'?')  // Query string
+    .add(b'%')  // Percent (escape existing percent)
+    .add(b'"')  // Quote
+    .add(b'<')  // Less than
+    .add(b'>')  // Greater than
+    .add(b'[')  // Bracket
+    .add(b']')  // Bracket
+    .add(b'\\') // Backslash (Windows path separator)
+    .add(b'^')  // Caret
+    .add(b'`')  // Backtick
+    .add(b'{')  // Brace
+    .add(b'|')  // Pipe
+    .add(b'}'); // Brace
 use std::collections::HashMap;
 
 /// RDP Clipboard format IDs (Windows clipboard formats)
@@ -423,8 +443,7 @@ impl FormatConverter {
         let bit_count = u16::from_le_bytes([dib_data[14], dib_data[15]]);
 
         // Calculate image data size
-        let row_size = ((width.abs() as u32 * bit_count as u32 + 31) / 32) * 4;
-        let image_size = row_size * height.abs() as u32;
+        let _row_size = ((width.abs() as u32 * bit_count as u32 + 31) / 32) * 4;
 
         let file_size = 14 + dib_data.len() as u32;
         let pixel_offset = 14 + 40; // File header + DIB header
@@ -585,7 +604,7 @@ impl FormatConverter {
 
                         uri_list.push_str("file://");
                         uri_list
-                            .push_str(&utf8_percent_encode(&path, NON_ALPHANUMERIC).to_string());
+                            .push_str(&utf8_percent_encode(&path, FILE_PATH_ENCODE_SET).to_string());
                         uri_list.push('\n');
 
                         current_path.clear();
@@ -608,7 +627,7 @@ impl FormatConverter {
 
                         uri_list.push_str("file://");
                         uri_list
-                            .push_str(&utf8_percent_encode(&path, NON_ALPHANUMERIC).to_string());
+                            .push_str(&utf8_percent_encode(&path, FILE_PATH_ENCODE_SET).to_string());
                         uri_list.push('\n');
 
                         current_path.clear();
@@ -829,7 +848,8 @@ mod tests {
 
         let mime_types = converter.rdp_to_mime_types(&formats).unwrap();
         assert_eq!(mime_types.len(), 2);
-        assert!(mime_types.contains(&"text/plain".to_string()));
+        // CF_UNICODETEXT maps to text/plain;charset=utf-8
+        assert!(mime_types.contains(&"text/plain;charset=utf-8".to_string()));
         assert!(mime_types.contains(&"image/png".to_string()));
 
         // Test MIME to RDP
@@ -841,8 +861,14 @@ mod tests {
     fn test_format_id_to_mime() {
         let converter = FormatConverter::new();
 
+        // CF_UNICODETEXT is UTF-16LE, maps to UTF-8 text
         assert_eq!(
             converter.format_id_to_mime(CF_UNICODETEXT).unwrap(),
+            "text/plain;charset=utf-8"
+        );
+        // CF_TEXT is ASCII/ANSI, maps to plain text without charset
+        assert_eq!(
+            converter.format_id_to_mime(CF_TEXT).unwrap(),
             "text/plain"
         );
         assert_eq!(converter.format_id_to_mime(CF_PNG).unwrap(), "image/png");
@@ -853,9 +879,15 @@ mod tests {
     fn test_mime_to_format_id() {
         let converter = FormatConverter::new();
 
+        // text/plain;charset=utf-8 maps to CF_UNICODETEXT (13)
+        assert_eq!(
+            converter.mime_to_format_id("text/plain;charset=utf-8").unwrap(),
+            CF_UNICODETEXT
+        );
+        // text/plain (no charset) maps to CF_TEXT (1)
         assert_eq!(
             converter.mime_to_format_id("text/plain").unwrap(),
-            CF_UNICODETEXT
+            CF_TEXT
         );
         assert_eq!(converter.mime_to_format_id("image/png").unwrap(), CF_PNG);
         assert_eq!(converter.mime_to_format_id("text/html").unwrap(), CF_HTML);

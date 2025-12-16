@@ -219,13 +219,16 @@ impl Histogram {
     }
 }
 
-/// Calculate percentile from sorted values
+/// Calculate percentile from sorted values using the "inclusive" method
+/// (equivalent to Excel's PERCENTILE.INC or NumPy's percentile with 'lower' interpolation)
 fn percentile(sorted_values: &[f64], p: f64) -> f64 {
     if sorted_values.is_empty() {
         return 0.0;
     }
 
-    let index = ((sorted_values.len() as f64) * p) as usize;
+    // Use (n-1) * p formula for inclusive percentile calculation
+    // This maps p=0 to first element and p=1 to last element
+    let index = ((sorted_values.len() - 1) as f64 * p) as usize;
     let index = index.min(sorted_values.len() - 1);
     sorted_values[index]
 }
