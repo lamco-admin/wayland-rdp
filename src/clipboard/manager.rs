@@ -128,7 +128,7 @@ pub struct ClipboardManager {
     shutdown_tx: Option<mpsc::Sender<()>>,
 
     /// Portal clipboard manager for read/write operations (wrapped for dynamic update)
-    portal_clipboard: Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+    portal_clipboard: Arc<RwLock<Option<Arc<crate::portal::PortalClipboardManager>>>>,
 
     /// Portal session (shared with input handler, wrapped for concurrent access and dynamic update)
     portal_session: Arc<
@@ -230,7 +230,7 @@ impl ClipboardManager {
     /// Set Portal clipboard manager and session (async to acquire write lock)
     pub async fn set_portal_clipboard(
         &mut self,
-        portal: Arc<crate::portal::clipboard::ClipboardManager>,
+        portal: Arc<crate::portal::PortalClipboardManager>,
         session: Arc<
             Mutex<
                 ashpd::desktop::Session<
@@ -272,7 +272,7 @@ impl ClipboardManager {
     /// 6. We write data via SelectionWrite using tracked serial
     async fn start_selection_transfer_listener(
         &self,
-        portal: Arc<crate::portal::clipboard::ClipboardManager>,
+        portal: Arc<crate::portal::PortalClipboardManager>,
         _session: Arc<
             Mutex<
                 ashpd::desktop::Session<
@@ -528,7 +528,7 @@ impl ClipboardManager {
     /// Polls the clipboard every 500ms to detect changes.
     async fn start_clipboard_polling_fallback(
         &self,
-        portal: Arc<crate::portal::clipboard::ClipboardManager>,
+        portal: Arc<crate::portal::PortalClipboardManager>,
         session: Arc<
             Mutex<
                 ashpd::desktop::Session<
@@ -628,7 +628,7 @@ impl ClipboardManager {
     /// 7. We send FormatDataResponse to RDP client
     async fn start_owner_changed_listener(
         &self,
-        portal: Arc<crate::portal::clipboard::ClipboardManager>,
+        portal: Arc<crate::portal::PortalClipboardManager>,
         _session: Arc<
             Mutex<
                 ashpd::desktop::Session<
@@ -942,7 +942,7 @@ impl ClipboardManager {
         sync_manager: &Arc<RwLock<SyncManager>>,
         transfer_engine: &TransferEngine,
         _config: &ClipboardConfig,
-        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::PortalClipboardManager>>>>,
         portal_session: &Arc<
             RwLock<
                 Option<
@@ -1046,7 +1046,7 @@ impl ClipboardManager {
         formats: Vec<ClipboardFormat>,
         converter: &FormatConverter,
         sync_manager: &Arc<RwLock<SyncManager>>,
-        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::PortalClipboardManager>>>>,
         portal_session: &Arc<
             RwLock<
                 Option<
@@ -1129,7 +1129,7 @@ impl ClipboardManager {
         format_id: u32,
         converter: &FormatConverter,
         _sync_manager: &Arc<RwLock<SyncManager>>,
-        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::PortalClipboardManager>>>>,
         portal_session: &Arc<
             RwLock<
                 Option<
@@ -1280,7 +1280,7 @@ impl ClipboardManager {
         data: Vec<u8>,
         sync_manager: &Arc<RwLock<SyncManager>>,
         _transfer_engine: &TransferEngine,
-        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::PortalClipboardManager>>>>,
         portal_session: &Arc<
             RwLock<
                 Option<
@@ -1456,7 +1456,7 @@ impl ClipboardManager {
     /// We need to notify Portal that the transfer failed via selection_write_done(false),
     /// otherwise Portal will keep retrying which can crash xdg-desktop-portal.
     async fn handle_rdp_data_error(
-        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::PortalClipboardManager>>>>,
         portal_session: &Arc<
             RwLock<
                 Option<
@@ -1633,7 +1633,7 @@ impl ClipboardManager {
         mime_type: String,
         converter: &FormatConverter,
         _sync_manager: &Arc<RwLock<SyncManager>>,
-        _portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::clipboard::ClipboardManager>>>>,
+        _portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::PortalClipboardManager>>>>,
         _portal_session: &Arc<
             RwLock<
                 Option<

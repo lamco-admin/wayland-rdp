@@ -1,115 +1,169 @@
 [package]
-name = "wrd-server"
+name = "lamco-rdp-server"
 version = "0.1.0"
 edition = "2021"
-authors = ["WRD-Server Contributors"]
-description = "Wayland Remote Desktop Server using RDP protocol"
+rust-version = "1.77"
+authors = ["Lamco <contact@lamco.ai>"]
+description = "Wayland RDP server - Portal mode for Linux desktop sharing"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/lamco-admin/wayland-rdp"
+repository = "https://github.com/lamco-admin/lamco-rdp-server"
+homepage = "https://lamco.ai"
+keywords = ["rdp", "wayland", "remote-desktop", "linux", "screen-sharing"]
+categories = ["network-programming", "multimedia"]
 
 [[bin]]
-name = "wrd-server"
+name = "lamco-rdp-server"
 path = "src/main.rs"
 
 [lib]
-name = "wrd_server"
+name = "lamco_rdp_server"
 path = "src/lib.rs"
 
+# =============================================================================
+# Dependencies
+# =============================================================================
+
 [dependencies]
+# -----------------------------------------------------------------------------
+# Lamco crates (published to crates.io)
+# -----------------------------------------------------------------------------
+lamco-wayland = "0.1"         # Meta: portal + pipewire + video
+lamco-rdp = "0.1"             # Meta: input + clipboard
+lamco-portal = "0.1"          # XDG Portal integration
+lamco-pipewire = "0.1"        # PipeWire screen capture
+lamco-video = "0.1"           # Video frame processing
+lamco-rdp-input = "0.1"       # Input event translation
+lamco-clipboard-core = "0.1"  # Clipboard utilities
+lamco-rdp-clipboard = "0.1"   # IronRDP clipboard integration
+
+# -----------------------------------------------------------------------------
 # Async runtime
+# -----------------------------------------------------------------------------
 tokio = { version = "1.35", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 futures = "0.3"
+futures-util = "0.3"
+async-trait = "0.1"
 
+# -----------------------------------------------------------------------------
 # Configuration and CLI
+# -----------------------------------------------------------------------------
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 clap = { version = "4.4", features = ["derive", "env"] }
 
+# -----------------------------------------------------------------------------
 # Logging and tracing
+# -----------------------------------------------------------------------------
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 tracing-appender = "0.2"
 
+# -----------------------------------------------------------------------------
 # Error handling
+# -----------------------------------------------------------------------------
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2"
 
+# -----------------------------------------------------------------------------
 # Networking and protocols
+# -----------------------------------------------------------------------------
 bytes = "1.5"
-# Note: rustls and tokio-rustls provided by ironrdp-server (v0.23)
-rustls-pemfile = "2.2" # Updated to match rustls 0.23
+rustls-pemfile = "2.2"
 
-# RDP protocol
-# Using glamberson/IronRDP fork - Clean fork from Devolutions/IronRDP master
-# Branch: from-devolutions-clean = Devolutions master + ONLY server clipboard patch
-# Clipboard fix: Servers bypass client state machine to announce clipboard ownership (CB_FORMAT_LIST)
-ironrdp = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean", default-features = false, features = ["server"] }
-ironrdp-server = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean" }
-ironrdp-tokio = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean", features = ["reqwest"] }
-ironrdp-pdu = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean" }
-ironrdp-displaycontrol = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean" }
-ironrdp-cliprdr = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean" }
-ironrdp-core = { git = "https://github.com/glamberson/IronRDP", branch = "from-devolutions-clean" }
-async-trait = "0.1"
+# -----------------------------------------------------------------------------
+# RDP protocol (IronRDP from master - not yet published to crates.io)
+# -----------------------------------------------------------------------------
+ironrdp = { git = "https://github.com/Devolutions/IronRDP", branch = "master", default-features = false, features = ["server"] }
+ironrdp-server = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-tokio = { git = "https://github.com/Devolutions/IronRDP", branch = "master", features = ["reqwest"] }
+ironrdp-pdu = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-displaycontrol = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-cliprdr = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-core = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
 
-# Video encoding
-# Note: These will be added when video encoding is implemented
-
+# -----------------------------------------------------------------------------
 # Wayland and Portal integration
+# -----------------------------------------------------------------------------
 wayland-client = { version = "0.31", optional = true }
 wayland-protocols = { version = "0.31", features = ["client"], optional = true }
 ashpd = { version = "0.12.0", features = ["tokio"] }
 zbus = "4.0.1"
 enumflags2 = "0.7"
 
+# -----------------------------------------------------------------------------
 # PipeWire integration
+# -----------------------------------------------------------------------------
 pipewire = "0.8"
 libspa = "0.8"
 libspa-sys = "0.8"
 
+# -----------------------------------------------------------------------------
 # Input handling
-# libei is not yet available on crates.io
+# -----------------------------------------------------------------------------
 xkbcommon = "0.7"
 
-# Clipboard and image processing
-image = { version = "0.24", features = ["png", "jpeg", "bmp"] }
+# -----------------------------------------------------------------------------
+# Image processing
+# -----------------------------------------------------------------------------
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
 percent-encoding = "2.3"
 sha2 = "0.10"
-# Clipboard via Portal API (delayed rendering)
-futures-util = "0.3"  # For Portal signal streams
 
+# -----------------------------------------------------------------------------
 # System and utilities
+# -----------------------------------------------------------------------------
 nix = { version = "0.27", features = ["signal", "process", "mman"] }
 libc = "0.2"
 chrono = "0.4"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 sysinfo = "0.30"
 
+# -----------------------------------------------------------------------------
 # Memory management
+# -----------------------------------------------------------------------------
 memmap2 = "0.9"
 crossbeam-channel = "0.5"
 parking_lot = "0.12"
 
+# -----------------------------------------------------------------------------
 # Certificate generation
+# -----------------------------------------------------------------------------
 rcgen = "0.12"
 time = { version = "0.3", features = ["formatting", "macros"] }
 
-# Authentication (optional, for PAM support)
+# -----------------------------------------------------------------------------
+# Authentication (optional)
+# -----------------------------------------------------------------------------
 pam = { version = "0.7", optional = true }
 
+# =============================================================================
+# Dev Dependencies
+# =============================================================================
+
 [dev-dependencies]
-# Testing
 criterion = { version = "0.5", features = ["html_reports"] }
 mockall = "0.12"
 tempfile = "3.8"
 proptest = "1.4"
 
+# =============================================================================
+# Features
+# =============================================================================
+
 [features]
 default = ["pam-auth"]
 wayland = ["wayland-client", "wayland-protocols"]
 pam-auth = ["pam"]
+
+# Future features (not yet implemented)
+# h264 = []           # H.264 video encoding
+# multimon = []       # Multi-monitor support
+
+# =============================================================================
+# Profiles
+# =============================================================================
 
 [profile.release]
 opt-level = 3
@@ -121,10 +175,22 @@ strip = true
 opt-level = 0
 debug = true
 
-[[bench]]
-name = "video_encoding"
-harness = false
+# =============================================================================
+# Lints
+# =============================================================================
 
-[[bench]]
-name = "network_throughput"
-harness = false
+[lints.rust]
+unsafe_code = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+elided_lifetimes_in_paths = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+wildcard_imports = "warn"
+large_futures = "warn"
+
+# Relaxed for coordinate/graphics code
+as_conversions = "allow"
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"

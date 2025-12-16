@@ -82,10 +82,7 @@ use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::input::coordinates::{CoordinateTransformer, MonitorInfo};
-use crate::input::error::InputError;
-use crate::input::keyboard::KeyboardHandler;
-use crate::input::mouse::{MouseButton, MouseHandler};
+use crate::input::{CoordinateTransformer, InputError, KeyboardHandler, MonitorInfo, MouseButton, MouseHandler};
 use crate::portal::RemoteDesktopManager;
 
 /// WRD Input Handler
@@ -301,9 +298,9 @@ impl WrdInputHandler {
 
                 // Extract keycode from our event
                 let keycode = match kbd_event {
-                    crate::input::keyboard::KeyboardEvent::KeyDown { keycode, .. }
-                    | crate::input::keyboard::KeyboardEvent::KeyRepeat { keycode, .. } => keycode,
-                    crate::input::keyboard::KeyboardEvent::KeyUp { keycode, .. } => {
+                    crate::input::KeyboardEvent::KeyDown { keycode, .. }
+                    | crate::input::KeyboardEvent::KeyRepeat { keycode, .. } => keycode,
+                    crate::input::KeyboardEvent::KeyUp { keycode, .. } => {
                         // handle_key_down returned KeyUp (shouldn't happen but handle gracefully)
                         warn!(
                             "handle_key_down returned KeyUp for code {} - using keycode anyway",
@@ -354,7 +351,7 @@ impl WrdInputHandler {
 
                 // Extract keycode from our event
                 let keycode = match kbd_event {
-                    crate::input::keyboard::KeyboardEvent::KeyUp { keycode, .. } => keycode,
+                    crate::input::KeyboardEvent::KeyUp { keycode, .. } => keycode,
                     _ => {
                         return Err(InputError::InvalidKeyEvent(
                             "Unexpected event type".to_string(),
@@ -441,7 +438,7 @@ impl WrdInputHandler {
 
                 // Extract coordinates from our event
                 let (stream_x, stream_y) = match mouse_event {
-                    crate::input::mouse::MouseEvent::Move { x, y, .. } => (x, y),
+                    crate::input::MouseEvent::Move { x, y, .. } => (x, y),
                     _ => {
                         return Err(InputError::InvalidMouseEvent(
                             "Unexpected event type".to_string(),
@@ -467,7 +464,7 @@ impl WrdInputHandler {
 
                 // Extract coordinates
                 let (stream_x, stream_y) = match mouse_event {
-                    crate::input::mouse::MouseEvent::Move { x, y, .. } => (x, y),
+                    crate::input::MouseEvent::Move { x, y, .. } => (x, y),
                     _ => {
                         return Err(InputError::InvalidMouseEvent(
                             "Unexpected event type".to_string(),

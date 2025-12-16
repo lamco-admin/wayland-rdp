@@ -7,8 +7,8 @@ use clap::Parser;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use wrd_server::config::Config;
-use wrd_server::server::WrdServer;
+use lamco_rdp_server::config::Config;
+use lamco_rdp_server::server::WrdServer;
 
 /// Command-line arguments for wrd-server
 #[derive(Parser, Debug)]
@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
     info!("Starting WRD-Server v{}", env!("CARGO_PKG_VERSION"));
 
     // Log startup diagnostics
-    wrd_server::utils::log_startup_diagnostics();
+    lamco_rdp_server::utils::log_startup_diagnostics();
 
     // Load configuration
     let config = Config::load(&args.config).or_else(|e| {
@@ -69,14 +69,14 @@ async fn main() -> Result<()> {
     let server = match WrdServer::new(config).await {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("{}", wrd_server::utils::format_user_error(&e));
+            eprintln!("{}", lamco_rdp_server::utils::format_user_error(&e));
             return Err(e);
         }
     };
 
     info!("Starting WRD Server");
     if let Err(e) = server.run().await {
-        eprintln!("{}", wrd_server::utils::format_user_error(&e));
+        eprintln!("{}", lamco_rdp_server::utils::format_user_error(&e));
         return Err(e);
     }
 
@@ -97,7 +97,7 @@ fn init_logging(args: &Args) -> Result<()> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         // Enable ironrdp_cliprdr logging to debug state machine issues
         tracing_subscriber::EnvFilter::new(format!(
-            "wrd_server={},ironrdp_cliprdr=trace,ironrdp_server=trace,warn",
+            "lamco_rdp_server={},ironrdp_cliprdr=trace,ironrdp_server=trace,warn",
             log_level
         ))
     });

@@ -165,7 +165,7 @@ impl LayoutCalculator {
     /// Returns error if layout calculation fails
     pub fn calculate_layout(
         &self,
-        streams: &[crate::portal::session::StreamInfo],
+        streams: &[crate::portal::StreamInfo],
     ) -> Result<VirtualDesktop, LayoutError> {
         if streams.is_empty() {
             return Err(LayoutError::NoMonitors);
@@ -203,7 +203,7 @@ impl LayoutCalculator {
     /// Preserve Portal-reported monitor positions
     fn preserve_positions(
         &self,
-        streams: &[crate::portal::session::StreamInfo],
+        streams: &[crate::portal::StreamInfo],
     ) -> Result<Vec<MonitorLayout>, LayoutError> {
         let layouts: Vec<MonitorLayout> = streams
             .iter()
@@ -224,7 +224,7 @@ impl LayoutCalculator {
     /// Arrange monitors horizontally (left to right)
     fn arrange_horizontal(
         &self,
-        streams: &[crate::portal::session::StreamInfo],
+        streams: &[crate::portal::StreamInfo],
     ) -> Result<Vec<MonitorLayout>, LayoutError> {
         let mut layouts = Vec::new();
         let mut current_x = 0i32;
@@ -248,7 +248,7 @@ impl LayoutCalculator {
     /// Arrange monitors vertically (top to bottom)
     fn arrange_vertical(
         &self,
-        streams: &[crate::portal::session::StreamInfo],
+        streams: &[crate::portal::StreamInfo],
     ) -> Result<Vec<MonitorLayout>, LayoutError> {
         let mut layouts = Vec::new();
         let mut current_y = 0i32;
@@ -272,7 +272,7 @@ impl LayoutCalculator {
     /// Arrange monitors in grid pattern
     fn arrange_grid(
         &self,
-        streams: &[crate::portal::session::StreamInfo],
+        streams: &[crate::portal::StreamInfo],
         rows: u32,
         cols: u32,
     ) -> Result<Vec<MonitorLayout>, LayoutError> {

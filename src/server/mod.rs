@@ -78,7 +78,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::clipboard::{ClipboardConfig, ClipboardManager, WrdCliprdrFactory};
 use crate::config::Config;
-use crate::input::coordinates::MonitorInfo as InputMonitorInfo;
+use crate::input::MonitorInfo as InputMonitorInfo;
 use crate::portal::PortalManager;
 use crate::security::TlsConfig;
 
@@ -119,17 +119,19 @@ impl WrdServer {
         info!("Initializing WRD Server");
         let config = Arc::new(config);
 
-        // Initialize Portal manager
+        // Initialize Portal manager with default config
+        // TODO: Map our config settings to PortalConfig if needed
         info!("Setting up Portal connection");
+        let portal_config = lamco_portal::PortalConfig::default();
         let portal_manager = Arc::new(
-            PortalManager::new(&config)
+            PortalManager::new(portal_config)
                 .await
                 .context("Failed to initialize Portal manager")?,
         );
 
         // Create Portal Clipboard BEFORE creating session (if enabled)
         let portal_clipboard = if config.clipboard.enabled {
-            match crate::portal::clipboard::ClipboardManager::new().await {
+            match crate::portal::PortalClipboardManager::new().await {
                 Ok(clipboard_mgr) => {
                     info!("Portal Clipboard manager created");
                     Some(Arc::new(clipboard_mgr))
@@ -155,8 +157,9 @@ impl WrdServer {
 
         // Create combined portal session (pass clipboard to be enabled at correct time)
         info!("Creating combined portal session");
+        let session_id = format!("lamco-rdp-{}", uuid::Uuid::new_v4());
         let session_handle = portal_manager
-            .create_session(portal_clipboard.as_ref().map(|c| c.as_ref()))
+            .create_session(session_id, portal_clipboard.as_ref().map(|c| c.as_ref()))
             .await
             .context("Failed to create portal session")?;
 
