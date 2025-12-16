@@ -9,7 +9,7 @@ use tracing::{debug, info};
 
 use crate::multimon::layout::{Layout, LayoutCalculator, LayoutStrategy};
 use crate::multimon::Result;
-use crate::portal::session::StreamInfo;
+use crate::portal::StreamInfo;
 
 /// Monitor information
 #[derive(Debug, Clone)]

@@ -76,11 +76,10 @@ use std::time::Instant;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::pipewire::frame::VideoFrame;
-use crate::pipewire::pw_thread::{PipeWireThreadCommand, PipeWireThreadManager};
-use crate::portal::session::StreamInfo;
+use crate::pipewire::{PipeWireThreadCommand, PipeWireThreadManager, VideoFrame};
+use crate::portal::StreamInfo;
 use crate::server::event_multiplexer::GraphicsFrame;
-use crate::video::converter::{BitmapConverter, BitmapUpdate, RdpPixelFormat};
+use crate::video::{BitmapConverter, BitmapUpdate, RdpPixelFormat};
 
 /// Frame rate regulator using token bucket algorithm
 ///
@@ -199,14 +198,14 @@ impl WrdDisplayHandler {
 
         // Create streams on the PipeWire thread
         for (idx, stream) in stream_info.iter().enumerate() {
-            let config = crate::pipewire::stream::StreamConfig {
+            let config = lamco_pipewire::StreamConfig {
                 name: format!("monitor-{}", idx),
                 width: stream.size.0,
                 height: stream.size.1,
                 framerate: 60,
                 use_dmabuf: true,
                 buffer_count: 3,
-                preferred_format: Some(crate::pipewire::format::PixelFormat::BGRx),
+                preferred_format: Some(lamco_pipewire::PixelFormat::BGRx),
             };
 
             // Send create stream command to PipeWire thread

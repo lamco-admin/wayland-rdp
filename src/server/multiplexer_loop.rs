@@ -10,10 +10,7 @@ use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, warn};
 
-use crate::input::coordinates::CoordinateTransformer;
-use crate::input::error::InputError;
-use crate::input::keyboard::KeyboardHandler;
-use crate::input::mouse::MouseHandler;
+use crate::input::{CoordinateTransformer, InputError, KeyboardHandler, MouseHandler};
 use crate::portal::RemoteDesktopManager;
 
 // Re-export InputEvent from input_handler
@@ -109,7 +106,7 @@ async fn process_keyboard_event(
     event: IronKeyboardEvent,
     _stream_id: u32,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use crate::input::keyboard::KeyboardEvent;
+    use crate::input::KeyboardEvent;
 
     let mut keyboard = keyboard_handler.lock().await;
     let session_guard = session.lock().await;
@@ -168,7 +165,7 @@ async fn process_mouse_event(
     event: IronMouseEvent,
     stream_id: u32,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use crate::input::mouse::{MouseButton, MouseEvent as WrdMouseEvent};
+    use crate::input::{MouseButton, MouseEvent as WrdMouseEvent};
 
     let mut mouse = mouse_handler.lock().await;
     let mut transformer = coord_transformer.lock().await;
