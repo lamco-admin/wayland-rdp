@@ -35,3 +35,7 @@ pub mod compositor;
 // Direct login service (optional, requires headless-compositor)
 #[cfg(all(feature = "headless-compositor", feature = "pam-auth"))]
 pub mod login;
+
+// Headless RDP server infrastructure (multi-user, cloud-native deployment)
+#[cfg(any(feature = "headless", feature = "full-headless"))]
+pub mod headless;

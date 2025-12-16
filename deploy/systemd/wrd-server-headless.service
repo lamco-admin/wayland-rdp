@@ -1,0 +1,61 @@
+[Unit]
+Description=WRD Server Headless - Multi-User RDP Server
+Documentation=https://github.com/lamco-admin/wayland-rdp
+After=network.target network-online.target
+Wants=network-online.target
+Requires=dbus.service
+After=dbus.service
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/wrd-server --headless --config /etc/wrd-server/headless.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/wrd-server /var/log/wrd-server /run/wrd-server
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+PrivateMounts=yes
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=512
+MemoryMax=16G
+CPUQuota=800%
+
+# cgroups delegation for per-session isolation
+Delegate=yes
+DelegateSubgroup=wrd-sessions
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wrd-server
+
+# User and permissions
+User=wrd-server
+Group=wrd-server
+SupplementaryGroups=video render input
+
+# Environment
+Environment="XDG_RUNTIME_DIR=/run/wrd-server"
+Environment="WRD_MODE=headless"
+
+[Install]
+WantedBy=multi-user.target
