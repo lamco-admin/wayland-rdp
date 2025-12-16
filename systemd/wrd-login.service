@@ -1,0 +1,34 @@
+[Unit]
+Description=WRD Direct Login Service
+Documentation=https://github.com/lamco-admin/wayland-rdp
+After=network.target systemd-logind.service dbus.service
+Requires=systemd-logind.service dbus.service
+Before=multi-user.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/wrd-login-daemon --config /etc/wrd-login/config.toml
+Restart=on-failure
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/user /var/log/wrd-login
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+# Resource limits (daemon itself, not user sessions)
+MemoryLimit=256M
+CPUQuota=50%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wrd-login
+
+[Install]
+WantedBy=multi-user.target
