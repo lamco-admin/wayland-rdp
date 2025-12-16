@@ -194,3 +194,28 @@ as_conversions = "allow"
 cast_lossless = "allow"
 cast_possible_truncation = "allow"
 cast_possible_wrap = "allow"
+
+# =============================================================================
+# Patches - Override transitive dependencies
+# =============================================================================
+#
+# The published lamco-* crates depend on IronRDP 0.5.0 (last published version).
+# We need features from git master, so we patch ALL IronRDP crates to use
+# the same git source. This ensures consistency across the entire dependency tree.
+#
+# When Devolutions publishes a new IronRDP version, we can:
+# 1. Update lamco crates to use the new version
+# 2. Remove this [patch] section
+# =============================================================================
+
+[patch.crates-io]
+ironrdp = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-pdu = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-server = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-graphics = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-cliprdr = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-svc = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-dvc = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-core = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-tokio = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp-displaycontrol = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
