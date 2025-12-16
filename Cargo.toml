@@ -115,6 +115,32 @@ time = { version = "0.3", features = ["formatting", "macros"] }
 # Authentication (optional, for PAM support)
 pam = { version = "0.7", optional = true }
 
+# Headless compositor support (Smithay)
+smithay = { version = "0.3", optional = true }
+smithay-client-toolkit = { version = "0.18", optional = true }
+
+# Systemd integration for session management
+sd-notify = { version = "0.4", optional = true }
+systemd = { version = "0.10", optional = true }
+
+# User/group management
+users = "0.11"
+uzers = "0.12"
+
+# Process and resource management
+procfs = { version = "0.16", optional = true }
+
+# DRM/KMS for headless rendering
+drm = { version = "0.11", optional = true }
+gbm = { version = "0.14", optional = true }
+
+# EGL for OpenGL ES rendering in headless mode
+glutin = { version = "0.31", optional = true }
+
+# Additional graphics support
+gl = { version = "0.14", optional = true }
+glow = { version = "0.13", optional = true }
+
 [dev-dependencies]
 # Testing
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -133,6 +159,10 @@ headless-compositor = [
     "wayland-protocols-misc",
     "calloop",
 ]
+headless = ["smithay", "smithay-client-toolkit", "drm", "gbm", "glutin", "gl", "glow"]
+systemd-integration = ["sd-notify", "systemd"]
+resource-management = ["procfs"]
+full-headless = ["headless", "systemd-integration", "resource-management", "pam-auth"]
 
 [profile.release]
 opt-level = 3
