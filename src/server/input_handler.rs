@@ -96,10 +96,16 @@ use crate::portal::RemoteDesktopManager;
 /// Input event for batching/multiplexing
 #[derive(Debug)]
 pub enum InputEvent {
+    /// Keyboard event from RDP client
     Keyboard(IronKeyboardEvent),
+    /// Mouse event from RDP client
     Mouse(IronMouseEvent),
 }
 
+/// WRD input handler that bridges IronRDP input events to Portal injection
+///
+/// Receives keyboard and mouse events from RDP clients and injects them
+/// into the Wayland compositor via the Portal RemoteDesktop API.
 pub struct WrdInputHandler {
     /// Portal RemoteDesktop manager for input injection
     portal: Arc<RemoteDesktopManager>,

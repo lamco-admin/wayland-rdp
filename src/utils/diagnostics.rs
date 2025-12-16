@@ -10,20 +10,21 @@ use tracing::info;
 /// System information for diagnostics
 #[derive(Debug, Clone)]
 pub struct SystemInfo {
-    /// OS name and version
+    /// Operating system name (e.g., "Linux", "Ubuntu")
     pub os_name: String,
+    /// Operating system version string
     pub os_version: String,
 
-    /// Kernel version
+    /// Kernel version string
     pub kernel_version: String,
 
-    /// CPU count
+    /// Number of logical CPU cores
     pub cpu_count: usize,
 
-    /// Total memory in MB
+    /// Total system memory in megabytes
     pub total_memory_mb: u64,
 
-    /// Hostname
+    /// System hostname
     pub hostname: String,
 }
 
