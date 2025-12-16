@@ -86,7 +86,6 @@ async fn main() -> Result<()> {
 
 fn init_logging(args: &Args) -> Result<()> {
     use std::fs::File;
-    use tracing_subscriber::fmt::format::FmtSpan;
 
     let log_level = match args.verbose {
         0 => "info",

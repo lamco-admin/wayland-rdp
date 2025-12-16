@@ -6,15 +6,11 @@
 use ironrdp_cliprdr::backend::ClipboardMessage;
 use ironrdp_server::{KeyboardEvent as IronKeyboardEvent, MouseEvent as IronMouseEvent};
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
-use crate::input::{CoordinateTransformer, InputError, KeyboardHandler, MouseHandler};
+use crate::input::{CoordinateTransformer, KeyboardHandler, MouseHandler};
 use crate::portal::RemoteDesktopManager;
-
-// Re-export InputEvent from input_handler
-pub use crate::server::input_handler::InputEvent;
 
 /// Control event for session management
 #[derive(Debug)]

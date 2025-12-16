@@ -67,6 +67,17 @@ pub mod utils;
 /// to bridge the two systems.
 pub mod clipboard;
 
+/// EGFX (RDP Graphics Pipeline Extension) for H.264 video streaming
+///
+/// This module implements the server-side EGFX channel for hardware-accelerated
+/// H.264 video encoding over RDP. Requires the `h264` feature.
+///
+/// EGFX uses Dynamic Virtual Channels (DVC) and provides:
+/// - AVC420 (H.264 YUV420) codec support
+/// - Surface management for multi-monitor
+/// - Flow control via frame acknowledgments
+pub mod egfx;
+
 // =============================================================================
 // Re-exports from published lamco crates (for convenience)
 // =============================================================================

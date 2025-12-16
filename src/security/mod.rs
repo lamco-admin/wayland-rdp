@@ -89,7 +89,9 @@ mod tests {
         // In real test environment with certs, this should pass
         if result.is_ok() {
             let manager = result.unwrap();
-            let _acceptor = manager.create_acceptor();
+            // Verify we can get the server config and authenticator
+            let _server_config = manager.server_config();
+            let _authenticator = manager.authenticator();
         }
     }
 }

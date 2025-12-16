@@ -13,7 +13,7 @@ use ironrdp_server::ServerEventSender;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::clipboard::formats::ClipboardFormat as WrdClipboardFormat;
 use crate::clipboard::manager::{ClipboardEvent, ClipboardManager};

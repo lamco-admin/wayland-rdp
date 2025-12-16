@@ -111,8 +111,8 @@ impl DbusBridge {
             .as_ref()
             .ok_or_else(|| zbus::Error::Failure("Not connected".into()))?;
 
-        let bus_name: BusName = DBUS_SERVICE.try_into().unwrap();
-        let interface: zbus::names::InterfaceName = DBUS_INTERFACE.try_into().unwrap();
+        let bus_name: BusName<'_> = DBUS_SERVICE.try_into().unwrap();
+        let interface: zbus::names::InterfaceName<'_> = DBUS_INTERFACE.try_into().unwrap();
 
         let reply: String = conn
             .call_method(
@@ -136,8 +136,8 @@ impl DbusBridge {
             .as_ref()
             .ok_or_else(|| zbus::Error::Failure("Not connected".into()))?;
 
-        let bus_name: BusName = DBUS_SERVICE.try_into().unwrap();
-        let interface: zbus::names::InterfaceName = DBUS_INTERFACE.try_into().unwrap();
+        let bus_name: BusName<'_> = DBUS_SERVICE.try_into().unwrap();
+        let interface: zbus::names::InterfaceName<'_> = DBUS_INTERFACE.try_into().unwrap();
 
         let reply: String = conn
             .call_method(
@@ -161,8 +161,8 @@ impl DbusBridge {
             .as_ref()
             .ok_or_else(|| zbus::Error::Failure("Not connected".into()))?;
 
-        let bus_name: BusName = DBUS_SERVICE.try_into().unwrap();
-        let interface: zbus::names::InterfaceName = DBUS_INTERFACE.try_into().unwrap();
+        let bus_name: BusName<'_> = DBUS_SERVICE.try_into().unwrap();
+        let interface: zbus::names::InterfaceName<'_> = DBUS_INTERFACE.try_into().unwrap();
 
         let reply: String = conn
             .call_method(Some(bus_name), DBUS_PATH, Some(interface), "GetText", &())

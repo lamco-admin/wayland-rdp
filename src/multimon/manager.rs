@@ -263,7 +263,7 @@ mod tests {
             node_id: 42,
             position: (0, 0),
             size: (1920, 1080),
-            source_type: crate::portal::session::SourceType::Monitor,
+            source_type: crate::portal::SourceType::Monitor,
         };
 
         let monitor = MonitorInfo::from_stream_info(&stream, true);

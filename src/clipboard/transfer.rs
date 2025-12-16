@@ -458,21 +458,28 @@ mod tests {
             ..Default::default()
         });
 
-        // Large data
+        // Large data to ensure transfer takes enough time for cancellation to be processed
+        // With 1KB chunks and 100us delay per chunk, 1MB = ~1024 chunks = ~100ms minimum
         let data = Bytes::from(vec![0u8; 1024 * 1024]);
 
         let (mut handle, _chunk_rx) = engine.send_chunked(data).await.unwrap();
 
-        // Cancel immediately
+        // Give the transfer task a moment to start and send initial InProgress
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Cancel the transfer
         handle.cancel().await.unwrap();
 
-        // Wait for cancellation
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Use wait() to get the terminal state - it will return Cancelled error or Completed
+        let result = handle.wait().await;
 
-        // Check progress
-        if let Some(progress) = handle.progress().await {
-            assert_eq!(progress.state, TransferState::Cancelled);
-        }
+        // The cancel should be processed since the transfer takes much longer than our timing
+        // wait() returns Err(TransferCancelled) for cancelled transfers
+        assert!(
+            matches!(result, Err(ClipboardError::TransferCancelled)),
+            "Expected transfer to be cancelled, got: {:?}",
+            result
+        );
     }
 
     #[tokio::test]

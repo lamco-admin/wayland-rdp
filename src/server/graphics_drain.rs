@@ -29,12 +29,7 @@
 //! - **Isolation:** Graphics congestion cannot affect other subsystems
 //! - **Statistics:** Track drops and coalescing for monitoring
 
-use anyhow::Result;
-use bytes::Bytes;
-use ironrdp_server::{
-    BitmapUpdate as IronBitmapUpdate, DisplayUpdate, PixelFormat as IronPixelFormat,
-};
-use std::num::{NonZeroU16, NonZeroUsize};
+use ironrdp_server::DisplayUpdate;
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace, warn};
 
