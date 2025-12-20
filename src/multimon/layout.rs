@@ -108,7 +108,7 @@ pub struct LayoutCalculator {
 /// Alignment for monitor positioning
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)] // Future feature for advanced layout
-pub enum Alignment {
+pub(super) enum Alignment {
     /// Align to top edge
     Top,
 

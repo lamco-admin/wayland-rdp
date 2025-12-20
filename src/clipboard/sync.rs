@@ -1,14 +1,30 @@
 //! Clipboard Synchronization and Loop Prevention
 //!
 //! Manages bidirectional clipboard synchronization between RDP and Wayland,
-//! with sophisticated loop detection and prevention mechanisms.
+//! with state tracking and echo protection.
+//!
+//! # Architecture
+//!
+//! The sync module provides server-specific orchestration on top of library primitives:
+//!
+//! - [`SyncManager`] - State machine tracking clipboard ownership and echo protection
+//! - [`ClipboardState`] - Current clipboard ownership (Idle, RdpOwned, PortalOwned, Syncing)
+//! - [`LoopDetector`] - From lamco-clipboard-core, provides hash-based loop detection
+//!
+//! The `SyncManager` adds:
+//! - **Echo protection**: Time-based filtering to prevent D-Bus echoes
+//! - **Ownership tracking**: State machine to know who "owns" the clipboard
+//! - **Policy decisions**: When to allow/block sync based on state
 
 use crate::clipboard::error::Result;
-use crate::clipboard::formats::ClipboardFormat;
-use sha2::{Digest, Sha256};
-use std::collections::VecDeque;
 use std::time::{Duration, SystemTime};
 use tracing::{debug, warn};
+
+// Import loop detection from library
+pub use lamco_clipboard_core::{
+    ClipboardFormat, LoopDetectionConfig, LoopDetector,
+};
+pub use lamco_clipboard_core::loop_detector::ClipboardSource;
 
 /// Clipboard ownership state
 #[derive(Debug, Clone)]
@@ -27,7 +43,11 @@ impl PartialEq for ClipboardState {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (ClipboardState::Idle, ClipboardState::Idle) => true,
-            (ClipboardState::RdpOwned(f1, _), ClipboardState::RdpOwned(f2, _)) => f1 == f2,
+            (ClipboardState::RdpOwned(f1, _), ClipboardState::RdpOwned(f2, _)) => {
+                // Compare format IDs only (ignore timestamps)
+                f1.len() == f2.len()
+                    && f1.iter().zip(f2.iter()).all(|(a, b)| a.id == b.id)
+            }
             (ClipboardState::PortalOwned(m1), ClipboardState::PortalOwned(m2)) => m1 == m2,
             (ClipboardState::Syncing(d1), ClipboardState::Syncing(d2)) => d1 == d2,
             _ => false,
@@ -46,358 +66,40 @@ pub enum SyncDirection {
     PortalToRdp,
 }
 
-/// Loop detection configuration
-#[derive(Debug, Clone)]
-pub struct LoopDetectionConfig {
-    /// Time window for loop detection (milliseconds)
-    pub window_ms: u64,
-
-    /// Maximum history size
-    pub max_history: usize,
-
-    /// Enable content hashing for better detection
-    pub enable_content_hashing: bool,
-}
-
-impl Default for LoopDetectionConfig {
-    fn default() -> Self {
-        Self {
-            window_ms: 500,
-            max_history: 10,
-            enable_content_hashing: true,
-        }
-    }
-}
-
-/// Clipboard operation record for loop detection
-#[derive(Debug, Clone)]
-struct ClipboardOperation {
-    /// Timestamp of operation
-    timestamp: SystemTime,
-    /// Source of operation
-    source: OperationSource,
-    /// Hash of format list
-    format_hash: String,
-}
-
-/// Operation source
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OperationSource {
-    /// RDP client
-    Rdp,
-    /// Portal/Wayland
-    Portal,
-}
-
-/// Content hash entry for loop detection
-#[derive(Debug, Clone)]
-struct ContentHash {
-    /// Timestamp
-    timestamp: SystemTime,
-    /// Content hash
-    hash: String,
-    /// Source
-    source: OperationSource,
-}
-
-/// Loop detector prevents clipboard synchronization loops
-#[derive(Debug)]
-pub struct LoopDetector {
-    /// Recent clipboard operations
-    history: VecDeque<ClipboardOperation>,
-    /// Content hashes for comparison
-    content_cache: VecDeque<ContentHash>,
-    /// Detection configuration
-    config: LoopDetectionConfig,
-}
-
-impl LoopDetector {
-    /// Create a new loop detector
-    pub fn new(config: LoopDetectionConfig) -> Self {
-        Self {
-            history: VecDeque::with_capacity(config.max_history),
-            content_cache: VecDeque::with_capacity(5),
-            config,
-        }
-    }
-
-    /// Check if format list from RDP would cause a loop
-    pub fn would_cause_loop(&mut self, formats: &[ClipboardFormat]) -> bool {
-        let now = SystemTime::now();
-        let format_hash = self.hash_formats(formats);
-
-        // Clean old entries
-        self.clean_old_entries(now);
-
-        // Check if same format list was recently sent from Portal
-        for op in &self.history {
-            if matches!(op.source, OperationSource::Portal) {
-                let age = now
-                    .duration_since(op.timestamp)
-                    .unwrap_or(Duration::from_secs(0));
-
-                if age.as_millis() < self.config.window_ms as u128 {
-                    if op.format_hash == format_hash {
-                        debug!(
-                            "Loop detected: RDP format list matches recent Portal operation (age: {:?})",
-                            age
-                        );
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Check if MIME type list from Portal would cause a loop
-    pub fn would_cause_loop_mime(&mut self, mime_types: &[String]) -> bool {
-        let now = SystemTime::now();
-        let format_hash = self.hash_mime_types(mime_types);
-
-        // Clean old entries
-        self.clean_old_entries(now);
-
-        // Check if same MIME types were recently sent from RDP
-        for op in &self.history {
-            if matches!(op.source, OperationSource::Rdp) {
-                let age = now
-                    .duration_since(op.timestamp)
-                    .unwrap_or(Duration::from_secs(0));
-
-                if age.as_millis() < self.config.window_ms as u128 {
-                    if op.format_hash == format_hash {
-                        debug!(
-                            "Loop detected: Portal MIME types match recent RDP operation (age: {:?})",
-                            age
-                        );
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Record RDP clipboard operation
-    pub fn record_rdp_operation(&mut self, formats: Vec<ClipboardFormat>) {
-        let operation = ClipboardOperation {
-            timestamp: SystemTime::now(),
-            source: OperationSource::Rdp,
-            format_hash: self.hash_formats(&formats),
-        };
-
-        self.add_to_history(operation);
-    }
-
-    /// Record Portal clipboard operation
-    pub fn record_portal_operation(&mut self, mime_types: Vec<String>) {
-        let operation = ClipboardOperation {
-            timestamp: SystemTime::now(),
-            source: OperationSource::Portal,
-            format_hash: self.hash_mime_types(&mime_types),
-        };
-
-        self.add_to_history(operation);
-    }
-
-    /// Check if content would cause a loop
-    pub fn check_content_loop(&mut self, content: &[u8], source: OperationSource) -> bool {
-        if !self.config.enable_content_hashing {
-            return false;
-        }
-
-        let now = SystemTime::now();
-        let content_hash = self.hash_content(content);
-
-        // Clean old content hashes
-        self.clean_old_content(now);
-
-        // Check if same content was recently processed from opposite source
-        for cached in &self.content_cache {
-            let age = now
-                .duration_since(cached.timestamp)
-                .unwrap_or(Duration::from_secs(0));
-
-            if age.as_millis() < self.config.window_ms as u128 {
-                let is_opposite_source = match (&cached.source, &source) {
-                    (OperationSource::Rdp, OperationSource::Portal) => true,
-                    (OperationSource::Portal, OperationSource::Rdp) => true,
-                    _ => false,
-                };
-
-                if is_opposite_source && cached.hash == content_hash {
-                    debug!(
-                        "Content loop detected: identical content from opposite source (age: {:?})",
-                        age
-                    );
-                    return true;
-                }
-            }
-        }
-
-        // Store content hash
-        self.content_cache.push_back(ContentHash {
-            timestamp: now,
-            hash: content_hash,
-            source,
-        });
-
-        // Limit cache size
-        while self.content_cache.len() > 5 {
-            self.content_cache.pop_front();
-        }
-
-        false
-    }
-
-    /// Hash clipboard formats
-    fn hash_formats(&self, formats: &[ClipboardFormat]) -> String {
-        // Convert format IDs to normalized MIME types for consistent hashing
-        let normalized_types = self.formats_to_normalized(formats);
-        self.hash_normalized(&normalized_types)
-    }
-
-    /// Hash MIME types
-    fn hash_mime_types(&self, mime_types: &[String]) -> String {
-        // Normalize MIME types for consistent hashing
-        let normalized_types = self.mime_to_normalized(mime_types);
-        self.hash_normalized(&normalized_types)
-    }
-
-    /// Convert RDP format IDs to normalized MIME categories
-    fn formats_to_normalized(&self, formats: &[ClipboardFormat]) -> Vec<String> {
-        let mut normalized = Vec::new();
-        for format in formats {
-            // Map format IDs to canonical categories
-            let category = match format.format_id {
-                1 | 13 => "text", // CF_TEXT, CF_UNICODETEXT
-                2 | 8 | 17 => "image", // CF_BITMAP, CF_DIB, CF_DIBV5
-                15 => "files", // CF_HDROP
-                49282..=49283 => "html", // HTML Format (registered format)
-                _ if format.format_name.contains("PNG") => "image",
-                _ if format.format_name.contains("HTML") => "html",
-                _ => "other",
-            };
-            if !normalized.contains(&category.to_string()) {
-                normalized.push(category.to_string());
-            }
-        }
-        normalized.sort();
-        normalized
-    }
-
-    /// Convert MIME types to normalized categories
-    fn mime_to_normalized(&self, mime_types: &[String]) -> Vec<String> {
-        let mut normalized = Vec::new();
-        for mime in mime_types {
-            let category = if mime.starts_with("text/plain") {
-                "text"
-            } else if mime.starts_with("image/") {
-                "image"
-            } else if mime == "text/uri-list" {
-                "files"
-            } else if mime.starts_with("text/html") {
-                "html"
-            } else {
-                "other"
-            };
-            if !normalized.contains(&category.to_string()) {
-                normalized.push(category.to_string());
-            }
-        }
-        normalized.sort();
-        normalized
-    }
-
-    /// Hash normalized type list
-    fn hash_normalized(&self, types: &[String]) -> String {
-        let mut hasher = Sha256::new();
-        for t in types {
-            hasher.update(t.as_bytes());
-        }
-        format!("{:x}", hasher.finalize())
-    }
-
-    /// Hash content
-    fn hash_content(&self, content: &[u8]) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(content);
-        format!("{:x}", hasher.finalize())
-    }
-
-    /// Add operation to history
-    fn add_to_history(&mut self, operation: ClipboardOperation) {
-        self.history.push_back(operation);
-
-        // Limit history size
-        while self.history.len() > self.config.max_history {
-            self.history.pop_front();
-        }
-    }
-
-    /// Clean old entries from history
-    fn clean_old_entries(&mut self, now: SystemTime) {
-        let threshold = Duration::from_millis(self.config.window_ms * 2);
-
-        self.history.retain(|op| {
-            now.duration_since(op.timestamp)
-                .unwrap_or(Duration::from_secs(0))
-                < threshold
-        });
-    }
-
-    /// Clean old content hashes
-    fn clean_old_content(&mut self, now: SystemTime) {
-        let threshold = Duration::from_millis(self.config.window_ms * 2);
-
-        self.content_cache.retain(|cached| {
-            now.duration_since(cached.timestamp)
-                .unwrap_or(Duration::from_secs(0))
-                < threshold
-        });
-    }
-
-    /// Reset detector state
-    pub fn reset(&mut self) {
-        self.history.clear();
-        self.content_cache.clear();
-    }
-
-    /// Get number of operations in history
-    pub fn history_size(&self) -> usize {
-        self.history.len()
-    }
-
-    /// Get number of content hashes cached
-    pub fn cache_size(&self) -> usize {
-        self.content_cache.len()
-    }
-}
-
-impl Default for LoopDetector {
-    fn default() -> Self {
-        Self::new(LoopDetectionConfig::default())
-    }
-}
+/// Echo protection window in milliseconds
+///
+/// D-Bus signals within this window after RDP ownership are likely echoes
+/// from our Portal writes, not real user copies.
+const ECHO_PROTECTION_WINDOW_MS: u128 = 2000;
 
 /// Synchronization manager coordinates clipboard sync
+///
+/// Provides server-specific orchestration by combining:
+/// - State machine tracking (who owns the clipboard)
+/// - Echo protection (time-based D-Bus signal filtering)
+/// - Library-based loop detection (hash comparison)
 #[derive(Debug)]
 pub struct SyncManager {
     /// Current clipboard state
     state: ClipboardState,
-    /// Loop detector
+    /// Loop detector (from lamco-clipboard-core)
     loop_detector: LoopDetector,
 }
 
 impl SyncManager {
-    /// Create a new synchronization manager
-    pub fn new(loop_detector: LoopDetector) -> Self {
+    /// Create a new synchronization manager with default loop detector config
+    pub fn new() -> Self {
         Self {
             state: ClipboardState::Idle,
-            loop_detector,
+            loop_detector: LoopDetector::new(),
+        }
+    }
+
+    /// Create a new synchronization manager with custom loop detector config
+    pub fn with_config(config: LoopDetectionConfig) -> Self {
+        Self {
+            state: ClipboardState::Idle,
+            loop_detector: LoopDetector::with_config(config),
         }
     }
 
@@ -407,6 +109,14 @@ impl SyncManager {
     }
 
     /// Handle RDP format list announcement
+    ///
+    /// Called when the RDP client announces available clipboard formats.
+    /// Checks for loops and updates state if allowed.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` - Proceed with sync
+    /// - `Ok(false)` - Skip sync (loop detected)
     pub fn handle_rdp_formats(&mut self, formats: Vec<ClipboardFormat>) -> Result<bool> {
         // Check for loop
         if self.loop_detector.would_cause_loop(&formats) {
@@ -417,8 +127,9 @@ impl SyncManager {
         // Update state with current timestamp
         self.state = ClipboardState::RdpOwned(formats.clone(), SystemTime::now());
 
-        // Record operation
-        self.loop_detector.record_rdp_operation(formats);
+        // Record operation in loop detector
+        self.loop_detector.record_formats(&formats, ClipboardSource::Rdp);
+        self.loop_detector.record_sync(ClipboardSource::Rdp);
 
         Ok(true) // Proceed with sync
     }
@@ -429,16 +140,22 @@ impl SyncManager {
     /// that should override RDP ownership. When force=false, we block if RDP owns the clipboard
     /// to prevent echo loops. When force=true (D-Bus), we check if enough time has passed
     /// since RDP took ownership to distinguish between echoes and real user copies.
+    ///
+    /// # Arguments
+    ///
+    /// * `mime_types` - MIME types available in Portal clipboard
+    /// * `force` - If true, this is from D-Bus extension (authoritative source)
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` - Proceed with sync
+    /// - `Ok(false)` - Skip sync (echo or loop detected)
     pub fn handle_portal_formats(&mut self, mime_types: Vec<String>, force: bool) -> Result<bool> {
-        // If RDP currently owns the clipboard, check timing to prevent echo loops
+        // If RDP currently owns the clipboard, apply echo protection
         if let ClipboardState::RdpOwned(_, ownership_time) = &self.state {
             let elapsed = SystemTime::now()
                 .duration_since(*ownership_time)
                 .unwrap_or(Duration::from_secs(0));
-
-            // Echo protection window: D-Bus signals within 2 seconds of RDP ownership
-            // are likely echoes from our Portal writes, not real user copies
-            const ECHO_PROTECTION_WINDOW_MS: u128 = 2000;
 
             if !force {
                 // Portal SelectionOwnerChanged (force=false) - always block when RDP owns
@@ -473,24 +190,38 @@ impl SyncManager {
             debug!("D-Bus extension signal - taking clipboard ownership from RDP");
         }
 
-        // Record operation
-        self.loop_detector.record_portal_operation(mime_types);
+        // Record operation in loop detector
+        self.loop_detector.record_mime_types(&mime_types, ClipboardSource::Local);
+        self.loop_detector.record_sync(ClipboardSource::Local);
 
         Ok(true) // Proceed with sync
     }
 
     /// Check if content would cause loop
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - Clipboard content data
+    /// * `from_rdp` - True if content is from RDP, false if from Portal
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` - Proceed with transfer
+    /// - `Ok(false)` - Skip transfer (content loop detected)
     pub fn check_content(&mut self, content: &[u8], from_rdp: bool) -> Result<bool> {
         let source = if from_rdp {
-            OperationSource::Rdp
+            ClipboardSource::Rdp
         } else {
-            OperationSource::Portal
+            ClipboardSource::Local
         };
 
-        if self.loop_detector.check_content_loop(content, source) {
+        if self.loop_detector.would_cause_content_loop(content, source) {
             warn!("Content loop detected, skipping transfer");
             return Ok(false); // Don't transfer
         }
+
+        // Record content for future loop detection
+        self.loop_detector.record_content(content, source);
 
         Ok(true) // Proceed with transfer
     }
@@ -505,22 +236,23 @@ impl SyncManager {
         self.state = ClipboardState::Idle;
     }
 
-    /// Reset loop detector
+    /// Reset loop detector history
     pub fn reset_loop_detector(&mut self) {
-        self.loop_detector.reset();
+        self.loop_detector.clear();
     }
 
-    /// Check if RDP format list would cause a loop
+    /// Check if RDP format list would cause a loop (without state change)
     ///
-    /// # Arguments
+    /// Use this for read-only loop checking before committing to state changes.
+    pub fn would_cause_loop_rdp(&self, formats: &[ClipboardFormat]) -> bool {
+        self.loop_detector.would_cause_loop(formats)
+    }
+
+    /// Check if Portal MIME types would cause a loop (without state change)
     ///
-    /// * `formats` - RDP clipboard formats
-    ///
-    /// # Returns
-    ///
-    /// True if this would cause a loop, false otherwise
-    pub fn would_cause_loop_rdp(&mut self, formats: &[ClipboardFormat]) -> Result<bool> {
-        Ok(self.loop_detector.would_cause_loop(formats))
+    /// Use this for read-only loop checking before committing to state changes.
+    pub fn would_cause_loop_portal(&self, mime_types: &[String]) -> bool {
+        self.loop_detector.would_cause_loop_mime(mime_types)
     }
 
     /// Set RDP formats as current clipboard owner
@@ -528,14 +260,37 @@ impl SyncManager {
     /// # Arguments
     ///
     /// * `formats` - RDP clipboard formats
-    ///
-    /// # Returns
-    ///
-    /// Ok(()) on success
-    pub fn set_rdp_formats(&mut self, formats: Vec<ClipboardFormat>) -> Result<()> {
+    pub fn set_rdp_formats(&mut self, formats: Vec<ClipboardFormat>) {
         self.state = ClipboardState::RdpOwned(formats.clone(), SystemTime::now());
-        self.loop_detector.record_rdp_operation(formats);
-        Ok(())
+        self.loop_detector.record_formats(&formats, ClipboardSource::Rdp);
+    }
+
+    /// Set Portal MIME types as current clipboard owner
+    ///
+    /// # Arguments
+    ///
+    /// * `mime_types` - Portal clipboard MIME types
+    pub fn set_portal_formats(&mut self, mime_types: Vec<String>) {
+        self.state = ClipboardState::PortalOwned(mime_types.clone());
+        self.loop_detector.record_mime_types(&mime_types, ClipboardSource::Local);
+    }
+
+    /// Check if currently rate limited for the given source
+    ///
+    /// Only returns true if rate limiting is configured.
+    pub fn is_rate_limited(&self, from_rdp: bool) -> bool {
+        let source = if from_rdp {
+            ClipboardSource::Rdp
+        } else {
+            ClipboardSource::Local
+        };
+        self.loop_detector.is_rate_limited(source)
+    }
+}
+
+impl Default for SyncManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -543,149 +298,39 @@ impl SyncManager {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_loop_detection_rdp_to_portal() {
-        let config = LoopDetectionConfig {
-            window_ms: 500,
-            ..Default::default()
-        };
-        let mut detector = LoopDetector::new(config);
-
-        let formats = vec![ClipboardFormat {
-            format_id: 13,
-            format_name: "CF_UNICODETEXT".to_string(),
-        }];
-
-        // First operation should not cause loop
-        assert!(!detector.would_cause_loop(&formats));
-        detector.record_rdp_operation(formats.clone());
-
-        // Simulate Portal operation with same formats
-        let mime_types = vec!["text/plain".to_string()];
-        detector.record_portal_operation(mime_types);
-
-        // Now RDP with same format should trigger loop detection
-        assert!(detector.would_cause_loop(&formats));
+    fn make_text_formats() -> Vec<ClipboardFormat> {
+        vec![ClipboardFormat::unicode_text()]
     }
 
-    #[test]
-    fn test_loop_detection_portal_to_rdp() {
-        let mut detector = LoopDetector::default();
-
-        let mime_types = vec!["text/plain".to_string()];
-
-        // First operation should not cause loop
-        assert!(!detector.would_cause_loop_mime(&mime_types));
-        detector.record_portal_operation(mime_types.clone());
-
-        // Simulate RDP operation with corresponding formats
-        let formats = vec![ClipboardFormat {
-            format_id: 13,
-            format_name: "CF_UNICODETEXT".to_string(),
-        }];
-        detector.record_rdp_operation(formats);
-
-        // Now Portal with same MIME types should trigger loop detection
-        assert!(detector.would_cause_loop_mime(&mime_types));
-    }
-
-    #[tokio::test]
-    async fn test_loop_detection_expires() {
-        let config = LoopDetectionConfig {
-            window_ms: 100, // Short window for testing
-            ..Default::default()
-        };
-        let mut detector = LoopDetector::new(config);
-
-        let formats = vec![ClipboardFormat {
-            format_id: 13,
-            format_name: "CF_UNICODETEXT".to_string(),
-        }];
-
-        detector.record_rdp_operation(formats.clone());
-
-        let mime_types = vec!["text/plain".to_string()];
-        detector.record_portal_operation(mime_types.clone());
-
-        // Should detect loop immediately
-        assert!(detector.would_cause_loop(&formats));
-
-        // Wait for window to expire
-        tokio::time::sleep(Duration::from_millis(150)).await;
-
-        // Should not detect loop after expiration
-        assert!(!detector.would_cause_loop(&formats));
-    }
-
-    #[test]
-    fn test_content_loop_detection() {
-        let config = LoopDetectionConfig {
-            enable_content_hashing: true,
-            ..Default::default()
-        };
-        let mut detector = LoopDetector::new(config);
-
-        let content = b"Test clipboard content";
-
-        // First operation from RDP should not cause loop
-        assert!(!detector.check_content_loop(content, OperationSource::Rdp));
-
-        // Same content from Portal should trigger loop
-        assert!(detector.check_content_loop(content, OperationSource::Portal));
-
-        // Different content should not trigger loop
-        let different_content = b"Different content";
-        assert!(!detector.check_content_loop(different_content, OperationSource::Portal));
-    }
-
-    #[test]
-    fn test_content_loop_same_source() {
-        let config = LoopDetectionConfig {
-            enable_content_hashing: true,
-            ..Default::default()
-        };
-        let mut detector = LoopDetector::new(config);
-
-        let content = b"Test content";
-
-        // First operation
-        assert!(!detector.check_content_loop(content, OperationSource::Rdp));
-
-        // Same content from same source should not trigger loop
-        assert!(!detector.check_content_loop(content, OperationSource::Rdp));
+    fn make_image_formats() -> Vec<ClipboardFormat> {
+        vec![ClipboardFormat { id: 2, name: Some("CF_BITMAP".to_string()) }]
     }
 
     #[test]
     fn test_sync_manager_rdp_formats() {
-        let detector = LoopDetector::default();
-        let mut manager = SyncManager::new(detector);
-
-        let formats = vec![ClipboardFormat {
-            format_id: 13,
-            format_name: "CF_UNICODETEXT".to_string(),
-        }];
+        let mut manager = SyncManager::new();
+        let formats = make_text_formats();
 
         // Should allow first format announcement
         assert!(manager.handle_rdp_formats(formats.clone()).unwrap());
 
         // Verify state
         match manager.state() {
-            ClipboardState::RdpOwned(f, _timestamp) => assert_eq!(f, &formats),
+            ClipboardState::RdpOwned(f, _timestamp) => {
+                assert_eq!(f.len(), formats.len());
+                assert_eq!(f[0].id, formats[0].id);
+            }
             _ => panic!("Expected RdpOwned state"),
         }
     }
 
     #[test]
     fn test_sync_manager_portal_formats() {
-        let detector = LoopDetector::default();
-        let mut manager = SyncManager::new(detector);
-
+        let mut manager = SyncManager::new();
         let mime_types = vec!["text/plain".to_string(), "text/html".to_string()];
 
         // Should allow first format announcement (force=true simulates D-Bus)
-        assert!(manager
-            .handle_portal_formats(mime_types.clone(), true)
-            .unwrap());
+        assert!(manager.handle_portal_formats(mime_types.clone(), true).unwrap());
 
         // Verify state
         match manager.state() {
@@ -695,45 +340,44 @@ mod tests {
     }
 
     #[test]
+    fn test_sync_manager_echo_protection() {
+        let mut manager = SyncManager::new();
+
+        // RDP takes ownership
+        let formats = make_text_formats();
+        assert!(manager.handle_rdp_formats(formats).unwrap());
+
+        // Immediate D-Bus signal should be blocked (echo protection)
+        let mime_types = vec!["text/plain".to_string()];
+        assert!(!manager.handle_portal_formats(mime_types.clone(), true).unwrap());
+
+        // Non-force Portal signal should always be blocked when RDP owns
+        assert!(!manager.handle_portal_formats(mime_types, false).unwrap());
+    }
+
+    #[test]
     fn test_sync_manager_loop_prevention() {
-        let detector = LoopDetector::new(LoopDetectionConfig {
+        let config = LoopDetectionConfig {
             window_ms: 1000,
             ..Default::default()
-        });
-        let mut manager = SyncManager::new(detector);
+        };
+        let mut manager = SyncManager::with_config(config);
 
-        // Use text formats for first RDP announcement
-        let text_formats = vec![ClipboardFormat {
-            format_id: 13,
-            format_name: "CF_UNICODETEXT".to_string(),
-        }];
-
-        // Use image formats for second RDP announcement (different type)
-        let image_formats = vec![ClipboardFormat {
-            format_id: 2,
-            format_name: "CF_BITMAP".to_string(),
-        }];
-
-        let text_mime = vec!["text/plain".to_string()];
-        let image_mime = vec!["image/png".to_string()];
-
-        // First RDP announcement (text) - should succeed
+        // RDP announces text formats
+        let text_formats = make_text_formats();
         assert!(manager.handle_rdp_formats(text_formats.clone()).unwrap());
 
-        // Second RDP announcement (different format type) - should succeed
-        assert!(manager.handle_rdp_formats(image_formats.clone()).unwrap());
+        // Simulate Portal echo - record it as coming from Local
+        let text_mime = vec!["text/plain".to_string()];
+        manager.loop_detector.record_mime_types(&text_mime, ClipboardSource::Local);
 
-        // Simulating Portal echo of image - this triggers loop detection
-        // Now RDP trying to announce image again should be blocked (loop)
-        manager.loop_detector.record_portal_operation(image_mime);
-        assert!(!manager.handle_rdp_formats(image_formats).unwrap());
+        // Now RDP trying to announce same formats again should be blocked (loop)
+        assert!(!manager.handle_rdp_formats(text_formats).unwrap());
     }
 
     #[test]
     fn test_sync_manager_content_check() {
-        let detector = LoopDetector::default();
-        let mut manager = SyncManager::new(detector);
-
+        let mut manager = SyncManager::new();
         let content = b"Test content";
 
         // First check from RDP should pass
@@ -745,13 +389,8 @@ mod tests {
 
     #[test]
     fn test_sync_manager_reset() {
-        let detector = LoopDetector::default();
-        let mut manager = SyncManager::new(detector);
-
-        let formats = vec![ClipboardFormat {
-            format_id: 13,
-            format_name: "CF_UNICODETEXT".to_string(),
-        }];
+        let mut manager = SyncManager::new();
+        let formats = make_text_formats();
 
         manager.handle_rdp_formats(formats).unwrap();
 
@@ -763,56 +402,30 @@ mod tests {
     }
 
     #[test]
-    fn test_hash_formats_deterministic() {
-        let detector = LoopDetector::default();
+    fn test_sync_manager_different_formats_allowed() {
+        let mut manager = SyncManager::new();
 
-        let formats1 = vec![
-            ClipboardFormat {
-                format_id: 13,
-                format_name: "CF_UNICODETEXT".to_string(),
-            },
-            ClipboardFormat {
-                format_id: 8,
-                format_name: "CF_DIB".to_string(),
-            },
-        ];
+        // RDP announces text
+        let text_formats = make_text_formats();
+        assert!(manager.handle_rdp_formats(text_formats).unwrap());
 
-        let formats2 = vec![
-            ClipboardFormat {
-                format_id: 8,
-                format_name: "CF_DIB".to_string(),
-            },
-            ClipboardFormat {
-                format_id: 13,
-                format_name: "CF_UNICODETEXT".to_string(),
-            },
-        ];
-
-        // Hashes should be equal regardless of order
-        assert_eq!(
-            detector.hash_formats(&formats1),
-            detector.hash_formats(&formats2)
-        );
+        // RDP announces different format (image) - should succeed
+        let image_formats = make_image_formats();
+        assert!(manager.handle_rdp_formats(image_formats).unwrap());
     }
 
     #[test]
-    fn test_history_size_limit() {
-        let config = LoopDetectionConfig {
-            max_history: 5,
-            ..Default::default()
-        };
-        let mut detector = LoopDetector::new(config);
+    fn test_clipboard_state_equality() {
+        let formats = make_text_formats();
 
-        // Add more operations than max_history
-        for i in 0..10 {
-            let formats = vec![ClipboardFormat {
-                format_id: i as u32,
-                format_name: format!("Format{}", i),
-            }];
-            detector.record_rdp_operation(formats);
-        }
+        let state1 = ClipboardState::RdpOwned(formats.clone(), SystemTime::now());
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let state2 = ClipboardState::RdpOwned(formats, SystemTime::now());
 
-        // History should be limited to max_history
-        assert_eq!(detector.history_size(), 5);
+        // Should be equal (timestamps ignored)
+        assert_eq!(state1, state2);
+
+        assert_eq!(ClipboardState::Idle, ClipboardState::Idle);
+        assert_ne!(ClipboardState::Idle, state1);
     }
 }
