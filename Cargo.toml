@@ -29,12 +29,12 @@ path = "src/lib.rs"
 # -----------------------------------------------------------------------------
 lamco-wayland = "0.1"         # Meta: portal + pipewire + video
 lamco-rdp = "0.1"             # Meta: input + clipboard
-lamco-portal = "0.1"          # XDG Portal integration
+lamco-portal = { version = "0.2", features = ["dbus-clipboard"] }  # XDG Portal + D-Bus fallback
 lamco-pipewire = "0.1"        # PipeWire screen capture
 lamco-video = "0.1"           # Video frame processing
 lamco-rdp-input = "0.1"       # Input event translation
-lamco-clipboard-core = "0.1"  # Clipboard utilities
-lamco-rdp-clipboard = "0.1"   # IronRDP clipboard integration
+lamco-clipboard-core = { version = "0.2", features = ["image"] }   # Clipboard + image conversion
+lamco-rdp-clipboard = "0.2"   # IronRDP clipboard integration
 
 # -----------------------------------------------------------------------------
 # Async runtime
@@ -230,3 +230,4 @@ ironrdp-dvc = { git = "https://github.com/Devolutions/IronRDP", branch = "master
 ironrdp-core = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
 ironrdp-tokio = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
 ironrdp-displaycontrol = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+
