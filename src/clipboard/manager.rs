@@ -283,10 +283,6 @@ impl ClipboardManager {
         self.start_owner_changed_listener(Arc::clone(&portal), Arc::clone(&session))
             .await;
 
-        // DISABLED: Polling fallback causes session lock contention breaking input injection
-        // TODO: Fix by using separate session or different clipboard monitoring approach
-        // self.start_clipboard_polling_fallback(portal, session).await;
-
         // Start D-Bus bridge for GNOME clipboard extension (Linux → Windows fallback)
         // This provides an alternative to SelectionOwnerChanged which doesn't work on GNOME
         self.start_dbus_clipboard_listener().await;
@@ -550,101 +546,6 @@ impl ClipboardManager {
                 warn!("Delayed rendering (Windows → Linux paste) will not work");
             }
         }
-    }
-
-    /// Start clipboard polling fallback for Linux→Windows
-    ///
-    /// This is a fallback mechanism in case SelectionOwnerChanged signals don't work
-    /// (known limitation in some Portal backends like xdg-desktop-portal-gnome).
-    /// Polls the clipboard every 500ms to detect changes.
-    async fn start_clipboard_polling_fallback(
-        &self,
-        portal: Arc<crate::portal::PortalClipboardManager>,
-        session: Arc<
-            Mutex<
-                ashpd::desktop::Session<
-                    'static,
-                    ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
-                >,
-            >,
-        >,
-    ) {
-        info!("Starting clipboard polling fallback (500ms interval)");
-
-        let event_tx = self.event_tx.clone();
-
-        tokio::spawn(async move {
-            use sha2::{Digest, Sha256};
-            let mut last_hash: Option<String> = None;
-            let mut poll_count = 0;
-            let mut detection_count = 0;
-
-            // Wait 2 seconds before starting polls (let signals try first)
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            info!("Clipboard polling fallback active - checking every 500ms");
-
-            loop {
-                poll_count += 1;
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-                // Try to read current clipboard content
-                let session_guard = session.lock().await;
-                let read_result = portal
-                    .read_local_clipboard(&session_guard, "text/plain;charset=utf-8")
-                    .await;
-
-                match read_result {
-                    Ok(data) if !data.is_empty() => {
-                        // Calculate hash of clipboard content
-                        let hash = format!("{:x}", Sha256::digest(&data));
-
-                        if Some(&hash) != last_hash.as_ref() {
-                            detection_count += 1;
-                            last_hash = Some(hash.clone());
-
-                            info!("📋 Clipboard change detected via POLLING (poll #{}, detection #{})",
-                                poll_count, detection_count);
-                            info!(
-                                "   Content hash: {}..., size: {} bytes",
-                                &hash[..16],
-                                data.len()
-                            );
-
-                            // Announce to RDP clients
-                            // Polling fallback reads local clipboard directly - this is authoritative (force=true)
-                            let mime_types = vec![
-                                "text/plain;charset=utf-8".to_string(),
-                                "text/plain".to_string(),
-                            ];
-                            if let Err(e) = event_tx
-                                .send(ClipboardEvent::PortalFormatsAvailable(mime_types, true))
-                                .await
-                            {
-                                error!("Failed to send clipboard change event: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                    Ok(_) => {
-                        // Empty clipboard
-                        if last_hash.is_some() {
-                            debug!("Clipboard now empty (poll #{})", poll_count);
-                            last_hash = None;
-                        }
-                    }
-                    Err(e) => {
-                        // Can't read clipboard (normal if nothing copied yet)
-                        if poll_count % 20 == 0 {
-                            debug!("Clipboard read failed on poll #{}: {}", poll_count, e);
-                        }
-                    }
-                }
-            }
-        });
-
-        info!(
-            "✅ Clipboard polling fallback started (workaround for missing SelectionOwnerChanged)"
-        );
     }
 
     /// Start SelectionOwnerChanged listener for local clipboard monitoring
