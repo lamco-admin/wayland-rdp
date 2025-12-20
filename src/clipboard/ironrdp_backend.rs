@@ -1,48 +1,52 @@
-//! IronRDP Clipboard Backend Implementation
+//! IronRDP Clipboard Backend Factory
 //!
-//! Implements the CliprdrBackend and CliprdrBackendFactory traits to integrate
-//! our clipboard manager with IronRDP's clipboard protocol handling.
+//! Server-specific factory wrapping lamco-rdp-clipboard's backend.
+//! Integrates with the server's ClipboardManager for event routing.
 
-use ironrdp_cliprdr::backend::{CliprdrBackend, CliprdrBackendFactory};
-use ironrdp_cliprdr::pdu::{
-    ClipboardFormat, ClipboardGeneralCapabilityFlags, FileContentsRequest, FileContentsResponse,
-    FormatDataRequest, FormatDataResponse, LockDataId,
-};
-use ironrdp_core::AsAny;
+use ironrdp_cliprdr::backend::CliprdrBackendFactory;
 use ironrdp_server::ServerEventSender;
-use std::collections::VecDeque;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
-use tracing::{debug, info, warn};
+use tokio::sync::{mpsc, Mutex};
+use tracing::{debug, info};
 
-use crate::clipboard::formats::ClipboardFormat as WrdClipboardFormat;
-use crate::clipboard::manager::{ClipboardEvent, ClipboardManager};
+// Re-export library backend and types
+pub use lamco_rdp_clipboard::{
+    RdpCliprdrBackend, RdpCliprdrFactory as LibRdpCliprdrFactory,
+    ClipboardEvent, ClipboardEventReceiver, ClipboardEventSender,
+    ClipboardGeneralCapabilityFlags,
+};
 
-/// Clipboard event for non-blocking queue
-#[derive(Debug, Clone)]
-enum ClipboardBackendEvent {
-    RemoteCopy(Vec<WrdClipboardFormat>),
-    FormatDataRequest(u32),
-    FormatDataResponse(Vec<u8>),
-    FormatDataError, // RDP client returned error for data request
-    FileContentsRequest(u32, u32, u64, u32),
-    FileContentsResponse(u32, Vec<u8>),
-}
+use crate::clipboard::manager::ClipboardManager;
 
-// ClipboardMessage proxy removed - ServerEvent channel is used instead
-
-/// Clipboard backend factory for IronRDP server
+/// Server-specific clipboard backend factory
 ///
-/// Creates clipboard backend instances for each RDP connection.
+/// Wraps [`LibRdpCliprdrFactory`] from lamco-rdp-clipboard and integrates
+/// with the server's [`ClipboardManager`] for event routing.
+///
+/// # Example
+///
+/// ```ignore
+/// use lamco_rdp_server::clipboard::{ClipboardManager, WrdCliprdrFactory};
+/// use std::sync::Arc;
+/// use tokio::sync::Mutex;
+///
+/// let manager = Arc::new(Mutex::new(ClipboardManager::new(config).await?));
+/// let factory = WrdCliprdrFactory::new(manager);
+///
+/// // Pass factory to IronRDP server builder
+/// ```
 pub struct WrdCliprdrFactory {
     /// Clipboard manager shared across connections
     clipboard_manager: Arc<Mutex<ClipboardManager>>,
 
-    /// Server event sender for IronRDP
-    event_sender: Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>,
+    /// Event sender for clipboard events
+    event_sender: ClipboardEventSender,
 
-    /// Shared event queue for all backends
-    shared_event_queue: Arc<RwLock<VecDeque<ClipboardBackendEvent>>>,
+    /// Event receiver (kept to pass to manager)
+    event_receiver: Option<ClipboardEventReceiver>,
+
+    /// Server event sender for IronRDP (set via ServerEventSender trait)
+    server_event_sender: Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>,
 }
 
 impl WrdCliprdrFactory {
@@ -51,168 +55,59 @@ impl WrdCliprdrFactory {
     /// # Arguments
     ///
     /// * `clipboard_manager` - Shared clipboard manager instance
-    ///
-    /// # Returns
-    ///
-    /// A new factory instance
     pub fn new(clipboard_manager: Arc<Mutex<ClipboardManager>>) -> Self {
-        // Create shared event queue for all clipboard backends
-        let shared_event_queue = Arc::new(RwLock::new(VecDeque::new()));
+        let event_sender = ClipboardEventSender::new();
+        let event_receiver = Some(event_sender.subscribe());
 
-        // Start single async task to process clipboard events (spawn once here, not per backend)
-        let queue = Arc::clone(&shared_event_queue);
-        let manager = Arc::clone(&clipboard_manager);
-        tokio::spawn(async move {
-            Self::process_clipboard_events(queue, manager).await;
-        });
-
-        info!("Clipboard event processor task started");
+        info!("Created WrdCliprdrFactory with event channel");
 
         Self {
             clipboard_manager,
-            event_sender: None,
-            shared_event_queue,
+            event_sender,
+            event_receiver,
+            server_event_sender: None,
         }
     }
-}
 
-impl WrdCliprdrFactory {
-    /// Process clipboard events from the non-blocking queue
-    async fn process_clipboard_events(
-        queue: Arc<RwLock<VecDeque<ClipboardBackendEvent>>>,
-        manager: Arc<Mutex<ClipboardManager>>,
-    ) {
-        loop {
-            // Non-blocking check for events
-            let event = {
-                if let Ok(mut q) = queue.try_write() {
-                    q.pop_front()
-                } else {
-                    None
-                }
-            };
+    /// Take the event receiver
+    ///
+    /// Returns the receiver once. Use this to set up event processing
+    /// in the ClipboardManager.
+    pub fn take_event_receiver(&mut self) -> Option<ClipboardEventReceiver> {
+        self.event_receiver.take()
+    }
 
-            if let Some(event) = event {
-                match event {
-                    ClipboardBackendEvent::RemoteCopy(formats) => {
-                        debug!("Processing remote copy event: {} formats", formats.len());
-                        // Send to clipboard manager
-                        if let Ok(mgr) = manager.try_lock() {
-                            if let Ok(_) = mgr
-                                .event_sender()
-                                .try_send(ClipboardEvent::RdpFormatList(formats.clone()))
-                            {
-                                debug!("Format list sent to clipboard manager");
-
-                                // Proactively request common formats to populate Wayland clipboard
-                                // Check for text format (CF_UNICODETEXT = 13 or CF_TEXT = 1)
-                                let has_unicode_text = formats.iter().any(|f| f.format_id == 13);
-                                let has_text = formats.iter().any(|f| f.format_id == 1);
-
-                                if has_unicode_text || has_text {
-                                    debug!("Requesting text clipboard data proactively");
-                                    // Request will trigger on_format_data_request which we need to handle
-                                    // For now, just log that we detected text
-                                }
-                            } else {
-                                warn!("Failed to send format list - manager queue full");
-                            }
-                        }
-                    }
-                    ClipboardBackendEvent::FormatDataRequest(format_id) => {
-                        debug!("Processing format data request: {}", format_id);
-
-                        // Send request to clipboard manager (will read from Portal)
-                        if let Ok(mgr) = manager.try_lock() {
-                            if let Ok(_) = mgr
-                                .event_sender()
-                                .try_send(ClipboardEvent::RdpDataRequest(format_id, None))
-                            {
-                                debug!("Data request sent to clipboard manager");
-                            }
-                        }
-                    }
-                    ClipboardBackendEvent::FormatDataResponse(data) => {
-                        debug!("Processing format data response: {} bytes", data.len());
-                        // Send data to clipboard manager for Portal write
-                        if let Ok(mgr) = manager.try_lock() {
-                            if let Ok(_) = mgr
-                                .event_sender()
-                                .try_send(ClipboardEvent::RdpDataResponse(data))
-                            {
-                                debug!("Data response sent to clipboard manager");
-                            }
-                        }
-                    }
-                    ClipboardBackendEvent::FormatDataError => {
-                        warn!("Processing format data error - notifying clipboard manager");
-                        // Send error to clipboard manager so it can notify Portal of failure
-                        if let Ok(mgr) = manager.try_lock() {
-                            if let Ok(_) = mgr.event_sender().try_send(ClipboardEvent::RdpDataError)
-                            {
-                                debug!("Data error sent to clipboard manager");
-                            }
-                        }
-                    }
-                    ClipboardBackendEvent::FileContentsRequest(
-                        stream_id,
-                        _index,
-                        _position,
-                        _size,
-                    ) => {
-                        debug!("Processing file contents request: stream={}", stream_id);
-                        // File transfer not yet implemented - will be added after text/images work
-                    }
-                    ClipboardBackendEvent::FileContentsResponse(stream_id, data) => {
-                        debug!(
-                            "Processing file contents response: stream={}, {} bytes",
-                            stream_id,
-                            data.len()
-                        );
-                        // File transfer not yet implemented
-                    }
-                }
-            }
-
-            // Sleep briefly to avoid busy-looping
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        }
+    /// Get a clone of the event sender
+    ///
+    /// Use this to create additional backends that share the same event channel.
+    pub fn event_sender(&self) -> ClipboardEventSender {
+        self.event_sender.clone()
     }
 }
 
 impl CliprdrBackendFactory for WrdCliprdrFactory {
-    fn build_cliprdr_backend(&self) -> Box<dyn CliprdrBackend> {
+    fn build_cliprdr_backend(&self) -> Box<dyn ironrdp_cliprdr::backend::CliprdrBackend> {
         debug!("Building clipboard backend for new connection");
 
-        // Note: We don't create channels here because this is called for EACH
-        // connection attempt (including failed ones). Creating channels here
-        // causes the previous channel to be dropped when a retry happens,
-        // which closes the display update channel and crashes the server.
-        //
-        // The message proxy will be set later via the ServerEventSender trait
-        // when the connection is established.
+        // Create backend using library implementation
+        // Use /tmp/lamco-clipboard for temporary file storage
+        let backend = RdpCliprdrBackend::new(
+            "/tmp/lamco-clipboard".to_string(),
+            self.event_sender.clone(),
+        );
 
-        // All backends share the same event queue and processing task
-        let backend = Box::new(WrdCliprdrBackend {
-            clipboard_manager: Arc::clone(&self.clipboard_manager),
-            capabilities: ClipboardGeneralCapabilityFlags::empty(),
-            temporary_directory: "/tmp/wrd-clipboard".to_string(),
-            event_sender: self.event_sender.clone(), // Pass ServerEvent sender
-            event_queue: Arc::clone(&self.shared_event_queue), // Use shared queue
-        });
-
-        backend
+        Box::new(backend)
     }
 }
 
 impl ServerEventSender for WrdCliprdrFactory {
     fn set_sender(&mut self, sender: mpsc::UnboundedSender<ironrdp_server::ServerEvent>) {
         info!("Clipboard factory received server event sender");
-        self.event_sender = Some(sender.clone());
+        self.server_event_sender = Some(sender.clone());
 
-        // Also register with ClipboardManager so it can send requests for delayed rendering
+        // Register sender with ClipboardManager for delayed rendering requests
         let manager = Arc::clone(&self.clipboard_manager);
-        let sender_clone = sender.clone();
+        let sender_clone = sender;
         tokio::spawn(async move {
             if let Ok(mgr) = manager.try_lock() {
                 mgr.set_server_event_sender(sender_clone).await;
@@ -223,213 +118,41 @@ impl ServerEventSender for WrdCliprdrFactory {
 
 impl ironrdp_server::CliprdrServerFactory for WrdCliprdrFactory {}
 
-/// File transfer state
-#[derive(Debug, Clone)]
-struct FileTransferState {
-    stream_id: u32,
-    list_index: u32,
-    file_path: String,
-    total_size: u64,
-    received_size: u64,
-    chunks: Vec<Vec<u8>>,
-}
-
-/// Clipboard backend implementation
-///
-/// Handles clipboard protocol events from IronRDP and coordinates with
-/// our ClipboardManager and Portal clipboard.
-#[derive(Debug)]
-struct WrdCliprdrBackend {
-    /// Reference to shared clipboard manager
-    clipboard_manager: Arc<Mutex<ClipboardManager>>,
-
-    /// Negotiated capabilities
-    capabilities: ClipboardGeneralCapabilityFlags,
-
-    /// Temporary directory for file transfers
-    temporary_directory: String,
-
-    /// ServerEvent sender for sending clipboard requests to IronRDP
-    event_sender: Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>,
-
-    /// Event queue for non-blocking clipboard operations
-    event_queue: Arc<RwLock<VecDeque<ClipboardBackendEvent>>>,
-}
-
-impl AsAny for WrdCliprdrBackend {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-}
-
-impl CliprdrBackend for WrdCliprdrBackend {
-    fn temporary_directory(&self) -> &str {
-        &self.temporary_directory
-    }
-
-    fn client_capabilities(&self) -> ClipboardGeneralCapabilityFlags {
-        // Return full capabilities - we support everything
-        ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES
-            | ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED
-            | ClipboardGeneralCapabilityFlags::FILECLIP_NO_FILE_PATHS
-            | ClipboardGeneralCapabilityFlags::CAN_LOCK_CLIPDATA
-    }
-
-    fn on_ready(&mut self) {
-        info!("Clipboard channel ready - state machine transitioned to Ready");
-        // Channel is ready for bidirectional clipboard operations
-        // No action needed - we'll announce formats when Linux clipboard changes
-    }
-
-    fn on_request_format_list(&mut self) {
-        debug!("Format list requested - checking local clipboard");
-
-        // Full implementation would query Portal clipboard and announce formats
-        // Deferred to complete clipboard integration
-    }
-
-    fn on_process_negotiated_capabilities(
-        &mut self,
-        capabilities: ClipboardGeneralCapabilityFlags,
-    ) {
-        info!("Clipboard capabilities negotiated: {:?}", capabilities);
-        self.capabilities = capabilities;
-    }
-
-    fn on_remote_copy(&mut self, available_formats: &[ClipboardFormat]) {
-        info!(
-            "Remote copy announced with {} formats",
-            available_formats.len()
-        );
-
-        // Log available formats
-        for (idx, format) in available_formats.iter().enumerate() {
-            let name = format.name.as_ref().map(|n| n.value()).unwrap_or("");
-            debug!("  Format {}: ID={:?}, Name={}", idx, format.id, name);
-        }
-
-        // Convert IronRDP formats to our format
-        let wrd_formats: Vec<WrdClipboardFormat> = available_formats
-            .iter()
-            .map(|f| WrdClipboardFormat {
-                format_id: f.id.0,
-                format_name: f
-                    .name
-                    .as_ref()
-                    .map(|n| n.value().to_string())
-                    .unwrap_or_default(),
-            })
-            .collect();
-
-        // Non-blocking: push event to queue for async processing
-        if let Ok(mut queue) = self.event_queue.try_write() {
-            queue.push_back(ClipboardBackendEvent::RemoteCopy(wrd_formats.clone()));
-
-            // NOTE: We do NOT proactively request data here!
-            // Portal Clipboard uses DELAYED RENDERING:
-            // 1. We announce formats via SetSelection (done in ClipboardManager)
-            // 2. User pastes in Linux → Portal sends SelectionTransfer signal
-            // 3. THEN we request data from RDP via ServerEvent
-            // 4. We receive data in on_format_data_response()
-            // 5. We write to Portal via selection_write(serial)
-            //
-            // The clipboard manager event handler will do the format announcement.
-        } else {
-            warn!("Clipboard event queue locked, skipping format announcement");
-        }
-    }
-
-    fn on_format_data_request(&mut self, request: FormatDataRequest) {
-        let format_id = request.format.0;
-        debug!("Format data requested for format ID: {}", format_id);
-
-        // Non-blocking: push to event queue
-        if let Ok(mut queue) = self.event_queue.try_write() {
-            queue.push_back(ClipboardBackendEvent::FormatDataRequest(format_id));
-        }
-    }
-
-    fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
-        if response.is_error() {
-            warn!("Format data response received with error flag - notifying Portal of failure");
-            // Push error event so we can notify Portal and cancel pending transfer
-            if let Ok(mut queue) = self.event_queue.try_write() {
-                queue.push_back(ClipboardBackendEvent::FormatDataError);
-            }
-            return;
-        }
-
-        let data = response.data().to_vec();
-        debug!("Format data response received: {} bytes", data.len());
-
-        // Non-blocking: push to event queue
-        if let Ok(mut queue) = self.event_queue.try_write() {
-            queue.push_back(ClipboardBackendEvent::FormatDataResponse(data));
-        }
-    }
-
-    fn on_file_contents_request(&mut self, request: FileContentsRequest) {
-        let stream_id = request.stream_id;
-        let list_index = request.index;
-        let position = request.position;
-        let size = request.requested_size;
-
-        debug!(
-            "File contents requested: stream_id={}, list_index={}, pos={}, size={}",
-            stream_id, list_index, position, size
-        );
-
-        // Non-blocking: push to event queue
-        if let Ok(mut queue) = self.event_queue.try_write() {
-            queue.push_back(ClipboardBackendEvent::FileContentsRequest(
-                stream_id, list_index, position, size,
-            ));
-        }
-    }
-
-    fn on_file_contents_response(&mut self, response: FileContentsResponse<'_>) {
-        let stream_id = response.stream_id();
-        let data = response.data().to_vec();
-
-        debug!(
-            "File contents response: stream_id={}, {} bytes",
-            stream_id,
-            data.len()
-        );
-
-        // Non-blocking: push to event queue
-        if let Ok(mut queue) = self.event_queue.try_write() {
-            queue.push_back(ClipboardBackendEvent::FileContentsResponse(stream_id, data));
-        }
-    }
-
-    fn on_lock(&mut self, data_id: LockDataId) {
-        debug!("Clipboard lock requested: {:?}", data_id);
-        // Lock support - prevents clipboard changes during transfer
-        // Not critical for basic functionality
-    }
-
-    fn on_unlock(&mut self, data_id: LockDataId) {
-        debug!("Clipboard unlock requested: {:?}", data_id);
-        // Unlock clipboard
+impl std::fmt::Debug for WrdCliprdrFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WrdCliprdrFactory")
+            .field("has_server_sender", &self.server_event_sender.is_some())
+            .field("has_event_receiver", &self.event_receiver.is_some())
+            .finish()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clipboard::manager::ClipboardConfig;
 
     #[tokio::test]
     async fn test_factory_creation() {
-        let config = crate::clipboard::manager::ClipboardConfig::default();
+        let config = ClipboardConfig::default();
         let manager = Arc::new(Mutex::new(ClipboardManager::new(config).await.unwrap()));
 
         let factory = WrdCliprdrFactory::new(manager);
         let _backend = factory.build_cliprdr_backend();
         // Backend created successfully
+    }
+
+    #[tokio::test]
+    async fn test_take_event_receiver() {
+        let config = ClipboardConfig::default();
+        let manager = Arc::new(Mutex::new(ClipboardManager::new(config).await.unwrap()));
+
+        let mut factory = WrdCliprdrFactory::new(manager);
+
+        // First take should succeed
+        assert!(factory.take_event_receiver().is_some());
+
+        // Second take should return None
+        assert!(factory.take_event_receiver().is_none());
     }
 }

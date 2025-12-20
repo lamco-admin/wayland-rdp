@@ -37,7 +37,7 @@ use crate::server::event_multiplexer::GraphicsFrame;
 
 /// Statistics for graphics drain task
 #[derive(Debug, Clone, Default)]
-pub struct GraphicsDrainStats {
+pub(super) struct GraphicsDrainStats {
     /// Total frames received from queue
     pub frames_received: u64,
     /// Frames coalesced (dropped because newer frame available)
@@ -59,7 +59,7 @@ pub struct GraphicsDrainStats {
 /// # Returns
 ///
 /// A join handle for the spawned task
-pub fn start_graphics_drain_task(
+pub(super) fn start_graphics_drain_task(
     mut graphics_rx: mpsc::Receiver<GraphicsFrame>,
     update_sender: mpsc::Sender<DisplayUpdate>,
 ) -> tokio::task::JoinHandle<()> {

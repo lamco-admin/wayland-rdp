@@ -68,14 +68,14 @@ use tracing::{debug, info, warn};
 
 /// Input event (keyboard/mouse)
 #[derive(Debug)]
-pub enum InputEvent {
+pub(super) enum InputEvent {
     Keyboard(ironrdp_server::KeyboardEvent),
     Mouse(ironrdp_server::MouseEvent),
 }
 
 /// Control event (session management)
 #[derive(Debug)]
-pub enum ControlEvent {
+pub(super) enum ControlEvent {
     Quit(String),
     SetCredentials(ironrdp_server::Credentials),
     GetLocalAddr(tokio::sync::oneshot::Sender<Option<std::net::SocketAddr>>),
@@ -83,7 +83,7 @@ pub enum ControlEvent {
 
 /// Clipboard event
 #[derive(Debug)]
-pub enum ClipboardEvent {
+pub(super) enum ClipboardEvent {
     SendFormatList(Vec<ironrdp_cliprdr::pdu::ClipboardFormat>),
     SendData(Vec<u8>),
     RequestData(u32), // format_id
@@ -96,7 +96,7 @@ pub struct GraphicsFrame {
 }
 
 /// Event multiplexer with priority-based QoS
-pub struct EventMultiplexer {
+pub(super) struct EventMultiplexer {
     // Priority 1: Input (bounded 32, never starve)
     input_tx: mpsc::Sender<InputEvent>,
     input_rx: mpsc::Receiver<InputEvent>,
@@ -123,7 +123,7 @@ pub struct EventMultiplexer {
 
 impl EventMultiplexer {
     /// Create new event multiplexer with default queue sizes
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         let (input_tx, input_rx) = mpsc::channel(32);
         let (control_tx, control_rx) = mpsc::channel(16);
         let (clipboard_tx, clipboard_rx) = mpsc::channel(8);
@@ -153,27 +153,27 @@ impl EventMultiplexer {
     }
 
     /// Get input event sender
-    pub fn input_sender(&self) -> mpsc::Sender<InputEvent> {
+    pub(super) fn input_sender(&self) -> mpsc::Sender<InputEvent> {
         self.input_tx.clone()
     }
 
     /// Get control event sender
-    pub fn control_sender(&self) -> mpsc::Sender<ControlEvent> {
+    pub(super) fn control_sender(&self) -> mpsc::Sender<ControlEvent> {
         self.control_tx.clone()
     }
 
     /// Get clipboard event sender
-    pub fn clipboard_sender(&self) -> mpsc::Sender<ClipboardEvent> {
+    pub(super) fn clipboard_sender(&self) -> mpsc::Sender<ClipboardEvent> {
         self.clipboard_tx.clone()
     }
 
     /// Get graphics frame sender
-    pub fn graphics_sender(&self) -> mpsc::Sender<GraphicsFrame> {
+    pub(super) fn graphics_sender(&self) -> mpsc::Sender<GraphicsFrame> {
         self.graphics_tx.clone()
     }
 
     /// Send input event with drop policy
-    pub async fn send_input(&self, event: InputEvent) {
+    pub(super) async fn send_input(&self, event: InputEvent) {
         if self.input_tx.send(event).await.is_err() {
             warn!("Input queue full - dropping event (extremely rare)");
         }
@@ -181,7 +181,7 @@ impl EventMultiplexer {
 
     /// Send graphics frame with drop policy
     /// If queue full, drop immediately (never block on graphics)
-    pub fn send_graphics_nonblocking(&mut self, frame: GraphicsFrame) {
+    pub(super) fn send_graphics_nonblocking(&mut self, frame: GraphicsFrame) {
         if self.graphics_tx.try_send(frame).is_err() {
             self.graphics_dropped += 1;
             if self.graphics_dropped % 100 == 0 {
@@ -200,7 +200,7 @@ impl EventMultiplexer {
     /// 2. Process 1 control event (session management)
     /// 3. Process 1 clipboard event (user operations)
     /// 4. Coalesce graphics to 1 latest frame
-    pub async fn drain_cycle(&mut self) -> DrainResult {
+    pub(super) async fn drain_cycle(&mut self) -> DrainResult {
         let mut result = DrainResult::default();
 
         // PRIORITY 1: Drain ALL input events
@@ -243,7 +243,7 @@ impl EventMultiplexer {
     }
 
     /// Get statistics
-    pub fn stats(&self) -> MultiplexerStats {
+    pub(super) fn stats(&self) -> MultiplexerStats {
         MultiplexerStats {
             input_dropped: self.input_dropped,
             control_dropped: self.control_dropped,
@@ -256,7 +256,7 @@ impl EventMultiplexer {
 
 /// Result of drain cycle containing events to process
 #[derive(Default)]
-pub struct DrainResult {
+pub(super) struct DrainResult {
     pub input_events: Vec<InputEvent>,
     pub control_event: Option<ControlEvent>,
     pub clipboard_event: Option<ClipboardEvent>,
@@ -265,7 +265,7 @@ pub struct DrainResult {
 
 /// Multiplexer statistics
 #[derive(Debug, Clone)]
-pub struct MultiplexerStats {
+pub(super) struct MultiplexerStats {
     pub input_dropped: u64,
     pub control_dropped: u64,
     pub clipboard_dropped: u64,

@@ -101,8 +101,6 @@ pub struct WrdServer {
     /// Display handler (kept for lifecycle management)
     #[allow(dead_code)]
     display_handler: Arc<WrdDisplayHandler>,
-    // Portal session handle removed - session is consumed by input_handler
-    // TODO: Refactor to allow session sharing between input and clipboard
 }
 
 impl WrdServer {
@@ -167,8 +165,8 @@ impl WrdServer {
         info!("Portal session created successfully (clipboard enabled if available)");
 
         // Extract session details
-        let pipewire_fd = session_handle.pipewire_fd;
-        let stream_info = session_handle.streams;
+        let pipewire_fd = session_handle.pipewire_fd();
+        let stream_info = session_handle.streams();
 
         info!(
             "Portal session started with {} streams, PipeWire FD: {}",
@@ -204,7 +202,7 @@ impl WrdServer {
                 initial_size.0,
                 initial_size.1,
                 pipewire_fd,
-                stream_info.clone(),
+                stream_info.to_vec(),  // streams() returns &[StreamInfo], convert to Vec
                 Some(graphics_tx), // Graphics queue for multiplexer
             )
             .await

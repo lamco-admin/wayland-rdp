@@ -2,15 +2,30 @@
 //!
 //! Main clipboard synchronization coordinator that manages bidirectional
 //! clipboard sharing between RDP client and Wayland compositor.
+//!
+//! # Architecture
+//!
+//! The manager uses library types from the lamco crate ecosystem:
+//! - `lamco-clipboard-core` - Format conversion, transfer engine
+//! - `lamco-portal` - D-Bus clipboard bridge
+//!
+//! Server-specific types from this crate:
+//! - `SyncManager` - State machine with echo protection
+//! - `ClipboardEvent` - Server event routing
 
-use crate::clipboard::dbus_bridge::{ClipboardChangedEvent, DbusBridge};
 use crate::clipboard::error::{ClipboardError, Result};
-use crate::clipboard::formats::{ClipboardFormat, FormatConverter};
-use crate::clipboard::sync::{ClipboardState, LoopDetectionConfig, LoopDetector, SyncManager};
-use crate::clipboard::transfer::{TransferConfig, TransferEngine};
+use crate::clipboard::sync::{ClipboardState, SyncManager};
+use crate::clipboard::FormatConverterExt;  // Extension trait for converter methods
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
+
+// Import from lamco crates
+use lamco_clipboard_core::{
+    ClipboardFormat, FormatConverter, LoopDetectionConfig,
+    TransferConfig, TransferEngine,
+};
+use lamco_portal::dbus_clipboard::DbusClipboardBridge;
 
 /// Clipboard configuration
 #[derive(Debug, Clone)]
@@ -107,7 +122,6 @@ impl std::fmt::Debug for ClipboardEvent {
 }
 
 /// Clipboard manager coordinates all clipboard operations
-#[derive(Debug)]
 pub struct ClipboardManager {
     /// Configuration
     config: ClipboardConfig,
@@ -158,7 +172,7 @@ pub struct ClipboardManager {
 
     /// D-Bus bridge for GNOME clipboard extension integration
     /// This enables Linux→Windows clipboard on GNOME where Portal signals don't work
-    dbus_bridge: Arc<RwLock<Option<DbusBridge>>>,
+    dbus_bridge: Arc<RwLock<Option<DbusClipboardBridge>>>,
 
     /// Recently written content hashes (for loop suppression)
     /// When we write data to Portal, D-Bus bridge will see it as a clipboard change.
@@ -167,26 +181,43 @@ pub struct ClipboardManager {
     recently_written_hashes: Arc<RwLock<std::collections::HashMap<String, std::time::Instant>>>,
 }
 
+impl std::fmt::Debug for ClipboardManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClipboardManager")
+            .field("config", &self.config)
+            .field("has_portal_clipboard", &self.portal_clipboard.try_read().map(|g| g.is_some()).unwrap_or(false))
+            .field("has_dbus_bridge", &self.dbus_bridge.try_read().map(|g| g.is_some()).unwrap_or(false))
+            .finish_non_exhaustive()
+    }
+}
+
 impl ClipboardManager {
     /// Create a new clipboard manager
     pub async fn new(config: ClipboardConfig) -> Result<Self> {
         let converter = Arc::new(FormatConverter::new());
 
+        // Configure transfer engine with library types
         let transfer_config = TransferConfig {
             chunk_size: config.chunk_size,
-            max_data_size: config.max_data_size,
-            timeout: std::time::Duration::from_millis(config.timeout_ms),
+            max_size: config.max_data_size,
+            timeout_ms: config.timeout_ms,
             verify_integrity: true,
         };
-        let transfer_engine = Arc::new(TransferEngine::new(transfer_config));
+        let transfer_engine = Arc::new(TransferEngine::with_config(transfer_config));
 
+        // Configure loop detection with rate limiting if enabled
         let loop_config = LoopDetectionConfig {
             window_ms: config.loop_detection_window_ms,
             max_history: 10,
             enable_content_hashing: true,
+            rate_limit_ms: if config.rate_limit_ms > 0 {
+                Some(config.rate_limit_ms)
+            } else {
+                None
+            },
         };
-        let loop_detector = LoopDetector::new(loop_config);
-        let sync_manager = Arc::new(RwLock::new(SyncManager::new(loop_detector)));
+        // SyncManager now creates its own LoopDetector from config
+        let sync_manager = Arc::new(RwLock::new(SyncManager::with_config(loop_config)));
 
         let (event_tx, event_rx) = mpsc::channel(100);
 
@@ -712,37 +743,24 @@ impl ClipboardManager {
     pub async fn start_dbus_clipboard_listener(&self) {
         info!("Checking for GNOME clipboard extension on D-Bus...");
 
-        let mut bridge = DbusBridge::new();
-
-        // Check if extension is available
-        if !bridge.check_extension_available().await {
+        // Check if extension is available (static method)
+        if !DbusClipboardBridge::is_available().await {
             info!("GNOME clipboard extension not detected - D-Bus bridge inactive");
             info!("Install wayland-rdp-clipboard extension for Linux → Windows clipboard on GNOME");
             return;
         }
 
-        // Try to get version for logging
-        match bridge.get_version().await {
-            Ok(version) => info!("GNOME clipboard extension version: {}", version),
-            Err(e) => debug!("Could not get extension version: {}", e),
-        }
-
-        // Test connectivity
-        match bridge.ping().await {
-            Ok(reply) => debug!("Extension ping successful: {}", reply),
+        // Connect to D-Bus bridge (this spawns the signal listener internally)
+        let bridge = match DbusClipboardBridge::connect().await {
+            Ok(b) => b,
             Err(e) => {
-                warn!("Extension ping failed: {} - continuing anyway", e);
+                error!("Failed to connect to D-Bus clipboard bridge: {}", e);
+                return;
             }
-        }
+        };
 
-        // Create channel for D-Bus events
-        let (dbus_tx, mut dbus_rx) = mpsc::unbounded_channel::<ClipboardChangedEvent>();
-
-        // Start signal listener
-        if let Err(e) = bridge.start_signal_listener(dbus_tx).await {
-            error!("Failed to start D-Bus signal listener: {}", e);
-            return;
-        }
+        // Subscribe to clipboard events (broadcast::Receiver)
+        let mut dbus_rx = bridge.subscribe();
 
         // Store bridge reference
         *self.dbus_bridge.write().await = Some(bridge);
@@ -808,14 +826,13 @@ impl ClipboardManager {
 
             let mut last_forward_time: Option<std::time::Instant> = None;
 
-            while let Some(dbus_event) = dbus_rx.recv().await {
+            // Note: broadcast::Receiver uses Ok(event) pattern, not Some(event)
+            // It also returns RecvError::Lagged if we fell behind - we ignore those
+            while let Ok(dbus_event) = dbus_rx.recv().await {
                 event_count += 1;
 
-                // Skip PRIMARY selection for now (RDP only supports CLIPBOARD)
-                if dbus_event.is_primary {
-                    debug!("Ignoring PRIMARY selection change (RDP doesn't support it)");
-                    continue;
-                }
+                // Library's DbusClipboardEvent only monitors CLIPBOARD selection
+                // (PRIMARY selection not supported - matches RDP capability)
 
                 let hash_short = &dbus_event.content_hash[..8.min(dbus_event.content_hash.len())];
 
@@ -1794,7 +1811,7 @@ impl ClipboardManager {
         // Create temporary directory if it doesn't exist
         let temp_dir = std::path::Path::new("/tmp/wrd-clipboard");
         if !temp_dir.exists() {
-            std::fs::create_dir_all(temp_dir).map_err(|e| ClipboardError::Io(e))?;
+            std::fs::create_dir_all(temp_dir).map_err(ClipboardError::io)?;
         }
 
         // Placeholder: In full implementation, would read file from Portal
@@ -1814,12 +1831,12 @@ impl ClipboardManager {
         // Create temporary directory if it doesn't exist
         let temp_dir = std::path::Path::new("/tmp/wrd-clipboard");
         if !temp_dir.exists() {
-            std::fs::create_dir_all(temp_dir).map_err(|e| ClipboardError::Io(e))?;
+            std::fs::create_dir_all(temp_dir).map_err(ClipboardError::io)?;
         }
 
         // Write file chunk
         let file_path = temp_dir.join(format!("file_{}", stream_id));
-        std::fs::write(&file_path, &data).map_err(|e| ClipboardError::Io(e))?;
+        std::fs::write(&file_path, &data).map_err(ClipboardError::io)?;
 
         debug!("Wrote {} bytes to {:?}", data.len(), file_path);
 
@@ -1855,10 +1872,8 @@ mod tests {
         let config = ClipboardConfig::default();
         let mut manager = ClipboardManager::new(config).await.unwrap();
 
-        let formats = vec![ClipboardFormat {
-            format_id: 13,
-            format_name: "CF_UNICODETEXT".to_string(),
-        }];
+        // Library ClipboardFormat uses `id` and `name: Option<String>`
+        let formats = vec![ClipboardFormat::with_name(13, "CF_UNICODETEXT")];
 
         let event = ClipboardEvent::RdpFormatList(formats);
         manager.event_tx.send(event).await.unwrap();
@@ -1889,10 +1904,8 @@ mod tests {
         };
         let mut manager = ClipboardManager::new(config).await.unwrap();
 
-        let formats = vec![ClipboardFormat {
-            format_id: 13,
-            format_name: "CF_UNICODETEXT".to_string(),
-        }];
+        // Library ClipboardFormat uses `id` and `name: Option<String>`
+        let formats = vec![ClipboardFormat::with_name(13, "CF_UNICODETEXT")];
 
         // Send RDP format list
         manager

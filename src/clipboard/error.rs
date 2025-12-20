@@ -1,102 +1,65 @@
 //! Clipboard Error Types
 //!
-//! Comprehensive error handling for the clipboard synchronization module.
+//! Server-specific error handling for the clipboard synchronization module.
+//!
+//! This module extends the base errors from [`lamco_clipboard_core::ClipboardError`]
+//! with server-specific error recovery policy.
 
 use thiserror::Error;
+
+// Re-export base error from library
+pub use lamco_clipboard_core::ClipboardError as CoreClipboardError;
 
 /// Result type for clipboard operations
 pub type Result<T> = std::result::Result<T, ClipboardError>;
 
-/// Clipboard module error types
+/// Server clipboard error types
+///
+/// Wraps [`CoreClipboardError`] and adds server-specific error variants.
 #[derive(Error, Debug)]
 pub enum ClipboardError {
-    /// Portal clipboard error
+    /// Core clipboard error (from lamco-clipboard-core)
+    #[error(transparent)]
+    Core(#[from] CoreClipboardError),
+
+    /// Portal clipboard error (server-specific)
     #[error("Portal clipboard error: {0}")]
     PortalError(String),
 
-    /// Format conversion error
-    #[error("Format conversion failed: {0}")]
-    FormatConversionFailed(String),
-
-    /// Unsupported clipboard format
-    #[error("Unsupported format: {0}")]
-    UnsupportedFormat(String),
-
-    /// Invalid UTF-8 data
-    #[error("Invalid UTF-8 data")]
-    InvalidUtf8,
-
-    /// Invalid UTF-16 data
-    #[error("Invalid UTF-16 data")]
-    InvalidUtf16,
-
-    /// Invalid data structure
-    #[error("Invalid data structure: {0}")]
-    InvalidData(String),
-
-    /// Image decode error
-    #[error("Image decode error: {0}")]
-    ImageDecodeError(String),
-
-    /// Image encode error
-    #[error("Image encode error: {0}")]
-    ImageEncodeError(String),
-
-    /// Image creation error
-    #[error("Image creation error")]
-    ImageCreateError,
-
-    /// Unsupported bit depth
-    #[error("Unsupported bit depth: {0}")]
-    UnsupportedBitDepth(u16),
-
-    /// Unknown format ID
-    #[error("Unknown format ID: {0}")]
-    UnknownFormat(u32),
-
-    /// Data size exceeds limit
-    #[error("Data size {0} exceeds maximum allowed {1}")]
-    DataSizeExceeded(usize, usize),
-
-    /// Transfer timeout
-    #[error("Transfer timeout after {0}ms")]
-    TransferTimeout(u64),
-
-    /// Transfer cancelled
-    #[error("Transfer cancelled")]
-    TransferCancelled,
-
-    /// Invalid state for operation
+    /// Invalid state for operation (server state machine)
     #[error("Invalid state: {0}")]
     InvalidState(String),
-
-    /// Channel send error
-    #[error("Channel send error")]
-    ChannelSend,
-
-    /// Channel receive error
-    #[error("Channel receive error")]
-    ChannelReceive,
 
     /// RDP connection error
     #[error("RDP connection error: {0}")]
     RdpConnectionError(String),
 
-    /// Loop detected
+    /// D-Bus error
+    #[error("D-Bus error: {0}")]
+    DBus(String),
+
+    /// Channel send error (server internal)
+    #[error("Channel send error")]
+    ChannelSend,
+
+    /// Channel receive error (server internal)
+    #[error("Channel receive error")]
+    ChannelReceive,
+
+    /// Loop detected (from SyncManager policy)
     #[error("Clipboard loop detected")]
     LoopDetected,
-
-    /// IO error
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-
-    /// DBus error
-    #[error("DBus error: {0}")]
-    DBus(String),
 
     /// Unknown error
     #[error("Unknown error: {0}")]
     Unknown(String),
+}
+
+impl ClipboardError {
+    /// Create from IO error
+    pub fn io(e: std::io::Error) -> Self {
+        Self::Core(CoreClipboardError::Io(e))
+    }
 }
 
 /// Error classification for recovery strategies
@@ -123,31 +86,47 @@ pub enum ErrorType {
 /// Classify error for recovery strategy selection
 pub fn classify_error(error: &ClipboardError) -> ErrorType {
     match error {
+        // Server-specific errors
         ClipboardError::PortalError(_) | ClipboardError::DBus(_) => ErrorType::Portal,
-
-        ClipboardError::FormatConversionFailed(_)
-        | ClipboardError::UnsupportedFormat(_)
-        | ClipboardError::ImageDecodeError(_)
-        | ClipboardError::ImageEncodeError(_)
-        | ClipboardError::ImageCreateError
-        | ClipboardError::UnsupportedBitDepth(_)
-        | ClipboardError::UnknownFormat(_) => ErrorType::FormatConversion,
-
-        ClipboardError::InvalidUtf8
-        | ClipboardError::InvalidUtf16
-        | ClipboardError::InvalidData(_)
-        | ClipboardError::DataSizeExceeded(_, _) => ErrorType::DataValidation,
-
-        ClipboardError::TransferTimeout(_)
-        | ClipboardError::TransferCancelled
-        | ClipboardError::RdpConnectionError(_) => ErrorType::Transfer,
-
         ClipboardError::InvalidState(_) => ErrorType::State,
-
         ClipboardError::ChannelSend | ClipboardError::ChannelReceive => ErrorType::Communication,
-
         ClipboardError::LoopDetected => ErrorType::Loop,
+        ClipboardError::RdpConnectionError(_) => ErrorType::Transfer,
+        ClipboardError::Unknown(_) => ErrorType::Unknown,
 
+        // Core library errors (wrapped)
+        ClipboardError::Core(core_err) => classify_core_error(core_err),
+    }
+}
+
+/// Classify core library errors
+fn classify_core_error(error: &CoreClipboardError) -> ErrorType {
+    match error {
+        // Format conversion errors
+        CoreClipboardError::UnsupportedFormat(_)
+        | CoreClipboardError::FormatConversion(_) => ErrorType::FormatConversion,
+
+        // Image conversion errors (always present in library)
+        CoreClipboardError::ImageDecode(_)
+        | CoreClipboardError::ImageEncode(_) => ErrorType::FormatConversion,
+
+        // Data validation errors
+        CoreClipboardError::InvalidUtf8
+        | CoreClipboardError::InvalidUtf16
+        | CoreClipboardError::DataSizeExceeded { .. } => ErrorType::DataValidation,
+
+        // Transfer errors
+        CoreClipboardError::TransferTimeout(_)
+        | CoreClipboardError::TransferCancelled => ErrorType::Transfer,
+
+        // Backend errors
+        CoreClipboardError::Backend(_) => ErrorType::Communication,
+
+        // Loop detection
+        CoreClipboardError::LoopDetected => ErrorType::Loop,
+
+        // Catch-all for any other variants
+        #[allow(unreachable_patterns)]
         _ => ErrorType::Unknown,
     }
 }
@@ -300,17 +279,16 @@ pub fn recovery_action(error: &ClipboardError, context: &ErrorContext) -> Recove
             }
         }
 
-        ErrorType::DataValidation => match error {
-            ClipboardError::DataSizeExceeded(size, max) => {
+        ErrorType::DataValidation => {
+            // Check for DataSizeExceeded from core errors
+            if let ClipboardError::Core(CoreClipboardError::DataSizeExceeded { actual, max }) = error {
                 let reduced_size = max / 2;
-                if *size > reduced_size {
-                    RecoveryAction::ReduceDataSize(reduced_size)
-                } else {
-                    RecoveryAction::Skip
+                if *actual > reduced_size {
+                    return RecoveryAction::ReduceDataSize(reduced_size);
                 }
             }
-            _ => RecoveryAction::Skip,
-        },
+            RecoveryAction::Skip
+        }
 
         ErrorType::Transfer => {
             if context.attempt < 3 {
@@ -346,21 +324,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_error_classification() {
+    fn test_error_classification_server_errors() {
+        // Server-specific errors
         let error = ClipboardError::PortalError("test".to_string());
         assert_eq!(classify_error(&error), ErrorType::Portal);
 
-        let error = ClipboardError::FormatConversionFailed("test".to_string());
-        assert_eq!(classify_error(&error), ErrorType::FormatConversion);
+        let error = ClipboardError::DBus("test".to_string());
+        assert_eq!(classify_error(&error), ErrorType::Portal);
 
-        let error = ClipboardError::InvalidUtf8;
-        assert_eq!(classify_error(&error), ErrorType::DataValidation);
+        let error = ClipboardError::InvalidState("test".to_string());
+        assert_eq!(classify_error(&error), ErrorType::State);
 
-        let error = ClipboardError::TransferTimeout(5000);
-        assert_eq!(classify_error(&error), ErrorType::Transfer);
+        let error = ClipboardError::ChannelSend;
+        assert_eq!(classify_error(&error), ErrorType::Communication);
 
         let error = ClipboardError::LoopDetected;
         assert_eq!(classify_error(&error), ErrorType::Loop);
+
+        let error = ClipboardError::RdpConnectionError("test".to_string());
+        assert_eq!(classify_error(&error), ErrorType::Transfer);
+    }
+
+    #[test]
+    fn test_error_classification_core_errors() {
+        // Core library errors (wrapped)
+        let error = ClipboardError::Core(CoreClipboardError::UnsupportedFormat("test".to_string()));
+        assert_eq!(classify_error(&error), ErrorType::FormatConversion);
+
+        let error = ClipboardError::Core(CoreClipboardError::InvalidUtf8);
+        assert_eq!(classify_error(&error), ErrorType::DataValidation);
+
+        let error = ClipboardError::Core(CoreClipboardError::TransferCancelled);
+        assert_eq!(classify_error(&error), ErrorType::Transfer);
     }
 
     #[test]
@@ -411,7 +406,7 @@ mod tests {
 
     #[test]
     fn test_recovery_action_format_error() {
-        let error = ClipboardError::FormatConversionFailed("test".to_string());
+        let error = ClipboardError::Core(CoreClipboardError::UnsupportedFormat("test".to_string()));
         let ctx = ErrorContext::new().with_attempt(0);
 
         match recovery_action(&error, &ctx) {
@@ -422,7 +417,10 @@ mod tests {
 
     #[test]
     fn test_recovery_action_size_exceeded() {
-        let error = ClipboardError::DataSizeExceeded(20_000_000, 16_777_216);
+        let error = ClipboardError::Core(CoreClipboardError::DataSizeExceeded {
+            actual: 20_000_000,
+            max: 16_777_216,
+        });
         let ctx = ErrorContext::new();
 
         match recovery_action(&error, &ctx) {

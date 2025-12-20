@@ -14,14 +14,14 @@ use crate::portal::RemoteDesktopManager;
 
 /// Control event for session management
 #[derive(Debug)]
-pub enum ControlEvent {
+pub(super) enum ControlEvent {
     Quit(String),
     SetCredentials(ironrdp_server::Credentials),
 }
 
 /// Clipboard event for bidirectional sync
 #[derive(Debug)]
-pub enum ClipboardEvent {
+pub(super) enum ClipboardEvent {
     Message(ClipboardMessage),
 }
 
@@ -30,7 +30,7 @@ pub enum ClipboardEvent {
 /// Drains control and clipboard queues in priority order
 /// Note: Input is handled by input_handler's dedicated batching task
 ///       Graphics is handled by graphics_drain task
-pub async fn run_multiplexer_drain_loop(
+pub(super) async fn run_multiplexer_drain_loop(
     mut control_rx: mpsc::Receiver<ControlEvent>,
     mut clipboard_rx: mpsc::Receiver<ClipboardEvent>,
     _portal: Arc<RemoteDesktopManager>,
