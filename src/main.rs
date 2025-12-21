@@ -94,9 +94,9 @@ fn init_logging(args: &Args) -> Result<()> {
     };
 
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        // Enable ironrdp_cliprdr logging to debug state machine issues
+        // Enable all lamco crates + IronRDP + Portal for comprehensive debugging
         tracing_subscriber::EnvFilter::new(format!(
-            "lamco_rdp_server={},ironrdp_cliprdr=trace,ironrdp_server=trace,warn",
+            "lamco={},ironrdp=debug,ashpd=info,warn",
             log_level
         ))
     });
