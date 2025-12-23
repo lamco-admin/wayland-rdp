@@ -131,13 +131,48 @@ pub struct RdpFormat {
     pub format_name: String,
 }
 
+/// Convert registered format name to MIME type.
+///
+/// Windows clipboard formats like FileGroupDescriptorW and FileContents have
+/// **registered format IDs** assigned at runtime by `RegisterClipboardFormat()`.
+/// The IDs vary between sessions/machines, but the names are constant.
+///
+/// This function maps well-known format names to MIME types.
+pub fn format_name_to_mime(name: &str) -> Option<&'static str> {
+    match name {
+        // File transfer formats → text/uri-list
+        "FileGroupDescriptorW" | "FileGroupDescriptor" => Some("text/uri-list"),
+        // FileContents is a data retrieval mechanism, not a standalone format
+        // But if it appears in a format list, it indicates file transfer capability
+        "FileContents" => None, // Not mapped directly; FileGroupDescriptorW takes precedence
+        // Drop effect is metadata, not actual content
+        "Preferred DropEffect" => None,
+        // HTML formats
+        "HTML Format" => Some("text/html"),
+        // RTF formats
+        "Rich Text Format" => Some("text/rtf"),
+        // Other common registered formats can be added here
+        _ => None,
+    }
+}
+
 impl FormatConverterExt for FormatConverter {
     fn rdp_to_mime_types(&self, formats: &[ClipboardFormat]) -> error::Result<Vec<String>> {
         let mut mime_types = Vec::new();
         for format in formats {
+            // First try ID-based lookup
             if let Some(mime) = lib_rdp_format_to_mime(format.id) {
                 if !mime_types.contains(&mime.to_string()) {
                     mime_types.push(mime.to_string());
+                }
+            } else if let Some(ref name) = format.name {
+                // For registered formats, the ID varies per session but the name is constant.
+                // Check the format name for known registered formats.
+                let mime = format_name_to_mime(name);
+                if let Some(m) = mime {
+                    if !mime_types.contains(&m.to_string()) {
+                        mime_types.push(m.to_string());
+                    }
                 }
             }
         }

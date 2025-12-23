@@ -33,7 +33,7 @@ use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
 #[cfg(feature = "h264")]
 use tokio::sync::Mutex;
-use tracing::warn;
+use tracing::{debug, error, info, trace, warn};
 
 use crate::egfx::encoder::{EncoderError, EncoderResult};
 #[cfg(feature = "h264")]

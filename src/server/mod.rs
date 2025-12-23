@@ -189,12 +189,12 @@ impl WrdServer {
         let (input_tx, input_rx) = tokio::sync::mpsc::channel(32); // Priority 1: Input
         let (_control_tx, control_rx) = tokio::sync::mpsc::channel(16); // Priority 2: Control
         let (_clipboard_tx, clipboard_rx) = tokio::sync::mpsc::channel(8); // Priority 3: Clipboard
-        let (graphics_tx, graphics_rx) = tokio::sync::mpsc::channel(4); // Priority 4: Graphics
+        let (graphics_tx, graphics_rx) = tokio::sync::mpsc::channel(64); // Priority 4: Graphics - increased for frame coalescing
         info!("📊 Full multiplexer queues created:");
         info!("   Input queue: 32 (Priority 1 - never starve)");
         info!("   Control queue: 16 (Priority 2 - session critical)");
         info!("   Clipboard queue: 8 (Priority 3 - user operations)");
-        info!("   Graphics queue: 4 (Priority 4 - drop/coalesce)");
+        info!("   Graphics queue: 64 (Priority 4 - damage region coalescing)");
 
         // Create display handler with PipeWire FD, stream info, and graphics queue
         let display_handler = Arc::new(
@@ -321,6 +321,7 @@ impl WrdServer {
         let clipboard_manager = Arc::new(Mutex::new(clipboard_mgr));
 
         // Create clipboard factory for IronRDP
+        // Factory automatically starts event bridge task internally
         let clipboard_factory = WrdCliprdrFactory::new(Arc::clone(&clipboard_manager));
 
         // Build IronRDP server using builder pattern
