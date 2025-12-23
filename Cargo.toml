@@ -27,14 +27,23 @@ path = "src/lib.rs"
 # -----------------------------------------------------------------------------
 # Lamco crates (published to crates.io)
 # -----------------------------------------------------------------------------
-# Using local paths for testing (black screen fix)
-lamco-wayland = { path = "../lamco-wayland" }
-lamco-rdp = { path = "../lamco-rdp-workspace" }
+# Updated 2025-12-23: Using published versions where possible
+# - lamco-portal 0.2.1: Critical FD ownership fix (black screen bug)
+# - lamco-clipboard-core 0.3.0: FileGroupDescriptorW support for file transfer
+#
+# NOTE: lamco-rdp-clipboard MUST remain a local path dependency because it
+# implements CliprdrBackend trait from ironrdp-cliprdr. Since we patch
+# ironrdp-cliprdr to our fork (for file transfer methods), lamco-rdp-clipboard
+# must compile against the same patched version to avoid trait conflicts.
+lamco-wayland = "0.2.1"
+lamco-rdp = "0.3.0"
+# Using local path for EAGAIN fix (non-blocking FD issue with image clipboard)
 lamco-portal = { path = "../lamco-wayland/crates/lamco-portal", features = ["dbus-clipboard"] }
-lamco-pipewire = { path = "../lamco-wayland/crates/lamco-pipewire" }
-lamco-video = { path = "../lamco-wayland/crates/lamco-video" }
-lamco-rdp-input = { path = "../lamco-rdp-workspace/crates/lamco-rdp-input" }
-lamco-clipboard-core = { path = "../lamco-rdp-workspace/crates/lamco-clipboard-core", features = ["image"] }
+lamco-pipewire = "0.1.3"
+lamco-video = "0.1.2"
+lamco-rdp-input = "0.1.1"
+lamco-clipboard-core = { version = "0.3.0", features = ["image"] }
+# Local path required - tightly coupled to patched ironrdp-cliprdr
 lamco-rdp-clipboard = { path = "../lamco-rdp-workspace/crates/lamco-rdp-clipboard" }
 
 # -----------------------------------------------------------------------------
@@ -213,19 +222,22 @@ cast_possible_wrap = "allow"
 # Patches - Override transitive dependencies
 # =============================================================================
 #
-# The published lamco-* crates depend on IronRDP 0.5.0 (last published version).
-# We need features from git master, so we patch ALL IronRDP crates to use
-# the same git source. This ensures consistency across the entire dependency tree.
+# IronRDP local fork required for file transfer methods not yet in upstream:
+# - PR #1064: lock_clipboard() / unlock_clipboard()
+# - PR #1065: request_file_contents()
+# - PR #1066: SendFileContentsResponse
 #
-# When Devolutions publishes a new IronRDP version, we can:
-# 1. Update lamco crates to use the new version
-# 2. Remove this [patch] section
+# Fork branch: pr3-file-contents-response-v2
+# Fork location: /home/greg/wayland/IronRDP
+#
+# When Devolutions merges PRs #1064-1066 and publishes new version:
+# 1. Remove this [patch] section
+# 2. Update ironrdp-* direct dependencies to use crates.io versions
 # =============================================================================
 
 [patch.crates-io]
-# IronRDP local patches - using local fork for development with file transfer support
-# See IRONRDP-PATCHES.md for pending PR details
-# All crates from local fork to avoid trait conflicts
+# IronRDP local fork - file transfer support (PRs #1064-1066 pending upstream merge)
+# All crates patched to same source to avoid trait conflicts
 ironrdp = { path = "/home/greg/wayland/IronRDP/crates/ironrdp" }
 ironrdp-pdu = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-pdu" }
 ironrdp-server = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-server" }

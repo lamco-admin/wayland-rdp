@@ -266,6 +266,10 @@ struct IncomingFile {
     received_size: u64,
     temp_path: PathBuf,
     file_handle: File,
+    /// Index in the FileGroupDescriptorW list (needed for continuation requests)
+    file_index: u32,
+    /// Clipboard data lock ID (needed for continuation requests)
+    clip_data_id: u32,
 }
 
 /// File being sent to Windows
@@ -1202,6 +1206,7 @@ impl ClipboardManager {
                     file_transfer_state,
                     portal_clipboard,
                     portal_session,
+                    server_event_sender,
                 )
                 .await
             }
@@ -1783,6 +1788,7 @@ impl ClipboardManager {
                         state.portal_serial = Some(serial);
 
                         use ironrdp_cliprdr::backend::ClipboardMessage;
+                        use ironrdp_cliprdr::pdu::{FileContentsRequest, FileContentsFlags};
 
                         // Lock clipboard data before requesting file contents
                         // Required when CAN_LOCK_CLIPDATA is negotiated
@@ -1835,6 +1841,8 @@ impl ClipboardManager {
                                 received_size: 0,
                                 temp_path,
                                 file_handle,
+                                file_index: idx as u32,
+                                clip_data_id,
                             };
                             state.incoming_files.insert(stream_id, incoming);
 
@@ -1847,14 +1855,14 @@ impl ClipboardManager {
                             };
 
                             if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
-                                ClipboardMessage::SendFileContentsRequest {
+                                ClipboardMessage::SendFileContentsRequest(FileContentsRequest {
                                     stream_id,
                                     index: idx as u32,
+                                    flags: FileContentsFlags::DATA, // Request actual file data
                                     position: 0,
                                     requested_size: request_size,
-                                    is_size_request: false, // Request actual data, not size
                                     data_id: Some(clip_data_id), // Must match the Lock PDU's clip_data_id
-                                },
+                                }),
                             )) {
                                 error!("Failed to send FileContentsRequest for '{}': {:?}", filename, e);
                             } else {
@@ -2375,6 +2383,7 @@ impl ClipboardManager {
     /// Handle RDP file contents response - Linux receives file from Windows
     ///
     /// Called when Windows client provides file data chunks.
+    /// For files >64MB, requests continuation chunks until complete.
     /// When all files are complete, delivers file:// URIs to Portal.
     async fn handle_rdp_file_contents_response(
         stream_id: u32,
@@ -2396,6 +2405,7 @@ impl ClipboardManager {
                 >,
             >,
         >,
+        server_event_sender: &Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
     ) -> Result<()> {
         if is_error {
             warn!("📂 FileContentsResponse ERROR: stream={}", stream_id);
@@ -2422,7 +2432,7 @@ impl ClipboardManager {
             return Ok(());
         }
 
-        info!("📂 FileContentsResponse: stream={}, {} bytes", stream_id, data.len());
+        info!("📂 FileContentsResponse [v2]: stream={}, {} bytes", stream_id, data.len());
 
         let mut state = file_transfer_state.write().await;
         let download_dir = state.download_dir.clone();
@@ -2444,21 +2454,21 @@ impl ClipboardManager {
 
         file.received_size += data.len() as u64;
 
-        info!("📂 Progress: '{}' - received {}/{} bytes ({:.1}%)",
+        // Log progress (less frequently for large files)
+        let percent = if file.total_size > 0 {
+            (file.received_size as f64 / file.total_size as f64) * 100.0
+        } else {
+            100.0
+        };
+        info!("📂 Progress: '{}' - {}/{} bytes ({:.1}%)",
             file.filename,
             file.received_size,
             if file.total_size > 0 { file.total_size } else { file.received_size },
-            if file.total_size > 0 {
-                (file.received_size as f64 / file.total_size as f64) * 100.0
-            } else {
-                100.0 // Assume complete if size unknown
-            }
+            percent
         );
 
         // Check if this file transfer is complete
-        // Consider complete if: we know total_size and received it, OR received any data with unknown size
-        let file_complete = (file.total_size > 0 && file.received_size >= file.total_size)
-            || (file.total_size == 0 && file.received_size > 0);
+        let file_complete = file.total_size > 0 && file.received_size >= file.total_size;
 
         if file_complete {
             info!("✅ File transfer complete: '{}'", file.filename);
@@ -2537,6 +2547,41 @@ impl ClipboardManager {
                 let mut state = file_transfer_state.write().await;
                 state.completed_files.clear();
                 state.portal_serial = None;
+            }
+        } else if file.total_size > 0 {
+            // File is NOT complete - need to request the next chunk
+            let remaining = file.total_size - file.received_size;
+            let next_chunk_size = remaining.min(64 * 1024 * 1024) as u32; // Max 64MB per request
+            let position = file.received_size;
+            let file_index = file.file_index;
+            let clip_data_id = file.clip_data_id;
+            let filename = file.filename.clone();
+
+            drop(file); // Release mutable borrow
+            drop(state); // Release lock before sending
+
+            // Request next chunk
+            if let Some(sender) = server_event_sender.read().await.as_ref() {
+                use ironrdp_cliprdr::backend::ClipboardMessage;
+                use ironrdp_cliprdr::pdu::{FileContentsRequest, FileContentsFlags};
+
+                info!("📤 Requesting next chunk for '{}' (pos={}, size={}, remaining={})",
+                    filename, position, next_chunk_size, remaining);
+
+                if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                    ClipboardMessage::SendFileContentsRequest(FileContentsRequest {
+                        stream_id,
+                        index: file_index,
+                        flags: FileContentsFlags::DATA,
+                        position,
+                        requested_size: next_chunk_size,
+                        data_id: Some(clip_data_id),
+                    }),
+                )) {
+                    error!("Failed to send continuation FileContentsRequest: {:?}", e);
+                }
+            } else {
+                error!("ServerEvent sender not available for chunk continuation");
             }
         }
 
