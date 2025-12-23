@@ -60,6 +60,55 @@ Enables servers to request file contents from clients during clipboard file tran
 ```
 f2bc3659 feat(cliprdr): add request_file_contents method for server-side file transfer
 b92d0206 feat(cliprdr): add SendFileContentsRequest message variant
+8462968b feat(cliprdr): Add SendFileContentsResponse for server-side file transfer
+```
+
+---
+
+## Patch 1b: SendFileContentsResponse (Added 2025-12-23)
+
+**Branch**: `cliprdr-request-file-contents` (same branch as Patch 1)
+**Status**: Pushed to fork, NOT YET PR'd
+**Crates**: `ironrdp-cliprdr` (Core Tier), `ironrdp-server` (Community Tier)
+
+### Changes
+
+#### ironrdp-cliprdr/src/backend.rs
+- Added `SendFileContentsResponse(FileContentsResponse<'static>)` variant to `ClipboardMessage` enum
+- Enables servers to respond to FileContentsRequest from clients
+
+#### ironrdp-server/src/server.rs
+- Added handler for `ClipboardMessage::SendFileContentsResponse` variant
+- Calls `cliprdr.submit_file_contents(response)`
+
+#### ironrdp-server/Cargo.toml
+- Added `features = ["reqwest"]` to ironrdp-tokio dependency
+- Enables ReqwestNetworkClient for HTTP operations
+
+### Message Variant
+```rust
+/// Sent by clipboard backend when file contents are ready to be sent to the remote.
+///
+/// Server implementation should send file contents response on `CLIPRDR` SVC when this
+/// message is received. This is used to respond to a FileContentsRequest from the client.
+SendFileContentsResponse(FileContentsResponse<'static>),
+```
+
+### Handler
+```rust
+ClipboardMessage::SendFileContentsResponse(response) => {
+    cliprdr.submit_file_contents(response)
+}
+```
+
+### Purpose
+Completes bidirectional file transfer: enables Linux→Windows file copy/paste.
+The server builds FileGroupDescriptorW, then responds to FileContentsRequest
+with actual file data.
+
+### Commit
+```
+8462968b feat(cliprdr): Add SendFileContentsResponse for server-side file transfer
 ```
 
 ---
