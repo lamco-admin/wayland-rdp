@@ -366,17 +366,24 @@ class ClipboardMonitor {
     }
 
     _pollClipboard() {
+        // First, get the actual MIME types available on the clipboard
+        const actualMimeTypes = this._clipboard.get_mimetypes(St.ClipboardType.CLIPBOARD);
+
+        // Then get text for change detection (hash)
         this._clipboard.get_text(St.ClipboardType.CLIPBOARD, (clip, text) => {
             const now = GLib.get_monotonic_time() / 1000; // Convert to ms
             const dedupeWindow = this._settings.get_uint('deduplicate-window');
             const emitOnEmpty = this._settings.get_boolean('emit-on-empty');
 
-            // Skip if empty and we don't emit on empty
-            if (text === null && !emitOnEmpty) {
+            // Build hash from MIME types + text content
+            const mimeTypesStr = actualMimeTypes ? actualMimeTypes.join(',') : '';
+            const contentForHash = mimeTypesStr + (text || '');
+            const hash = hashString(contentForHash);
+
+            // Skip if empty (no MIME types and no text) and we don't emit on empty
+            if ((!actualMimeTypes || actualMimeTypes.length === 0) && text === null && !emitOnEmpty) {
                 return;
             }
-
-            const hash = hashString(text || '');
 
             // Skip if same content
             if (hash === this._lastClipboardHash) {
@@ -392,9 +399,17 @@ class ClipboardMonitor {
             this._lastClipboardHash = hash;
             this._lastClipboardTime = now;
 
-            const mimeTypes = this._detectMimeTypes(text);
+            // Use actual MIME types from clipboard, fall back to detected types
+            let mimeTypes;
+            if (actualMimeTypes && actualMimeTypes.length > 0) {
+                mimeTypes = actualMimeTypes;
+                logger.debug(`Using actual MIME types from clipboard: ${mimeTypes.join(', ')}`);
+            } else {
+                mimeTypes = this._detectMimeTypes(text);
+                logger.debug(`Using detected MIME types: ${mimeTypes.join(', ')}`);
+            }
 
-            logger.info(`Clipboard changed (hash: ${hash}, length: ${text ? text.length : 0})`);
+            logger.info(`Clipboard changed (hash: ${hash}, mimeTypes: ${mimeTypes.length}, hasFiles: ${mimeTypes.includes('x-special/gnome-copied-files')})`);
             this._dbus.emitClipboardChanged(mimeTypes, hash);
         });
     }
