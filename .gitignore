@@ -34,3 +34,4 @@ target/criterion/
 # Environment files
 .env
 .env.local
+.claude/
