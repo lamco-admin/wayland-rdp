@@ -27,14 +27,15 @@ path = "src/lib.rs"
 # -----------------------------------------------------------------------------
 # Lamco crates (published to crates.io)
 # -----------------------------------------------------------------------------
-lamco-wayland = "0.1"         # Meta: portal + pipewire + video
-lamco-rdp = "0.1"             # Meta: input + clipboard
-lamco-portal = { version = "0.2", features = ["dbus-clipboard"] }  # XDG Portal + D-Bus fallback
-lamco-pipewire = "0.1"        # PipeWire screen capture
-lamco-video = "0.1"           # Video frame processing
-lamco-rdp-input = "0.1"       # Input event translation
-lamco-clipboard-core = { version = "0.2", features = ["image"] }   # Clipboard + image conversion
-lamco-rdp-clipboard = "0.2"   # IronRDP clipboard integration
+# Using local paths for testing (black screen fix)
+lamco-wayland = { path = "../lamco-wayland" }
+lamco-rdp = { path = "../lamco-rdp-workspace" }
+lamco-portal = { path = "../lamco-wayland/crates/lamco-portal", features = ["dbus-clipboard"] }
+lamco-pipewire = { path = "../lamco-wayland/crates/lamco-pipewire" }
+lamco-video = { path = "../lamco-wayland/crates/lamco-video" }
+lamco-rdp-input = { path = "../lamco-rdp-workspace/crates/lamco-rdp-input" }
+lamco-clipboard-core = { path = "../lamco-rdp-workspace/crates/lamco-clipboard-core", features = ["image"] }
+lamco-rdp-clipboard = { path = "../lamco-rdp-workspace/crates/lamco-rdp-clipboard" }
 
 # -----------------------------------------------------------------------------
 # Async runtime
@@ -73,17 +74,19 @@ bytes = "1.5"
 rustls-pemfile = "2.2"
 
 # -----------------------------------------------------------------------------
-# RDP protocol (IronRDP from master - not yet published to crates.io)
+# RDP protocol (IronRDP from local fork - includes file transfer support)
+# See IRONRDP-PATCHES.md for pending PR details
+# Using local path for development; change to git for release
 # -----------------------------------------------------------------------------
-ironrdp = { git = "https://github.com/Devolutions/IronRDP", branch = "master", default-features = false, features = ["server"] }
-ironrdp-server = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-tokio = { git = "https://github.com/Devolutions/IronRDP", branch = "master", features = ["reqwest"] }
-ironrdp-pdu = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-displaycontrol = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-cliprdr = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-core = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-dvc = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-svc = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+ironrdp = { path = "/home/greg/wayland/IronRDP/crates/ironrdp", default-features = false, features = ["server"] }
+ironrdp-server = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-server" }
+ironrdp-tokio = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-tokio", features = ["reqwest"] }
+ironrdp-pdu = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-pdu" }
+ironrdp-displaycontrol = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-displaycontrol" }
+ironrdp-cliprdr = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-cliprdr" }
+ironrdp-core = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-core" }
+ironrdp-dvc = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-dvc" }
+ironrdp-svc = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-svc" }
 
 # -----------------------------------------------------------------------------
 # Wayland and Portal integration
@@ -160,7 +163,7 @@ proptest = "1.4"
 # =============================================================================
 
 [features]
-default = ["pam-auth"]
+default = ["pam-auth", "h264"]
 wayland = ["wayland-client", "wayland-protocols"]
 pam-auth = ["pam"]
 
@@ -220,14 +223,18 @@ cast_possible_wrap = "allow"
 # =============================================================================
 
 [patch.crates-io]
-ironrdp = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-pdu = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-server = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-graphics = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-cliprdr = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-svc = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-dvc = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-core = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-tokio = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
-ironrdp-displaycontrol = { git = "https://github.com/Devolutions/IronRDP", branch = "master" }
+# IronRDP local patches - using local fork for development with file transfer support
+# See IRONRDP-PATCHES.md for pending PR details
+# All crates from local fork to avoid trait conflicts
+ironrdp = { path = "/home/greg/wayland/IronRDP/crates/ironrdp" }
+ironrdp-pdu = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-pdu" }
+ironrdp-server = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-server" }
+ironrdp-graphics = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-graphics" }
+ironrdp-cliprdr = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-cliprdr" }
+ironrdp-svc = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-svc" }
+ironrdp-dvc = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-dvc" }
+ironrdp-core = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-core" }
+ironrdp-tokio = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-tokio" }
+ironrdp-displaycontrol = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-displaycontrol" }
+
 

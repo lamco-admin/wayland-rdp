@@ -26,7 +26,7 @@ use openh264::formats::{BgraSliceU8, YUVBuffer};
 
 use thiserror::Error;
 #[cfg(feature = "h264")]
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 /// Errors that can occur during H.264 encoding
 #[derive(Debug, Error)]

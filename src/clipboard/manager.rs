@@ -16,6 +16,10 @@
 use crate::clipboard::error::{ClipboardError, Result};
 use crate::clipboard::sync::{ClipboardState, SyncManager};
 use crate::clipboard::FormatConverterExt;  // Extension trait for converter methods
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
@@ -24,6 +28,12 @@ use tracing::{debug, error, info, warn};
 use lamco_clipboard_core::{
     ClipboardFormat, FormatConverter, LoopDetectionConfig,
     TransferConfig, TransferEngine,
+    sanitize::{
+        parse_file_uris,
+        sanitize_filename_for_linux,
+        sanitize_text_for_linux,
+        sanitize_text_for_windows,
+    },
 };
 use lamco_portal::dbus_clipboard::DbusClipboardBridge;
 
@@ -81,6 +91,9 @@ pub type RdpResponseCallback = Arc<dyn Fn(Vec<u8>) + Send + Sync>;
 /// Clipboard events from RDP or Portal
 #[derive(Clone)]
 pub enum ClipboardEvent {
+    /// RDP clipboard channel is ready - should re-announce Linux clipboard
+    RdpReady,
+
     /// RDP client announced available formats
     RdpFormatList(Vec<ClipboardFormat>),
 
@@ -92,6 +105,22 @@ pub enum ClipboardEvent {
 
     /// RDP client returned error for data request (need to cancel Portal transfer)
     RdpDataError,
+
+    /// RDP client requests file contents (Windows wants file from Linux)
+    RdpFileContentsRequest {
+        stream_id: u32,
+        list_index: u32,
+        position: u64,
+        size: u32,
+        is_size_request: bool,
+    },
+
+    /// RDP client provides file contents (Linux receives file from Windows)
+    RdpFileContentsResponse {
+        stream_id: u32,
+        data: Vec<u8>,
+        is_error: bool,
+    },
 
     /// Portal announced available MIME types
     /// The bool indicates if this is from D-Bus extension (true = authoritative, force sync)
@@ -108,10 +137,19 @@ pub enum ClipboardEvent {
 impl std::fmt::Debug for ClipboardEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::RdpReady => write!(f, "RdpReady"),
             Self::RdpFormatList(formats) => write!(f, "RdpFormatList({} formats)", formats.len()),
             Self::RdpDataRequest(id, _) => write!(f, "RdpDataRequest({})", id),
             Self::RdpDataResponse(data) => write!(f, "RdpDataResponse({} bytes)", data.len()),
             Self::RdpDataError => write!(f, "RdpDataError"),
+            Self::RdpFileContentsRequest { stream_id, list_index, size, is_size_request, .. } => {
+                write!(f, "RdpFileContentsRequest(stream={}, index={}, size={}, size_req={})",
+                    stream_id, list_index, size, is_size_request)
+            }
+            Self::RdpFileContentsResponse { stream_id, data, is_error } => {
+                write!(f, "RdpFileContentsResponse(stream={}, {} bytes, error={})",
+                    stream_id, data.len(), is_error)
+            }
             Self::PortalFormatsAvailable(mimes, force) => {
                 write!(f, "PortalFormatsAvailable({:?}, force={})", mimes, force)
             }
@@ -179,6 +217,141 @@ pub struct ClipboardManager {
     /// We track hashes of data WE wrote to suppress forwarding it back to RDP.
     /// Maps hash → timestamp of write
     recently_written_hashes: Arc<RwLock<std::collections::HashMap<String, std::time::Instant>>>,
+
+    /// File transfer state (for handling file clipboard operations)
+    file_transfer_state: Arc<RwLock<FileTransferState>>,
+
+    /// Current RDP format list from Windows (for format ID lookup)
+    /// Windows registered format IDs (like FileGroupDescriptorW) vary per session,
+    /// so we store the actual list to look up the correct ID when requesting data.
+    current_rdp_formats: Arc<RwLock<Vec<ClipboardFormat>>>,
+
+    /// Formats we've advertised TO Windows (for Linux → Windows data requests)
+    /// When Windows requests data by format ID, we look up the format name here.
+    local_advertised_formats: Arc<RwLock<Vec<ClipboardFormat>>>,
+}
+
+/// State for managing file transfers between Windows and Linux
+#[derive(Debug)]
+struct FileTransferState {
+    /// Incoming files (Windows → Linux) - stream_id → file state
+    incoming_files: HashMap<u32, IncomingFile>,
+
+    /// Outgoing files (Linux → Windows) - from current clipboard
+    outgoing_files: Vec<OutgoingFile>,
+
+    /// Pending file descriptors from Windows (FileGroupDescriptorW)
+    /// These describe files Windows has available for transfer
+    pending_descriptors: Vec<lamco_clipboard_core::FileDescriptor>,
+
+    /// Directory for downloaded files
+    download_dir: PathBuf,
+
+    /// Portal serial for current incoming transfer (to deliver URIs when complete)
+    portal_serial: Option<u32>,
+
+    /// Next stream ID to use for FileContentsRequest (incremented per request)
+    next_stream_id: u32,
+
+    /// Completed files ready for delivery (final paths after rename from temp)
+    completed_files: Vec<PathBuf>,
+}
+
+/// File being received from Windows
+#[derive(Debug)]
+struct IncomingFile {
+    stream_id: u32,
+    filename: String,
+    total_size: u64,
+    received_size: u64,
+    temp_path: PathBuf,
+    file_handle: File,
+}
+
+/// File being sent to Windows
+#[derive(Debug)]
+struct OutgoingFile {
+    list_index: u32,
+    path: PathBuf,
+    size: u64,
+    filename: String,
+}
+
+impl FileTransferState {
+    fn new(download_dir: PathBuf) -> Self {
+        Self {
+            incoming_files: HashMap::new(),
+            outgoing_files: Vec::new(),
+            pending_descriptors: Vec::new(),
+            download_dir,
+            portal_serial: None,
+            next_stream_id: 1,
+            completed_files: Vec::new(),
+        }
+    }
+
+    fn clear_incoming(&mut self) {
+        self.incoming_files.clear();
+        self.portal_serial = None;
+        self.completed_files.clear();
+    }
+
+    fn clear_outgoing(&mut self) {
+        self.outgoing_files.clear();
+    }
+
+    fn set_pending_descriptors(&mut self, descriptors: Vec<lamco_clipboard_core::FileDescriptor>) {
+        self.pending_descriptors = descriptors;
+    }
+
+    fn clear_pending_descriptors(&mut self) {
+        self.pending_descriptors.clear();
+    }
+
+    /// Get the next stream ID and increment the counter
+    fn allocate_stream_id(&mut self) -> u32 {
+        let id = self.next_stream_id;
+        self.next_stream_id = self.next_stream_id.wrapping_add(1);
+        id
+    }
+
+    /// Check if all incoming files are complete
+    fn all_files_complete(&self) -> bool {
+        !self.incoming_files.is_empty() &&
+        self.incoming_files.values().all(|f| f.received_size >= f.total_size && f.total_size > 0)
+    }
+}
+
+/// Look up the actual RDP format ID for a MIME type from the stored format list.
+///
+/// Windows registered format IDs (like FileGroupDescriptorW) vary per session,
+/// so we need to look them up from the actual format list sent by Windows.
+fn lookup_format_id_for_mime(formats: &[ClipboardFormat], mime_type: &str) -> Option<u32> {
+    use super::format_name_to_mime;
+
+    for format in formats {
+        // First check if this format's ID maps to the requested MIME type
+        if let Some(mapped_mime) = super::lib_rdp_format_to_mime(format.id) {
+            if mapped_mime == mime_type {
+                return Some(format.id);
+            }
+        }
+
+        // For registered formats, check by name
+        if let Some(ref name) = format.name {
+            if let Some(mapped_mime) = format_name_to_mime(name) {
+                if mapped_mime == mime_type {
+                    debug!(
+                        "Found format ID {} for MIME {} via format name {:?}",
+                        format.id, mime_type, name
+                    );
+                    return Some(format.id);
+                }
+            }
+        }
+    }
+
+    None
 }
 
 impl std::fmt::Debug for ClipboardManager {
@@ -221,6 +394,15 @@ impl ClipboardManager {
 
         let (event_tx, event_rx) = mpsc::channel(100);
 
+        // Create file transfer state with downloads directory
+        let download_dir = std::env::var("HOME")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join("Downloads");
+
+        let file_transfer_state = Arc::new(RwLock::new(FileTransferState::new(download_dir)));
+
         let mut manager = Self {
             config,
             converter,
@@ -234,6 +416,9 @@ impl ClipboardManager {
             server_event_sender: Arc::new(RwLock::new(None)), // Set by WrdCliprdrFactory
             dbus_bridge: Arc::new(RwLock::new(None)), // Will be set by start_dbus_clipboard_listener
             recently_written_hashes: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            file_transfer_state,
+            current_rdp_formats: Arc::new(RwLock::new(Vec::new())),
+            local_advertised_formats: Arc::new(RwLock::new(Vec::new())),
         };
 
         // Start event processor
@@ -324,6 +509,7 @@ impl ClipboardManager {
                 let sync_manager = Arc::clone(&self.sync_manager);
                 let portal_clipboard = Arc::clone(&self.portal_clipboard);
                 let portal_session = Arc::clone(&self.portal_session);
+                let current_rdp_formats = Arc::clone(&self.current_rdp_formats);
 
                 // Spawn task to handle SelectionTransfer events
                 tokio::spawn(async move {
@@ -428,32 +614,44 @@ impl ClipboardManager {
                         // This ensures FIFO ordering: first request gets first response
 
                         // Convert MIME type → RDP format ID
-                        let format_id = match converter.mime_to_format_id(&transfer_event.mime_type)
-                        {
-                            Ok(id) => id,
-                            Err(e) => {
-                                error!(
-                                    "Failed to convert MIME {} to format ID: {}",
-                                    transfer_event.mime_type, e
-                                );
-                                // Don't add to queue since we can't fulfill this
-                                if let (Some(portal), Some(session)) = (
-                                    portal_clipboard.read().await.clone(),
-                                    portal_session.read().await.clone(),
-                                ) {
-                                    let session_guard = session.lock().await;
-                                    let _ = portal
-                                        .portal_clipboard()
-                                        .selection_write_done(
-                                            &session_guard,
-                                            transfer_event.serial,
-                                            false,
-                                        )
-                                        .await;
+                        // First try stored format list (for registered formats with dynamic IDs)
+                        // Then fall back to hardcoded mapping
+                        let stored_formats = current_rdp_formats.read().await;
+                        let format_id = if let Some(id) = lookup_format_id_for_mime(&stored_formats, &transfer_event.mime_type) {
+                            debug!(
+                                "Using stored format ID {} for MIME {} (registered format)",
+                                id, transfer_event.mime_type
+                            );
+                            id
+                        } else {
+                            match converter.mime_to_format_id(&transfer_event.mime_type) {
+                                Ok(id) => id,
+                                Err(e) => {
+                                    error!(
+                                        "Failed to convert MIME {} to format ID: {}",
+                                        transfer_event.mime_type, e
+                                    );
+                                    // Don't add to queue since we can't fulfill this
+                                    drop(stored_formats); // Release lock before await
+                                    if let (Some(portal), Some(session)) = (
+                                        portal_clipboard.read().await.clone(),
+                                        portal_session.read().await.clone(),
+                                    ) {
+                                        let session_guard = session.lock().await;
+                                        let _ = portal
+                                            .portal_clipboard()
+                                            .selection_write_done(
+                                                &session_guard,
+                                                transfer_event.serial,
+                                                false,
+                                            )
+                                            .await;
+                                    }
+                                    continue;
                                 }
-                                continue;
                             }
                         };
+                        drop(stored_formats); // Release lock before await
 
                         // Send ServerEvent to request data from RDP client (TRUE delayed rendering!)
                         let sender_opt = server_event_sender.read().await.clone();
@@ -821,6 +1019,9 @@ impl ClipboardManager {
         let pending_portal_requests = Arc::clone(&self.pending_portal_requests);
         let server_event_sender = Arc::clone(&self.server_event_sender);
         let recently_written_hashes = Arc::clone(&self.recently_written_hashes);
+        let file_transfer_state = Arc::clone(&self.file_transfer_state);
+        let current_rdp_formats = Arc::clone(&self.current_rdp_formats);
+        let local_advertised_formats = Arc::clone(&self.local_advertised_formats);
 
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         self.shutdown_tx = Some(shutdown_tx);
@@ -840,6 +1041,9 @@ impl ClipboardManager {
                             &pending_portal_requests,
                             &server_event_sender,
                             &recently_written_hashes,
+                            &file_transfer_state,
+                            &current_rdp_formats,
+                            &local_advertised_formats,
                         ).await {
                             error!("Error handling clipboard event: {:?}", e);
                         }
@@ -884,8 +1088,49 @@ impl ClipboardManager {
         recently_written_hashes: &Arc<
             RwLock<std::collections::HashMap<String, std::time::Instant>>,
         >,
+        file_transfer_state: &Arc<RwLock<FileTransferState>>,
+        current_rdp_formats: &Arc<RwLock<Vec<ClipboardFormat>>>,
+        local_advertised_formats: &Arc<RwLock<Vec<ClipboardFormat>>>,
     ) -> Result<()> {
         match event {
+            ClipboardEvent::RdpReady => {
+                info!("📋 RDP clipboard channel ready - checking for pending Linux clipboard to announce");
+                // When RDP becomes ready, re-announce any cached Linux clipboard formats
+                // This handles the case where Linux clipboard changed before RDP connected
+                let advertised = local_advertised_formats.read().await;
+                if !advertised.is_empty() {
+                    info!("📋 Re-announcing {} cached Linux clipboard formats to RDP", advertised.len());
+                    let formats_to_send = advertised.clone();
+                    drop(advertised);
+
+                    // Send the cached formats to RDP
+                    let sender_opt = server_event_sender.read().await.clone();
+                    if let Some(sender) = sender_opt {
+                        use ironrdp_cliprdr::backend::ClipboardMessage;
+
+                        let rdp_formats: Vec<ironrdp_cliprdr::pdu::ClipboardFormat> = formats_to_send.iter().map(|f| {
+                            let name = f.name.as_ref().map(|n| {
+                                ironrdp_cliprdr::pdu::ClipboardFormatName::new(n.clone())
+                            });
+                            ironrdp_cliprdr::pdu::ClipboardFormat {
+                                id: ironrdp_cliprdr::pdu::ClipboardFormatId(f.id),
+                                name,
+                            }
+                        }).collect();
+
+                        info!("📤 Re-sending FormatList to RDP client with {} formats", rdp_formats.len());
+                        if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                            ClipboardMessage::SendInitiateCopy(rdp_formats),
+                        )) {
+                            error!("Failed to re-send FormatList: {:?}", e);
+                        }
+                    }
+                } else {
+                    debug!("No cached Linux clipboard formats to announce");
+                }
+                Ok(())
+            }
+
             ClipboardEvent::RdpFormatList(formats) => {
                 Self::handle_rdp_format_list(
                     formats,
@@ -893,6 +1138,7 @@ impl ClipboardManager {
                     sync_manager,
                     portal_clipboard,
                     portal_session,
+                    current_rdp_formats,
                 )
                 .await
             }
@@ -905,6 +1151,8 @@ impl ClipboardManager {
                     portal_clipboard,
                     portal_session,
                     server_event_sender,
+                    local_advertised_formats,
+                    file_transfer_state,
                 )
                 .await
             }
@@ -918,6 +1166,8 @@ impl ClipboardManager {
                     portal_session,
                     pending_portal_requests,
                     recently_written_hashes,
+                    file_transfer_state,
+                    server_event_sender,
                 )
                 .await
             }
@@ -931,6 +1181,31 @@ impl ClipboardManager {
                 .await
             }
 
+            ClipboardEvent::RdpFileContentsRequest { stream_id, list_index, position, size, is_size_request } => {
+                Self::handle_rdp_file_contents_request(
+                    stream_id,
+                    list_index,
+                    position,
+                    size,
+                    is_size_request,
+                    server_event_sender,
+                    file_transfer_state,
+                )
+                .await
+            }
+
+            ClipboardEvent::RdpFileContentsResponse { stream_id, data, is_error } => {
+                Self::handle_rdp_file_contents_response(
+                    stream_id,
+                    data,
+                    is_error,
+                    file_transfer_state,
+                    portal_clipboard,
+                    portal_session,
+                )
+                .await
+            }
+
             ClipboardEvent::PortalFormatsAvailable(mime_types, force) => {
                 Self::handle_portal_formats(
                     mime_types,
@@ -938,6 +1213,7 @@ impl ClipboardManager {
                     converter,
                     sync_manager,
                     server_event_sender,
+                    local_advertised_formats,
                 )
                 .await
             }
@@ -979,8 +1255,16 @@ impl ClipboardManager {
                 >,
             >,
         >,
+        current_rdp_formats: &Arc<RwLock<Vec<ClipboardFormat>>>,
     ) -> Result<()> {
         debug!("RDP format list received: {:?}", formats);
+
+        // Store the format list for later lookup (registered format IDs vary per session)
+        {
+            let mut stored_formats = current_rdp_formats.write().await;
+            *stored_formats = formats.clone();
+            debug!("Stored {} RDP formats for format ID lookup", stored_formats.len());
+        }
 
         // Check with sync manager (loop detection)
         let should_sync = {
@@ -1065,11 +1349,33 @@ impl ClipboardManager {
         server_event_sender: &Arc<
             RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>,
         >,
+        local_advertised_formats: &Arc<RwLock<Vec<ClipboardFormat>>>,
+        file_transfer_state: &Arc<RwLock<FileTransferState>>,
     ) -> Result<()> {
         info!(
             "📥 RDP data request for format ID: {} (Linux → Windows paste)",
             format_id
         );
+
+        // Check if this is a registered format from our advertised list
+        let advertised = local_advertised_formats.read().await;
+        let format_name = advertised.iter()
+            .find(|f| f.id == format_id || (format_id == 0 && f.name.is_some()))
+            .and_then(|f| f.name.clone());
+        drop(advertised);
+
+        // Check if this is FileGroupDescriptorW (file transfer)
+        if let Some(ref name) = format_name {
+            if name == "FileGroupDescriptorW" {
+                info!("📂 Windows requests FileGroupDescriptorW - sending file list from Linux clipboard");
+                return Self::handle_file_descriptor_request(
+                    portal_clipboard,
+                    portal_session,
+                    server_event_sender,
+                    file_transfer_state,
+                ).await;
+            }
+        }
 
         // Get Portal clipboard and session
         let portal_opt = portal_clipboard.read().await.clone();
@@ -1086,7 +1392,14 @@ impl ClipboardManager {
         };
 
         // Convert format ID to MIME type
-        let mime_type = converter.format_id_to_mime(format_id)?;
+        let mime_type = match converter.format_id_to_mime(format_id) {
+            Ok(m) => m,
+            Err(e) => {
+                warn!("Unknown format ID {}: {:?}", format_id, e);
+                Self::send_format_data_error(server_event_sender).await;
+                return Ok(());
+            }
+        };
         debug!("Format {} maps to MIME: {}", format_id, mime_type);
 
         // Read from Portal clipboard via SelectionRead
@@ -1113,23 +1426,56 @@ impl ClipboardManager {
         };
         drop(session_guard);
 
-        // Convert Portal data to RDP format
-        let rdp_data = if mime_type.starts_with("text/plain") {
-            // Convert UTF-8 to UTF-16LE for RDP (CF_UNICODETEXT format)
+        // Convert Portal data to RDP format based on format ID and MIME type
+        let rdp_data = if format_id == 13 {
+            // CF_UNICODETEXT - Convert UTF-8 to UTF-16LE with line ending conversion
             let text = String::from_utf8_lossy(&portal_data);
-            let utf16: Vec<u16> = text.encode_utf16().collect();
+            // Sanitize text for Windows: LF → CRLF, remove null bytes
+            let sanitized = sanitize_text_for_windows(&text);
+            let utf16: Vec<u16> = sanitized.encode_utf16().collect();
             let mut bytes = Vec::with_capacity(utf16.len() * 2 + 2);
             for c in utf16 {
                 bytes.extend_from_slice(&c.to_le_bytes());
             }
             bytes.extend_from_slice(&[0, 0]); // Null terminator
-            debug!(
-                "Converted UTF-8 ({} bytes) to UTF-16LE ({} bytes)",
-                portal_data.len(),
-                bytes.len()
-            );
+            debug!("Converted UTF-8 ({} bytes) to UTF-16LE ({} bytes) with CRLF line endings",
+                portal_data.len(), bytes.len());
             bytes
+        } else if format_id == 8 {
+            // CF_DIB - Windows wants DIB, Portal has image format
+            if mime_type.starts_with("image/png") {
+                info!("🎨 Converting PNG to DIB for Windows");
+                lamco_clipboard_core::image::png_to_dib(&portal_data).map_err(|e| {
+                    error!("PNG to DIB conversion failed: {}", e);
+                    ClipboardError::Core(e)
+                })?
+            } else if mime_type.starts_with("image/jpeg") {
+                info!("🎨 Converting JPEG to DIB for Windows");
+                lamco_clipboard_core::image::jpeg_to_dib(&portal_data).map_err(|e| {
+                    error!("JPEG to DIB conversion failed: {}", e);
+                    ClipboardError::Core(e)
+                })?
+            } else if mime_type.starts_with("image/bmp") || mime_type.starts_with("image/x-bmp") {
+                info!("🎨 Converting BMP to DIB for Windows");
+                lamco_clipboard_core::image::bmp_to_dib(&portal_data).map_err(|e| {
+                    error!("BMP to DIB conversion failed: {}", e);
+                    ClipboardError::Core(e)
+                })?
+            } else {
+                debug!("Unknown image MIME for DIB: {}, passing through", mime_type);
+                portal_data
+            }
+        } else if format_id == 0xD011 {
+            // CF_PNG - Windows wants PNG
+            if mime_type.starts_with("image/png") {
+                debug!("PNG to PNG - pass through");
+                portal_data
+            } else {
+                debug!("Unsupported conversion to PNG from {}", mime_type);
+                portal_data
+            }
         } else {
+            debug!("Format {} - pass through {} bytes", format_id, portal_data.len());
             portal_data
         };
 
@@ -1159,6 +1505,138 @@ impl ClipboardManager {
             }
         } else {
             warn!("ServerEvent sender not available - cannot send clipboard data to RDP");
+        }
+
+        Ok(())
+    }
+
+    /// Handle FileGroupDescriptorW request from Windows (Linux → Windows file transfer)
+    ///
+    /// Reads file URIs from Portal clipboard and converts to Windows FILEDESCRIPTORW format.
+    async fn handle_file_descriptor_request(
+        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::PortalClipboardManager>>>>,
+        portal_session: &Arc<
+            RwLock<
+                Option<
+                    Arc<
+                        Mutex<
+                            ashpd::desktop::Session<
+                                'static,
+                                ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
+                            >,
+                        >,
+                    >,
+                >,
+            >,
+        >,
+        server_event_sender: &Arc<
+            RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>,
+        >,
+        file_transfer_state: &Arc<RwLock<FileTransferState>>,
+    ) -> Result<()> {
+        // Get Portal clipboard and session
+        let portal_opt = portal_clipboard.read().await.clone();
+        let session_opt = portal_session.read().await.clone();
+
+        let (portal, session) = match (portal_opt, session_opt) {
+            (Some(p), Some(s)) => (p, s),
+            _ => {
+                warn!("Portal not available for file descriptor request");
+                Self::send_format_data_error(server_event_sender).await;
+                return Ok(());
+            }
+        };
+
+        // Try to read file URIs from Portal - prefer x-special/gnome-copied-files, fall back to text/uri-list
+        let session_guard = session.lock().await;
+        let uri_data = match portal.read_local_clipboard(&session_guard, "x-special/gnome-copied-files").await {
+            Ok(data) if !data.is_empty() => {
+                info!("📂 Read {} bytes from Portal clipboard (x-special/gnome-copied-files)", data.len());
+                data
+            }
+            _ => {
+                // Fall back to text/uri-list
+                match portal.read_local_clipboard(&session_guard, "text/uri-list").await {
+                    Ok(data) => {
+                        info!("📂 Read {} bytes from Portal clipboard (text/uri-list)", data.len());
+                        data
+                    }
+                    Err(e) => {
+                        error!("Failed to read file URIs from Portal: {:#}", e);
+                        drop(session_guard);
+                        Self::send_format_data_error(server_event_sender).await;
+                        return Ok(());
+                    }
+                }
+            }
+        };
+        drop(session_guard);
+
+        // Parse URIs from the clipboard data using the library function
+        // This handles both text/uri-list and x-special/gnome-copied-files formats
+        let file_paths = parse_file_uris(&uri_data);
+
+        for path in &file_paths {
+            info!("📂 Found file: {:?}", path);
+        }
+
+        if file_paths.is_empty() {
+            warn!("No valid file paths found in clipboard");
+            Self::send_format_data_error(server_event_sender).await;
+            return Ok(());
+        }
+
+        // Store outgoing files for FileContents requests
+        {
+            let mut state = file_transfer_state.write().await;
+            state.clear_outgoing();
+            for (idx, path) in file_paths.iter().enumerate() {
+                if let Ok(metadata) = std::fs::metadata(path) {
+                    let filename = path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    state.outgoing_files.push(OutgoingFile {
+                        list_index: idx as u32,
+                        path: path.clone(),
+                        size: metadata.len(),
+                        filename,
+                    });
+                }
+            }
+            info!("📂 Stored {} outgoing files for transfer", state.outgoing_files.len());
+        }
+
+        // Build FILEDESCRIPTORW data
+        let descriptor_data = match lamco_clipboard_core::build_file_group_descriptor_w(&file_paths) {
+            Ok(data) => {
+                info!("📂 Built FileGroupDescriptorW ({} bytes) for {} files", data.len(), file_paths.len());
+                data
+            }
+            Err(e) => {
+                error!("Failed to build FileGroupDescriptorW: {:?}", e);
+                Self::send_format_data_error(server_event_sender).await;
+                return Ok(());
+            }
+        };
+
+        // Send response to Windows
+        let sender_opt = server_event_sender.read().await.clone();
+        if let Some(sender) = sender_opt {
+            use ironrdp_cliprdr::backend::ClipboardMessage;
+            use ironrdp_cliprdr::pdu::FormatDataResponse;
+            use ironrdp_pdu::IntoOwned;
+
+            let response = FormatDataResponse::new_data(descriptor_data);
+            let owned_response = response.into_owned();
+
+            if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                ClipboardMessage::SendFormatData(owned_response),
+            )) {
+                error!("Failed to send FileGroupDescriptorW response: {:?}", e);
+            } else {
+                info!("✅ Sent FileGroupDescriptorW to Windows (Linux → Windows file transfer)");
+            }
         }
 
         Ok(())
@@ -1219,6 +1697,8 @@ impl ClipboardManager {
         _recently_written_hashes: &Arc<
             RwLock<std::collections::HashMap<String, std::time::Instant>>,
         >,
+        file_transfer_state: &Arc<RwLock<FileTransferState>>,
+        server_event_sender: &Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
     ) -> Result<()> {
         debug!("RDP data response received: {} bytes", data.len());
 
@@ -1248,7 +1728,7 @@ impl ClipboardManager {
         let request_opt = pending.pop_front(); // Take oldest request
         drop(pending);
 
-        let (serial, _mime, _request_time) = match request_opt {
+        let (serial, requested_mime, _request_time) = match request_opt {
             Some(req) => req,
             None => {
                 warn!("No pending Portal request - FormatDataResponse arrived with no matching request");
@@ -1261,10 +1741,166 @@ impl ClipboardManager {
             "📥 Matched FormatDataResponse to Portal serial {} (FIFO queue)",
             serial
         );
+        debug!("Portal requested MIME: {}, received {} bytes from Windows", requested_mime, data.len());
 
-        // Convert RDP data to Portal format (UTF-16LE → UTF-8 for text)
-        let portal_data = if data.len() >= 2 {
-            // Detect if this is UTF-16 text
+        // Special handling for file transfer formats
+        if requested_mime == "text/uri-list" {
+            // This is likely FileGroupDescriptorW data - parse file descriptors
+            info!("📂 Received FileGroupDescriptorW data ({} bytes) - parsing file list", data.len());
+
+            match lamco_clipboard_core::FileDescriptor::parse_list(&data) {
+                Ok(descriptors) => {
+                    info!("📋 Parsed {} file descriptor(s) from Windows", descriptors.len());
+
+                    for (idx, desc) in descriptors.iter().enumerate() {
+                        info!(
+                            "  File {}: {} ({} bytes)",
+                            idx,
+                            desc.name,
+                            desc.size.unwrap_or(0)
+                        );
+                    }
+
+                    // Initialize file transfer state and request file contents
+                    let sender_opt = server_event_sender.read().await.clone();
+                    let sender = match sender_opt {
+                        Some(s) => s,
+                        None => {
+                            error!("ServerEvent sender not available - cannot request file contents");
+                            // Cancel Portal request since we can't proceed
+                            let session_guard = session.lock().await;
+                            let _ = portal.portal_clipboard().selection_write_done(&session_guard, serial, false).await;
+                            return Ok(());
+                        }
+                    };
+
+                    {
+                        let mut state = file_transfer_state.write().await;
+
+                        // Clear any previous transfer state
+                        state.clear_incoming();
+                        state.set_pending_descriptors(descriptors.clone());
+                        state.portal_serial = Some(serial);
+
+                        use ironrdp_cliprdr::backend::ClipboardMessage;
+
+                        // Lock clipboard data before requesting file contents
+                        // Required when CAN_LOCK_CLIPDATA is negotiated
+                        let clip_data_id = 1u32; // Use a consistent ID for this transfer
+                        info!("🔒 Sending Lock PDU (clip_data_id={})", clip_data_id);
+                        if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                            ClipboardMessage::SendLockClipboard { clip_data_id },
+                        )) {
+                            error!("Failed to send Lock PDU: {:?}", e);
+                        }
+
+                        // Create IncomingFile entry for each file and request its contents
+                        for (idx, desc) in descriptors.iter().enumerate() {
+                            let stream_id = state.allocate_stream_id();
+                            // Sanitize Windows filename for Linux filesystem compatibility
+                            let original_name = &desc.name;
+                            let filename = sanitize_filename_for_linux(original_name);
+                            let total_size = desc.size.unwrap_or(0);
+
+                            if &filename != original_name {
+                                info!("📂 Requesting file {}/{}: '{}' → '{}' (sanitized, {} bytes, stream_id={})",
+                                    idx + 1, descriptors.len(), original_name, filename, total_size, stream_id);
+                            } else {
+                                info!("📂 Requesting file {}/{}: '{}' ({} bytes, stream_id={})",
+                                    idx + 1, descriptors.len(), filename, total_size, stream_id);
+                            }
+
+                            // Create temp file for receiving data
+                            let temp_path = state.download_dir.join(format!(".{}.{}.tmp", filename, stream_id));
+
+                            // Ensure download directory exists
+                            if let Err(e) = std::fs::create_dir_all(&state.download_dir) {
+                                error!("Failed to create download directory: {}", e);
+                                continue;
+                            }
+
+                            let file_handle = match File::create(&temp_path) {
+                                Ok(f) => f,
+                                Err(e) => {
+                                    error!("Failed to create temp file '{}': {}", temp_path.display(), e);
+                                    continue;
+                                }
+                            };
+
+                            // Register this incoming file
+                            let incoming = IncomingFile {
+                                stream_id,
+                                filename: filename.clone(),
+                                total_size,
+                                received_size: 0,
+                                temp_path,
+                                file_handle,
+                            };
+                            state.incoming_files.insert(stream_id, incoming);
+
+                            // Send FileContentsRequest for this file
+                            // Request all data at once (position 0, size = total_size or reasonable max)
+                            let request_size = if total_size > 0 {
+                                total_size.min(64 * 1024 * 1024) as u32 // Max 64MB per request
+                            } else {
+                                64 * 1024 * 1024 // Request 64MB if size unknown
+                            };
+
+                            if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                                ClipboardMessage::SendFileContentsRequest {
+                                    stream_id,
+                                    index: idx as u32,
+                                    position: 0,
+                                    requested_size: request_size,
+                                    is_size_request: false, // Request actual data, not size
+                                    data_id: Some(clip_data_id), // Must match the Lock PDU's clip_data_id
+                                },
+                            )) {
+                                error!("Failed to send FileContentsRequest for '{}': {:?}", filename, e);
+                            } else {
+                                info!("📤 Sent FileContentsRequest for '{}' (stream={}, {} bytes, clip_data_id={})",
+                                    filename, stream_id, request_size, clip_data_id);
+                            }
+                        }
+
+                        info!("📂 Initiated transfer for {} file(s), waiting for responses...", state.incoming_files.len());
+                    }
+
+                    // Don't cancel Portal request - we'll deliver files when transfer completes
+                    // The FileContentsResponse handler will finalize and deliver URIs
+                    return Ok(());
+                }
+                Err(e) => {
+                    error!("Failed to parse FileGroupDescriptorW: {:?}", e);
+                    // Fall through to generic handling
+                }
+            }
+        }
+
+        // Convert RDP data to Portal format based on requested MIME type
+        let portal_data = if requested_mime.starts_with("image/png") {
+            // Portal wants PNG, Windows sent DIB (CF_DIB)
+            info!("🎨 Converting DIB to PNG for Portal");
+            lamco_clipboard_core::image::dib_to_png(&data).map_err(|e| {
+                error!("DIB to PNG conversion failed: {}", e);
+                ClipboardError::Core(e)
+            })?
+        } else if requested_mime.starts_with("image/jpeg") {
+            // Portal wants JPEG, Windows sent DIB
+            info!("🎨 Converting DIB to JPEG for Portal");
+            lamco_clipboard_core::image::dib_to_jpeg(&data).map_err(|e| {
+                error!("DIB to JPEG conversion failed: {}", e);
+                ClipboardError::Core(e)
+            })?
+        } else if requested_mime.starts_with("image/bmp") || requested_mime.starts_with("image/x-bmp") {
+            // Portal wants BMP, Windows sent DIB
+            info!("🎨 Converting DIB to BMP for Portal");
+            lamco_clipboard_core::image::dib_to_bmp(&data).map_err(|e| {
+                error!("DIB to BMP conversion failed: {}", e);
+                ClipboardError::Core(e)
+            })?
+        } else if requested_mime.starts_with("text/") && data.len() >= 2 {
+            // Text format - detect and convert UTF-16LE to UTF-8 with line ending conversion
             let utf16_data: Vec<u16> = data
                 .chunks_exact(2)
                 .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
@@ -1273,14 +1909,16 @@ impl ClipboardManager {
 
             if let Ok(text) = String::from_utf16(&utf16_data) {
                 // Successfully decoded as UTF-16 text
-                let utf8_bytes = text.as_bytes().to_vec();
+                // Sanitize for Linux: CRLF → LF, remove null bytes
+                let sanitized = sanitize_text_for_linux(&text);
+                let utf8_bytes = sanitized.as_bytes().to_vec();
                 debug!(
-                    "Converted UTF-16 to UTF-8: {} UTF-16 chars ({} bytes) → {} UTF-8 bytes",
+                    "Converted UTF-16 to UTF-8: {} UTF-16 chars ({} bytes) → {} UTF-8 bytes with LF line endings",
                     utf16_data.len(),
                     data.len(),
                     utf8_bytes.len()
                 );
-                debug!("Text preview: {:?}", &text[..text.len().min(50)]);
+                debug!("Text preview: {:?}", &sanitized[..sanitized.len().min(50)]);
                 utf8_bytes
             } else {
                 // Not valid UTF-16, use raw data
@@ -1288,6 +1926,8 @@ impl ClipboardManager {
                 data
             }
         } else {
+            // Unknown format or too small - pass through
+            debug!("Unknown format or small data, using raw {} bytes", data.len());
             data
         };
 
@@ -1460,6 +2100,7 @@ impl ClipboardManager {
         server_event_sender: &Arc<
             RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>,
         >,
+        local_advertised_formats: &Arc<RwLock<Vec<ClipboardFormat>>>,
     ) -> Result<()> {
         info!(
             "📥 handle_portal_formats called with {} MIME types (force={}): {:?}",
@@ -1504,6 +2145,19 @@ impl ClipboardManager {
                 }
             })
             .collect();
+
+        // Store the formats we're advertising (for data request lookup)
+        {
+            let mut advertised = local_advertised_formats.write().await;
+            advertised.clear();
+            for fmt in &ironrdp_formats {
+                advertised.push(ClipboardFormat {
+                    id: fmt.id.0,
+                    name: fmt.name.as_ref().map(|n| n.value().to_string()),
+                });
+            }
+            debug!("Stored {} advertised formats for data request lookup", advertised.len());
+        }
 
         // Log format details for debugging
         info!("📋 Sending FormatList to RDP client:");
@@ -1611,150 +2265,288 @@ impl ClipboardManager {
         Ok(())
     }
 
-    /// Announce local clipboard formats to RDP client
+    /// Handle RDP file contents request - Windows wants file from Linux
     ///
-    /// Called when local (Wayland) clipboard changes
-    pub async fn announce_local_formats(&self) -> Result<()> {
-        debug!("Announcing local clipboard formats");
-        // Trigger format announcement - implementation calls helpers
-        Ok(())
-    }
-
-    /// Handle remote copy from RDP client
-    ///
-    /// Called when RDP client announces available formats
-    pub async fn handle_remote_copy(&self, formats: Vec<ClipboardFormat>) -> Result<()> {
-        debug!("Handling remote copy with {} formats", formats.len());
-
-        // Use sync manager for loop detection
-        let should_sync = {
-            let mut mgr = self.sync_manager.write().await;
-            mgr.handle_rdp_formats(formats.clone())?
-        };
-
-        if !should_sync {
-            debug!("Skipping remote copy due to loop detection");
-            return Ok(());
-        }
-
-        // Convert RDP formats to MIME types
-        let mime_types = self.converter.rdp_to_mime_types(&formats)?;
-        debug!(
-            "Converted {} formats to MIME types: {:?}",
-            mime_types.len(),
-            mime_types
-        );
-
-        Ok(())
-    }
-
-    /// Handle format data request from RDP client
-    ///
-    /// Called when RDP client wants data from Portal clipboard
-    pub async fn handle_format_data_request(&self, format_id: u32) -> Result<Vec<u8>> {
-        debug!("Handling format data request for format ID: {}", format_id);
-
-        // Get MIME type for format
-        let mime_type = self.converter.format_id_to_mime(format_id)?;
-
-        // Check current state
-        let state = self.sync_manager.read().await.state().clone();
-
-        match state {
-            ClipboardState::PortalOwned(_mime_types) => {
-                debug!("Fetching data from Portal for MIME type: {}", mime_type);
-
-                // Placeholder: In full implementation, would fetch from Portal here
-                // For now, return empty data
-                Ok(Vec::new())
-            }
-            _ => {
-                warn!("Format data request in invalid state: {:?}", state);
-                Err(ClipboardError::InvalidState(format!(
-                    "Cannot handle format data request in state: {:?}",
-                    state
-                )))
-            }
-        }
-    }
-
-    /// Handle format data response from RDP client
-    ///
-    /// Called when RDP client provides requested data
-    pub async fn handle_format_data_response(&self, data: Vec<u8>) -> Result<()> {
-        debug!("Handling format data response: {} bytes", data.len());
-
-        // Check for content loop
-        let should_transfer = self.sync_manager.write().await.check_content(&data, true)?;
-
-        if !should_transfer {
-            debug!("Skipping format data response due to content loop detection");
-            return Ok(());
-        }
-
-        // Placeholder: In full implementation, would set Portal clipboard here
-        debug!("Would set Portal clipboard with {} bytes", data.len());
-
-        Ok(())
-    }
-
-    /// Handle file contents request (public wrapper)
-    pub async fn handle_file_contents_request(
-        &self,
+    /// Called when Windows client requests file data from Linux filesystem.
+    /// This handles both size requests and data requests.
+    async fn handle_rdp_file_contents_request(
         stream_id: u32,
         list_index: u32,
+        position: u64,
+        requested_size: u32,
+        is_size_request: bool,
+        server_event_sender: &Arc<RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>>,
+        file_transfer_state: &Arc<RwLock<FileTransferState>>,
     ) -> Result<()> {
-        debug!(
-            "File contents request: stream={}, index={}",
-            stream_id, list_index
-        );
+        info!("📂 FileContentsRequest: stream={}, index={}, pos={}, size={}, size_req={}",
+            stream_id, list_index, position, requested_size, is_size_request);
 
-        // Create temporary directory if it doesn't exist
-        let temp_dir = std::path::Path::new("/tmp/wrd-clipboard");
-        if !temp_dir.exists() {
-            std::fs::create_dir_all(temp_dir).map_err(ClipboardError::io)?;
+        let sender = match server_event_sender.read().await.as_ref() {
+            Some(s) => s.clone(),
+            None => {
+                error!("ServerEvent sender not available for file transfer");
+                return Err(ClipboardError::NotInitialized);
+            }
+        };
+
+        // Get file from outgoing files list
+        let state = file_transfer_state.read().await;
+        let file_info = state.outgoing_files.get(list_index as usize).ok_or_else(|| {
+            error!("Invalid file list index: {} (have {} files)", list_index, state.outgoing_files.len());
+            ClipboardError::InvalidState(format!("File index {} not found", list_index))
+        })?;
+
+        // Import types for sending FileContentsResponse
+        use ironrdp_cliprdr::backend::ClipboardMessage;
+        use ironrdp_cliprdr::pdu::FileContentsResponse;
+
+        if is_size_request {
+            // Return file size as 8-byte little-endian
+            info!("📂 Returning file size: {} bytes for '{}'", file_info.size, file_info.filename);
+
+            // Create and send FileContentsResponse with size
+            let response = FileContentsResponse::new_size_response(stream_id, file_info.size);
+            info!("📤 Sending FileContentsResponse(stream={}, size={})", stream_id, file_info.size);
+
+            if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                ClipboardMessage::SendFileContentsResponse(response),
+            )) {
+                error!("❌ Failed to send FileContentsResponse: {:?}", e);
+            }
+        } else {
+            // Read data from file
+            let path = file_info.path.clone();
+            let file_size = file_info.size;
+            drop(state); // Release lock before file I/O
+
+            match Self::read_file_chunk(&path, position, requested_size) {
+                Ok(data) => {
+                    info!("📂 Read {} bytes from '{}' at offset {} (file size: {})",
+                        data.len(), path.display(), position, file_size);
+
+                    // Create and send FileContentsResponse with data
+                    let response = FileContentsResponse::new_data_response(stream_id, data.clone());
+                    info!("📤 Sending FileContentsResponse(stream={}, {} bytes)", stream_id, data.len());
+
+                    if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                        ClipboardMessage::SendFileContentsResponse(response),
+                    )) {
+                        error!("❌ Failed to send FileContentsResponse: {:?}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to read file '{}': {}", path.display(), e);
+
+                    // Send error response
+                    let response = FileContentsResponse::new_error(stream_id);
+                    info!("📤 Sending FileContentsResponse ERROR (stream={})", stream_id);
+
+                    if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                        ClipboardMessage::SendFileContentsResponse(response),
+                    )) {
+                        error!("❌ Failed to send FileContentsResponse error: {:?}", e);
+                    }
+                }
+            }
         }
-
-        // Placeholder: In full implementation, would read file from Portal
-        debug!("File contents request handling - file transfer implementation pending");
 
         Ok(())
     }
 
-    /// Handle file contents response (public wrapper)
-    pub async fn handle_file_contents_response(&self, stream_id: u32, data: Vec<u8>) -> Result<()> {
-        debug!(
-            "File contents response: stream={}, {} bytes",
-            stream_id,
-            data.len()
-        );
+    /// Read a chunk from a file
+    fn read_file_chunk(path: &PathBuf, offset: u64, size: u32) -> Result<Vec<u8>> {
+        let mut file = File::open(path).map_err(|e| {
+            ClipboardError::FileIoError(format!("Failed to open file: {}", e))
+        })?;
 
-        // Create temporary directory if it doesn't exist
-        let temp_dir = std::path::Path::new("/tmp/wrd-clipboard");
-        if !temp_dir.exists() {
-            std::fs::create_dir_all(temp_dir).map_err(ClipboardError::io)?;
-        }
+        file.seek(SeekFrom::Start(offset)).map_err(|e| {
+            ClipboardError::FileIoError(format!("Failed to seek to offset {}: {}", offset, e))
+        })?;
 
-        // Write file chunk
-        let file_path = temp_dir.join(format!("file_{}", stream_id));
-        std::fs::write(&file_path, &data).map_err(ClipboardError::io)?;
+        let mut buffer = vec![0u8; size as usize];
+        let bytes_read = file.read(&mut buffer).map_err(|e| {
+            ClipboardError::FileIoError(format!("Failed to read file: {}", e))
+        })?;
 
-        debug!("Wrote {} bytes to {:?}", data.len(), file_path);
-
-        Ok(())
+        buffer.truncate(bytes_read);
+        Ok(buffer)
     }
 
-    /// Shutdown the clipboard manager
-    pub async fn shutdown(&mut self) -> Result<()> {
-        info!("Shutting down clipboard manager");
+    /// Handle RDP file contents response - Linux receives file from Windows
+    ///
+    /// Called when Windows client provides file data chunks.
+    /// When all files are complete, delivers file:// URIs to Portal.
+    async fn handle_rdp_file_contents_response(
+        stream_id: u32,
+        data: Vec<u8>,
+        is_error: bool,
+        file_transfer_state: &Arc<RwLock<FileTransferState>>,
+        portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::PortalClipboardManager>>>>,
+        portal_session: &Arc<
+            RwLock<
+                Option<
+                    Arc<
+                        Mutex<
+                            ashpd::desktop::Session<
+                                'static,
+                                ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
+                            >,
+                        >,
+                    >,
+                >,
+            >,
+        >,
+    ) -> Result<()> {
+        if is_error {
+            warn!("📂 FileContentsResponse ERROR: stream={}", stream_id);
 
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(()).await;
+            // Clean up failed transfer
+            let mut state = file_transfer_state.write().await;
+            if let Some(file) = state.incoming_files.remove(&stream_id) {
+                info!("Cleaning up failed transfer: {}", file.filename);
+                let _ = std::fs::remove_file(&file.temp_path);
+            }
+
+            // Cancel Portal request if this was part of a transfer
+            if let Some(serial) = state.portal_serial.take() {
+                drop(state);
+                if let (Some(portal), Some(session)) = (
+                    portal_clipboard.read().await.as_ref().cloned(),
+                    portal_session.read().await.as_ref().cloned(),
+                ) {
+                    let session_guard = session.lock().await;
+                    let _ = portal.portal_clipboard().selection_write_done(&session_guard, serial, false).await;
+                }
+            }
+
+            return Ok(());
+        }
+
+        info!("📂 FileContentsResponse: stream={}, {} bytes", stream_id, data.len());
+
+        let mut state = file_transfer_state.write().await;
+        let download_dir = state.download_dir.clone();
+
+        // Get incoming file entry (should exist from transfer initiation)
+        let file = match state.incoming_files.get_mut(&stream_id) {
+            Some(f) => f,
+            None => {
+                warn!("⚠️  Received FileContentsResponse for unknown stream {}", stream_id);
+                return Ok(());
+            }
+        };
+
+        // Write data chunk to file
+        file.file_handle.write_all(&data).map_err(|e| {
+            error!("Failed to write {} bytes to '{}': {}", data.len(), file.temp_path.display(), e);
+            ClipboardError::FileIoError(format!("File write failed: {}", e))
+        })?;
+
+        file.received_size += data.len() as u64;
+
+        info!("📂 Progress: '{}' - received {}/{} bytes ({:.1}%)",
+            file.filename,
+            file.received_size,
+            if file.total_size > 0 { file.total_size } else { file.received_size },
+            if file.total_size > 0 {
+                (file.received_size as f64 / file.total_size as f64) * 100.0
+            } else {
+                100.0 // Assume complete if size unknown
+            }
+        );
+
+        // Check if this file transfer is complete
+        // Consider complete if: we know total_size and received it, OR received any data with unknown size
+        let file_complete = (file.total_size > 0 && file.received_size >= file.total_size)
+            || (file.total_size == 0 && file.received_size > 0);
+
+        if file_complete {
+            info!("✅ File transfer complete: '{}'", file.filename);
+
+            // Flush and close temp file
+            file.file_handle.flush().map_err(|e| {
+                ClipboardError::FileIoError(format!("Failed to flush file: {}", e))
+            })?;
+
+            let temp_path = file.temp_path.clone();
+            let filename = file.filename.clone();
+
+            // Move temp file to final location
+            let final_path = download_dir.join(&filename);
+            drop(file); // Release mutable borrow
+
+            // Store the completed file path before any more operations
+            state.completed_files.push(final_path.clone());
+
+            // Remove from incoming files
+            state.incoming_files.remove(&stream_id);
+
+            // Check if ALL files are now complete
+            let all_complete = state.incoming_files.is_empty();
+            let portal_serial = state.portal_serial;
+            let completed_files = state.completed_files.clone();
+            drop(state); // Release lock before file operation
+
+            // Perform the file rename (outside of lock)
+            std::fs::rename(&temp_path, &final_path).map_err(|e| {
+                error!("Failed to move '{}' to '{}': {}", temp_path.display(), final_path.display(), e);
+                ClipboardError::FileIoError(format!("Failed to finalize file: {}", e))
+            })?;
+
+            info!("📂 Saved file to: {}", final_path.display());
+
+            // If all files complete, deliver URIs to Portal
+            if all_complete {
+                info!("🎉 All {} file(s) transferred successfully!", completed_files.len());
+
+                // Build file:// URI list
+                let uri_list: String = completed_files
+                    .iter()
+                    .map(|path| format!("file://{}", path.display()))
+                    .collect::<Vec<_>>()
+                    .join("\r\n");
+
+                info!("📋 Generated URI list:\n{}", uri_list);
+
+                // Deliver to Portal
+                if let Some(serial) = portal_serial {
+                    if let (Some(portal), Some(session)) = (
+                        portal_clipboard.read().await.as_ref().cloned(),
+                        portal_session.read().await.as_ref().cloned(),
+                    ) {
+                        let session_guard = session.lock().await;
+
+                        // Write URI list data
+                        let uri_bytes = uri_list.into_bytes();
+                        match portal.write_selection_data(&session_guard, serial, uri_bytes.clone()).await {
+                            Ok(_) => {
+                                info!("✅ Delivered {} file URI(s) to Portal (serial={})", completed_files.len(), serial);
+                            }
+                            Err(e) => {
+                                error!("Failed to deliver URIs to Portal: {:?}", e);
+                                // Try to cancel gracefully
+                                let _ = portal.portal_clipboard().selection_write_done(&session_guard, serial, false).await;
+                            }
+                        }
+                    } else {
+                        warn!("Portal not available to deliver file URIs");
+                    }
+                }
+
+                // Clear completed files list
+                let mut state = file_transfer_state.write().await;
+                state.completed_files.clear();
+                state.portal_serial = None;
+            }
         }
 
         Ok(())
     }
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -1773,96 +2565,16 @@ mod tests {
         let config = ClipboardConfig::default();
         let mut manager = ClipboardManager::new(config).await.unwrap();
 
-        // Library ClipboardFormat uses `id` and `name: Option<String>`
         let formats = vec![ClipboardFormat::with_name(13, "CF_UNICODETEXT")];
-
         let event = ClipboardEvent::RdpFormatList(formats);
         manager.event_tx.send(event).await.unwrap();
-
-        // Give event processor time to handle
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 
     #[tokio::test]
-    async fn test_portal_format_list_handling() {
+    async fn test_shutdown() {
         let config = ClipboardConfig::default();
         let mut manager = ClipboardManager::new(config).await.unwrap();
-
-        let mime_types = vec!["text/plain".to_string()];
-
-        let event = ClipboardEvent::PortalFormatsAvailable(mime_types, true);
-        manager.event_tx.send(event).await.unwrap();
-
-        // Give event processor time to handle
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    }
-
-    #[tokio::test]
-    async fn test_loop_detection_in_manager() {
-        let config = ClipboardConfig {
-            loop_detection_window_ms: 1000,
-            ..Default::default()
-        };
-        let mut manager = ClipboardManager::new(config).await.unwrap();
-
-        // Library ClipboardFormat uses `id` and `name: Option<String>`
-        let formats = vec![ClipboardFormat::with_name(13, "CF_UNICODETEXT")];
-
-        // Send RDP format list
-        manager
-            .event_tx
-            .send(ClipboardEvent::RdpFormatList(formats.clone()))
-            .await
-            .unwrap();
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Send Portal format list (corresponding MIME types)
-        manager
-            .event_tx
-            .send(ClipboardEvent::PortalFormatsAvailable(
-                vec!["text/plain".to_string()],
-                false, // Not forced - simulate portal echo
-            ))
-            .await
-            .unwrap();
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Send RDP format list again - should be detected as loop
-        manager
-            .event_tx
-            .send(ClipboardEvent::RdpFormatList(formats))
-            .await
-            .unwrap();
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    }
-
-    #[tokio::test]
-    async fn test_manager_shutdown() {
-        let config = ClipboardConfig::default();
-        let mut manager = ClipboardManager::new(config).await.unwrap();
-
         manager.shutdown().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_large_data_handling() {
-        let config = ClipboardConfig {
-            max_data_size: 1024,
-            ..Default::default()
-        };
-        let mut manager = ClipboardManager::new(config).await.unwrap();
-
-        // Send data within limit
-        let data = vec![0u8; 512];
-        manager
-            .event_tx
-            .send(ClipboardEvent::RdpDataResponse(data))
-            .await
-            .unwrap();
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 }

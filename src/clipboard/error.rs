@@ -50,6 +50,14 @@ pub enum ClipboardError {
     #[error("Clipboard loop detected")]
     LoopDetected,
 
+    /// File I/O error during file transfer
+    #[error("File I/O error: {0}")]
+    FileIoError(String),
+
+    /// Component not initialized
+    #[error("Component not initialized")]
+    NotInitialized,
+
     /// Unknown error
     #[error("Unknown error: {0}")]
     Unknown(String),
@@ -92,6 +100,8 @@ pub fn classify_error(error: &ClipboardError) -> ErrorType {
         ClipboardError::ChannelSend | ClipboardError::ChannelReceive => ErrorType::Communication,
         ClipboardError::LoopDetected => ErrorType::Loop,
         ClipboardError::RdpConnectionError(_) => ErrorType::Transfer,
+        ClipboardError::FileIoError(_) => ErrorType::Transfer,
+        ClipboardError::NotInitialized => ErrorType::State,
         ClipboardError::Unknown(_) => ErrorType::Unknown,
 
         // Core library errors (wrapped)

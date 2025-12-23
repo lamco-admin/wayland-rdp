@@ -47,7 +47,12 @@ async fn main() -> Result<()> {
     // Initialize logging
     init_logging(&args)?;
 
-    info!("Starting WRD-Server v{}", env!("CARGO_PKG_VERSION"));
+    info!("════════════════════════════════════════════════════════");
+    info!("  lamco-rdp-server v{}", env!("CARGO_PKG_VERSION"));
+    info!("  Built: {} {}", env!("BUILD_DATE"), env!("BUILD_TIME"));
+    info!("  Commit: {}", env!("GIT_HASH"));
+    info!("  Profile: {}", if cfg!(debug_assertions) { "debug" } else { "release" });
+    info!("════════════════════════════════════════════════════════");
 
     // Log startup diagnostics
     lamco_rdp_server::utils::log_startup_diagnostics();
