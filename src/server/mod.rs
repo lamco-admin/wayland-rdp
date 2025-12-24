@@ -61,11 +61,13 @@
 
 mod display_handler;
 mod event_multiplexer;
+mod gfx_factory;
 mod graphics_drain;
 mod input_handler;
 mod multiplexer_loop;
 
 pub use display_handler::WrdDisplayHandler;
+pub use gfx_factory::{HandlerState, WrdGfxFactory};
 pub use input_handler::WrdInputHandler;
 
 use anyhow::{Context, Result};
@@ -324,6 +326,15 @@ impl WrdServer {
         // Factory automatically starts event bridge task internally
         let clipboard_factory = WrdCliprdrFactory::new(Arc::clone(&clipboard_manager));
 
+        // Create EGFX/H.264 factory for video streaming
+        // This enables hardware-accelerated H.264 encoding when client supports it
+        let gfx_factory = WrdGfxFactory::new(
+            initial_size.0 as u16,
+            initial_size.1 as u16,
+        );
+        let _gfx_handler_state = gfx_factory.handler_state();
+        info!("EGFX factory created for H.264/AVC420 streaming");
+
         // Build IronRDP server using builder pattern
         info!("Building IronRDP server");
         let listen_addr: SocketAddr = config
@@ -339,6 +350,7 @@ impl WrdServer {
             .with_display_handler((*display_handler).clone()) // Clone the handler for IronRDP
             .with_bitmap_codecs(codecs)
             .with_cliprdr_factory(Some(Box::new(clipboard_factory)))
+            .with_gfx_factory(Some(Box::new(gfx_factory)))
             .build();
 
         info!("WRD Server initialized successfully");
