@@ -27,22 +27,21 @@ path = "src/lib.rs"
 # -----------------------------------------------------------------------------
 # Lamco crates (published to crates.io)
 # -----------------------------------------------------------------------------
-# Updated 2025-12-23: Using published versions where possible
-# - lamco-portal 0.2.1: Critical FD ownership fix (black screen bug)
-# - lamco-clipboard-core 0.3.0: FileGroupDescriptorW support for file transfer
+# Updated 2025-12-24: Using latest published versions
+# lamco-portal 0.2.2: Includes EAGAIN fix for non-blocking FD
+# lamco-clipboard-core 0.4.0: FileDescriptor support, sanitization
 #
 # NOTE: lamco-rdp-clipboard MUST remain a local path dependency because it
 # implements CliprdrBackend trait from ironrdp-cliprdr. Since we patch
 # ironrdp-cliprdr to our fork (for file transfer methods), lamco-rdp-clipboard
 # must compile against the same patched version to avoid trait conflicts.
-lamco-wayland = "0.2.1"
-lamco-rdp = "0.3.0"
-# Using local path for EAGAIN fix (non-blocking FD issue with image clipboard)
-lamco-portal = { path = "../lamco-wayland/crates/lamco-portal", features = ["dbus-clipboard"] }
+lamco-wayland = "0.2.2"
+lamco-rdp = "0.4.0"
+lamco-portal = { version = "0.2.2", features = ["dbus-clipboard"] }
 lamco-pipewire = "0.1.3"
 lamco-video = "0.1.2"
 lamco-rdp-input = "0.1.1"
-lamco-clipboard-core = { version = "0.3.0", features = ["image"] }
+lamco-clipboard-core = { version = "0.4.0", features = ["image"] }
 # Local path required - tightly coupled to patched ironrdp-cliprdr
 lamco-rdp-clipboard = { path = "../lamco-rdp-workspace/crates/lamco-rdp-clipboard" }
 
@@ -88,7 +87,7 @@ rustls-pemfile = "2.2"
 # Using local path for development; change to git for release
 # -----------------------------------------------------------------------------
 ironrdp = { path = "/home/greg/wayland/IronRDP/crates/ironrdp", default-features = false, features = ["server"] }
-ironrdp-server = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-server" }
+ironrdp-server = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-server", features = ["egfx"] }
 ironrdp-tokio = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-tokio", features = ["reqwest"] }
 ironrdp-pdu = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-pdu" }
 ironrdp-displaycontrol = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-displaycontrol" }
@@ -96,6 +95,7 @@ ironrdp-cliprdr = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-cliprdr" }
 ironrdp-core = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-core" }
 ironrdp-dvc = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-dvc" }
 ironrdp-svc = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-svc" }
+ironrdp-egfx = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-egfx" }
 
 # -----------------------------------------------------------------------------
 # Wayland and Portal integration
@@ -236,7 +236,8 @@ cast_possible_wrap = "allow"
 # =============================================================================
 
 [patch.crates-io]
-# IronRDP local fork - file transfer support (PRs #1064-1066 pending upstream merge)
+# IronRDP local fork - combined EGFX + file transfer support
+# PRs pending upstream: #1057 (EGFX), #1064-1066 (file transfer)
 # All crates patched to same source to avoid trait conflicts
 ironrdp = { path = "/home/greg/wayland/IronRDP/crates/ironrdp" }
 ironrdp-pdu = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-pdu" }
@@ -248,5 +249,4 @@ ironrdp-dvc = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-dvc" }
 ironrdp-core = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-core" }
 ironrdp-tokio = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-tokio" }
 ironrdp-displaycontrol = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-displaycontrol" }
-
-
+ironrdp-egfx = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-egfx" }
