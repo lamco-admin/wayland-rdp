@@ -60,6 +60,7 @@
 //! - RemoteFX compression for efficient bandwidth usage
 
 mod display_handler;
+mod egfx_sender;
 mod event_multiplexer;
 mod gfx_factory;
 mod graphics_drain;
@@ -67,7 +68,8 @@ mod input_handler;
 mod multiplexer_loop;
 
 pub use display_handler::WrdDisplayHandler;
-pub use gfx_factory::{HandlerState, WrdGfxFactory};
+pub use egfx_sender::{EgfxFrameSender, SendError};
+pub use gfx_factory::{HandlerState, SharedHandlerState, WrdGfxFactory};
 pub use input_handler::WrdInputHandler;
 
 use anyhow::{Context, Result};
@@ -198,7 +200,18 @@ impl WrdServer {
         info!("   Clipboard queue: 8 (Priority 3 - user operations)");
         info!("   Graphics queue: 64 (Priority 4 - damage region coalescing)");
 
-        // Create display handler with PipeWire FD, stream info, and graphics queue
+        // Create EGFX/H.264 factory for video streaming BEFORE display handler
+        // This enables hardware-accelerated H.264 encoding when client supports it
+        let gfx_factory = WrdGfxFactory::new(
+            initial_size.0 as u16,
+            initial_size.1 as u16,
+        );
+        // Get shared references BEFORE passing factory to builder
+        let gfx_handler_state = gfx_factory.handler_state();
+        let gfx_server_handle = gfx_factory.server_handle();
+        info!("EGFX factory created for H.264/AVC420 streaming");
+
+        // Create display handler with PipeWire FD, stream info, graphics queue, and EGFX references
         let display_handler = Arc::new(
             WrdDisplayHandler::new(
                 initial_size.0,
@@ -206,6 +219,8 @@ impl WrdServer {
                 pipewire_fd,
                 stream_info.to_vec(),  // streams() returns &[StreamInfo], convert to Vec
                 Some(graphics_tx), // Graphics queue for multiplexer
+                Some(gfx_server_handle), // EGFX server handle for H.264 frame sending
+                Some(gfx_handler_state), // EGFX handler state for readiness checks
             )
             .await
             .context("Failed to create display handler")?,
@@ -326,14 +341,8 @@ impl WrdServer {
         // Factory automatically starts event bridge task internally
         let clipboard_factory = WrdCliprdrFactory::new(Arc::clone(&clipboard_manager));
 
-        // Create EGFX/H.264 factory for video streaming
-        // This enables hardware-accelerated H.264 encoding when client supports it
-        let gfx_factory = WrdGfxFactory::new(
-            initial_size.0 as u16,
-            initial_size.1 as u16,
-        );
-        let _gfx_handler_state = gfx_factory.handler_state();
-        info!("EGFX factory created for H.264/AVC420 streaming");
+        // Note: gfx_factory was created earlier (before display handler)
+        // to share references with display handler
 
         // Build IronRDP server using builder pattern
         info!("Building IronRDP server");
@@ -352,6 +361,12 @@ impl WrdServer {
             .with_cliprdr_factory(Some(Box::new(clipboard_factory)))
             .with_gfx_factory(Some(Box::new(gfx_factory)))
             .build();
+
+        // Set server event sender in display handler for EGFX message routing
+        display_handler
+            .set_server_event_sender(rdp_server.event_sender().clone())
+            .await;
+        info!("Server event sender configured in display handler");
 
         info!("WRD Server initialized successfully");
 

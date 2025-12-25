@@ -28,8 +28,8 @@
 //!
 //! 3. **ServerEvent::Egfx** - Routes the resulting DVC messages to the wire
 
-use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex};
+use tokio::sync::RwLock;
 
 use ironrdp_egfx::server::{GraphicsPipelineHandler, GraphicsPipelineServer};
 use ironrdp_server::{GfxDvcBridge, GfxServerFactory, GfxServerHandle};
@@ -71,13 +71,26 @@ pub struct WrdGfxFactory {
 }
 
 /// Shared handler state accessible from display handler
-#[derive(Debug, Clone)]
+///
+/// This state is updated by `WrdGraphicsHandler` callbacks and read by
+/// `EgfxFrameSender` to determine EGFX readiness and get the DVC channel ID.
+#[derive(Debug, Clone, Default)]
 pub struct HandlerState {
+    /// Whether EGFX channel is ready (capabilities negotiated)
     pub is_ready: bool,
+    /// Whether AVC420 (H.264 YUV420) codec is supported
     pub is_avc420_enabled: bool,
+    /// Whether AVC444 (H.264 YUV444) codec is supported
     pub is_avc444_enabled: bool,
-    pub primary_surface_id: u16,
+    /// Primary surface ID for frame sending (None = no surface yet)
+    /// Note: Surface ID 0 is valid in EGFX, so we use Option
+    pub primary_surface_id: Option<u16>,
+    /// DVC channel ID assigned to EGFX (needed for encode_dvc_messages)
+    pub dvc_channel_id: u32,
 }
+
+/// Type alias for shared handler state
+pub type SharedHandlerState = Arc<RwLock<Option<HandlerState>>>;
 
 impl WrdGfxFactory {
     /// Create a new GFX factory
@@ -118,19 +131,28 @@ impl WrdGfxFactory {
 impl GfxServerFactory for WrdGfxFactory {
     fn build_gfx_handler(&self) -> Box<dyn GraphicsPipelineHandler> {
         // Basic mode: just return the handler without shared access
+        // Note: This method is called when build_server_with_handle() returns None
         let handler = WrdGraphicsHandler::new(self.width, self.height);
         Box::new(handler)
     }
 
     fn build_server_with_handle(&self) -> Option<(GfxDvcBridge, GfxServerHandle)> {
-        // Create the handler
-        let handler = WrdGraphicsHandler::new(self.width, self.height);
+        // Create the handler WITH shared state synchronization
+        // The handler will update handler_state when callbacks are invoked,
+        // allowing EgfxFrameSender to check EGFX readiness
+        let handler = WrdGraphicsHandler::with_shared_state(
+            self.width,
+            self.height,
+            Arc::clone(&self.handler_state),
+        );
 
-        // Create the GraphicsPipelineServer wrapped in Arc<Mutex<>>
+        // Create the GraphicsPipelineServer wrapped in Arc<std::sync::Mutex<>>
+        // Note: Using std::sync::Mutex (not tokio) because DvcProcessor trait
+        // has synchronous methods that cannot use async locks
         let server = Arc::new(Mutex::new(GraphicsPipelineServer::new(Box::new(handler))));
 
         // Store handle for later access by display handler
-        // Note: We use blocking_write here because this is called during sync channel setup
+        // Note: We use try_write here because this is called during sync channel setup
         if let Ok(mut handle_guard) = self.server_handle.try_write() {
             *handle_guard = Some(Arc::clone(&server));
         }

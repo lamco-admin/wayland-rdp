@@ -37,7 +37,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::egfx::encoder::{EncoderError, EncoderResult};
 #[cfg(feature = "h264")]
-use crate::egfx::encoder::{Avc420Encoder, EncoderConfig, H264Frame};
+use crate::egfx::encoder::{Avc420Encoder, EncoderConfig};
 use crate::pipewire::VideoFrame;
 
 /// Configuration for EGFX video handling

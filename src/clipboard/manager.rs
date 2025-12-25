@@ -333,6 +333,22 @@ impl FileTransferState {
 fn lookup_format_id_for_mime(formats: &[ClipboardFormat], mime_type: &str) -> Option<u32> {
     use super::format_name_to_mime;
 
+    // For text/plain, prefer CF_UNICODETEXT (13) over CF_TEXT (1)
+    // CF_UNICODETEXT is UTF-16LE (full Unicode), CF_TEXT is ANSI (limited to Windows-1252)
+    if mime_type == "text/plain;charset=utf-8" || mime_type == "text/plain" {
+        // Check if CF_UNICODETEXT is available
+        if formats.iter().any(|f| f.id == 13) {
+            debug!("Preferring CF_UNICODETEXT (13) for {} (full Unicode support)", mime_type);
+            return Some(13);
+        }
+        // Fall back to CF_TEXT if CF_UNICODETEXT not available
+        if formats.iter().any(|f| f.id == 1) {
+            debug!("Using CF_TEXT (1) for {} (ANSI fallback)", mime_type);
+            return Some(1);
+        }
+    }
+
+    // For all other MIME types, use normal lookup
     for format in formats {
         // First check if this format's ID maps to the requested MIME type
         if let Some(mapped_mime) = super::lib_rdp_format_to_mime(format.id) {
@@ -1915,24 +1931,22 @@ impl ClipboardManager {
                 .take_while(|&c| c != 0) // Stop at null terminator
                 .collect();
 
-            if let Ok(text) = String::from_utf16(&utf16_data) {
-                // Successfully decoded as UTF-16 text
-                // Sanitize for Linux: CRLF → LF, remove null bytes
-                let sanitized = sanitize_text_for_linux(&text);
-                let utf8_bytes = sanitized.as_bytes().to_vec();
-                debug!(
-                    "Converted UTF-16 to UTF-8: {} UTF-16 chars ({} bytes) → {} UTF-8 bytes with LF line endings",
-                    utf16_data.len(),
-                    data.len(),
-                    utf8_bytes.len()
-                );
-                debug!("Text preview: {:?}", &sanitized[..sanitized.len().min(50)]);
-                utf8_bytes
-            } else {
-                // Not valid UTF-16, use raw data
-                warn!("Data is not valid UTF-16 text, using raw bytes");
-                data
-            }
+            // Use lossy conversion to handle malformed UTF-16
+            // This handles invalid surrogates and replaces them with U+FFFD
+            let text = String::from_utf16_lossy(&utf16_data);
+
+            // Sanitize for Linux: CRLF → LF, remove null bytes
+            let sanitized = sanitize_text_for_linux(&text);
+            let utf8_bytes = sanitized.as_bytes().to_vec();
+
+            debug!(
+                "Converted UTF-16 to UTF-8: {} UTF-16 chars ({} bytes) → {} UTF-8 bytes with LF line endings",
+                utf16_data.len(),
+                data.len(),
+                utf8_bytes.len()
+            );
+            debug!("Text preview: {:?}", &sanitized[..sanitized.len().min(50)]);
+            utf8_bytes
         } else {
             // Unknown format or too small - pass through
             debug!("Unknown format or small data, using raw {} bytes", data.len());

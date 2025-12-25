@@ -100,9 +100,9 @@ fn init_logging(args: &Args) -> Result<()> {
 
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         // Enable lamco crates at requested level, IronRDP protocol at info (debug logs raw packets!)
-        // ironrdp_cliprdr at debug for clipboard troubleshooting, ironrdp_server at info to avoid packet spam
+        // ironrdp_cliprdr/egfx/dvc at debug for channel troubleshooting
         tracing_subscriber::EnvFilter::new(format!(
-            "lamco={level},ironrdp_cliprdr={level},ironrdp_server=info,ironrdp=info,ashpd=info,warn",
+            "lamco={level},ironrdp_cliprdr={level},ironrdp_egfx={level},ironrdp_dvc={level},ironrdp_server={level},ironrdp=info,ashpd=info,warn",
             level = log_level
         ))
     });

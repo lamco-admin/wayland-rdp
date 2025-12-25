@@ -1,0 +1,47 @@
+# EGFX Testing Configuration
+# Minimal config for testing H.264/EGFX integration
+
+[server]
+listen_addr = "0.0.0.0:3389"
+max_connections = 1
+session_timeout = 0
+use_portals = true
+
+[security]
+cert_path = "certs/test-cert.pem"
+key_path = "certs/test-key.pem"
+enable_nla = false
+auth_method = "none"  # No authentication for testing
+require_tls_13 = false
+
+[video]
+encoder = "openh264"  # Use OpenH264 for EGFX testing
+vaapi_device = "/dev/dri/renderD128"
+target_fps = 30
+bitrate = 4000
+damage_tracking = true
+cursor_mode = "embedded"
+
+[input]
+use_libei = true
+keyboard_layout = "auto"
+enable_touch = false
+
+[clipboard]
+enabled = true
+max_size = 10485760
+allowed_types = []
+
+[multimon]
+enabled = false  # Simplified for testing
+max_monitors = 1
+
+[performance]
+encoder_threads = 0
+network_threads = 0
+buffer_pool_size = 8
+zero_copy = true
+
+[logging]
+level = "debug"
+metrics = true
