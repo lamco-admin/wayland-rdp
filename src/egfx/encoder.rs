@@ -26,7 +26,7 @@ use openh264::formats::{BgraSliceU8, YUVBuffer};
 
 use thiserror::Error;
 #[cfg(feature = "h264")]
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 
 /// Errors that can occur during H.264 encoding
 #[derive(Debug, Error)]
@@ -92,10 +92,14 @@ impl EncoderConfig {
 
 /// Convert H.264 Annex B format to AVC length-prefixed format
 ///
-/// MS-RDPEGFX requires length-prefixed NAL units (ISO/IEC 14496-15 AVC format),
-/// but OpenH264 outputs Annex B format (start code prefixed).
+/// **DEPRECATED - DO NOT USE FOR MS-RDPEGFX!**
 ///
-/// # Format Conversion
+/// MS-RDPEGFX specification (Section 2.2.4.4) requires Annex B format (start codes),
+/// NOT AVC format (length prefixes). This function was incorrectly used in the past.
+///
+/// OpenH264 outputs Annex B format, which should be used directly for RDP.
+///
+/// # Format Conversion (for reference only)
 ///
 /// - **Annex B input**: `[0x00 0x00 0x00 0x01][NAL]` or `[0x00 0x00 0x01][NAL]`
 /// - **AVC output**: `[4-byte big-endian length][NAL]`
@@ -107,6 +111,7 @@ impl EncoderConfig {
 /// # Returns
 ///
 /// H.264 bitstream in AVC length-prefixed format
+#[deprecated(note = "MS-RDPEGFX requires Annex B, not AVC. Use Annex B format directly.")]
 pub fn annex_b_to_avc(annex_b_data: &[u8]) -> Vec<u8> {
     let mut output = Vec::with_capacity(annex_b_data.len());
     let mut i = 0;
@@ -207,10 +212,139 @@ pub struct Avc420Encoder {
     encoder: Encoder,
     config: EncoderConfig,
     frame_count: u64,
+    /// Cached SPS/PPS from last IDR frame (for prepending to P-slices)
+    cached_sps_pps: Option<Vec<u8>>,
 }
 
 #[cfg(feature = "h264")]
 impl Avc420Encoder {
+    /// Extract SPS and PPS NAL units from Annex B bitstream
+    ///
+    /// Returns concatenated SPS+PPS with start codes, or None if not found
+    fn extract_sps_pps(data: &[u8]) -> Option<Vec<u8>> {
+        let mut sps_pps = Vec::new();
+        let mut i = 0;
+
+        while i < data.len() {
+            // Find start code
+            let start_code_len = if i + 4 <= data.len()
+                && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01]
+            {
+                4
+            } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
+                3
+            } else {
+                i += 1;
+                continue;
+            };
+
+            let nal_start = i + start_code_len;
+            if nal_start >= data.len() {
+                break;
+            }
+
+            let nal_type = data[nal_start] & 0x1F;
+
+            // Find next start code
+            let mut nal_end = data.len();
+            let mut j = nal_start + 1;
+            while j + 2 < data.len() {
+                if (data[j..j + 3] == [0x00, 0x00, 0x01])
+                    || (j + 3 < data.len() && data[j..j + 4] == [0x00, 0x00, 0x00, 0x01])
+                {
+                    nal_end = j;
+                    break;
+                }
+                j += 1;
+            }
+
+            // NAL type 7 = SPS, NAL type 8 = PPS
+            if nal_type == 7 || nal_type == 8 {
+                sps_pps.extend_from_slice(&data[i..nal_end]);
+            }
+
+            i = nal_end;
+            if i == data.len() {
+                break;
+            }
+        }
+
+        if sps_pps.is_empty() {
+            None
+        } else {
+            Some(sps_pps)
+        }
+    }
+
+    /// Log detailed NAL unit structure for debugging
+    fn log_nal_structure(data: &[u8], frame_num: u64, is_keyframe: bool) {
+        let mut nal_types = Vec::new();
+        let mut i = 0;
+
+        while i < data.len() {
+            // Find start code
+            let start_code_len = if i + 4 <= data.len()
+                && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01]
+            {
+                4
+            } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
+                3
+            } else {
+                i += 1;
+                continue;
+            };
+
+            let nal_start = i + start_code_len;
+            if nal_start >= data.len() {
+                break;
+            }
+
+            let nal_header = data[nal_start];
+            let nal_type = nal_header & 0x1F;
+            let nal_ref_idc = (nal_header >> 5) & 0x03;
+
+            // Find next start code
+            let mut nal_end = data.len();
+            let mut j = nal_start + 1;
+            while j + 2 < data.len() {
+                if (data[j..j + 3] == [0x00, 0x00, 0x01])
+                    || (j + 3 < data.len() && data[j..j + 4] == [0x00, 0x00, 0x00, 0x01])
+                {
+                    nal_end = j;
+                    break;
+                }
+                j += 1;
+            }
+
+            let nal_size = nal_end - nal_start;
+            let type_name = match nal_type {
+                1 => "P-slice",
+                2 => "B-slice",
+                5 => "IDR",
+                6 => "SEI",
+                7 => "SPS",
+                8 => "PPS",
+                9 => "AU-delim",
+                _ => "Other",
+            };
+
+            nal_types.push(format!("{}({}b)", type_name, nal_size));
+
+            i = nal_end;
+            if i == data.len() {
+                break;
+            }
+        }
+
+        debug!(
+            "📦 Frame {}: {} | NALs: [{}] | Total: {}b",
+            frame_num,
+            if is_keyframe { "IDR" } else { "P" },
+            nal_types.join(", "),
+            data.len()
+        );
+    }
+
     /// Create a new H.264 encoder
     ///
     /// # Arguments
@@ -242,6 +376,7 @@ impl Avc420Encoder {
             encoder,
             config,
             frame_count: 0,
+            cached_sps_pps: None,
         })
     }
 
@@ -295,23 +430,55 @@ impl Avc420Encoder {
             return Ok(None);
         }
 
-        // Check frame type for keyframe detection (before conversion)
+        // Check frame type for keyframe detection
         let is_keyframe = matches!(bitstream.frame_type(), FrameType::IDR | FrameType::I);
 
-        // Convert from Annex B to AVC length-prefixed format for MS-RDPEGFX compliance
-        let data = annex_b_to_avc(&annex_b_data);
+        // MS-RDPEGFX requires Annex B format (ITU-H.264 Annex B with start codes)
+        // OpenH264 outputs Annex B format directly - use it as-is!
+        // CRITICAL: Do NOT convert to AVC format - Windows MFT decoder expects Annex B
+        let mut data = annex_b_data;
 
         if data.is_empty() {
-            warn!("NAL conversion produced empty output from {} byte Annex B stream", annex_b_data.len());
+            warn!("Encoded bitstream is empty");
             return Ok(None);
+        }
+
+        // HYPOTHESIS 1 TEST: Extract and cache SPS/PPS from IDR frames, prepend to P-slices
+        if is_keyframe {
+            // IDR frame: Extract SPS/PPS for caching
+            let sps_pps = Self::extract_sps_pps(&data);
+            if let Some(ref headers) = sps_pps {
+                debug!(
+                    "🔑 IDR frame: Cached {} bytes of SPS/PPS headers",
+                    headers.len()
+                );
+                self.cached_sps_pps = sps_pps;
+            } else {
+                warn!("⚠️ IDR frame without SPS/PPS headers!");
+            }
+        } else {
+            // P-slice: Prepend cached SPS/PPS if available
+            if let Some(ref sps_pps) = self.cached_sps_pps {
+                debug!(
+                    "📎 P-slice: Prepending {} bytes of cached SPS/PPS",
+                    sps_pps.len()
+                );
+                let mut combined = sps_pps.clone();
+                combined.extend_from_slice(&data);
+                data = combined;
+            } else {
+                warn!("⚠️ P-slice without cached SPS/PPS - may fail on client!");
+            }
         }
 
         self.frame_count += 1;
 
+        // Log detailed NAL structure
+        Self::log_nal_structure(&data, self.frame_count, is_keyframe);
+
         trace!(
-            "Encoded frame {}: {} bytes Annex B -> {} bytes AVC, keyframe={}",
+            "Encoded frame {}: {} bytes (Annex B format), keyframe={}",
             self.frame_count,
-            annex_b_data.len(),
             data.len(),
             is_keyframe
         );

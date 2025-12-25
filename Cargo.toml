@@ -129,6 +129,7 @@ sha2 = "0.10"
 # H.264 encoding (optional, for EGFX)
 # -----------------------------------------------------------------------------
 openh264 = { version = "0.6", optional = true }
+openh264-sys2 = { version = "0.6", default-features = false, features = ["source"], optional = true }
 
 # -----------------------------------------------------------------------------
 # System and utilities
@@ -179,7 +180,7 @@ pam-auth = ["pam"]
 # H.264 video encoding via EGFX channel
 # Requires OpenH264 (BSD licensed, source bundled)
 # For best performance, ensure `nasm` is installed (3x speedup)
-h264 = ["openh264"]
+h264 = ["openh264", "openh264-sys2"]
 
 # Future features (not yet implemented)
 # multimon = []       # Multi-monitor support

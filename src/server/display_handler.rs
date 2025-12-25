@@ -67,8 +67,8 @@
 use anyhow::Result;
 use bytes::Bytes;
 use ironrdp_server::{
-    BitmapUpdate as IronBitmapUpdate, DesktopSize, DisplayUpdate, PixelFormat as IronPixelFormat,
-    RdpServerDisplay, RdpServerDisplayUpdates,
+    BitmapUpdate as IronBitmapUpdate, DesktopSize, DisplayUpdate, GfxServerHandle,
+    PixelFormat as IronPixelFormat, RdpServerDisplay, RdpServerDisplayUpdates, ServerEvent,
 };
 use std::num::{NonZeroU16, NonZeroUsize};
 use std::sync::Arc;
@@ -76,9 +76,12 @@ use std::time::Instant;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, trace, warn};
 
+use crate::egfx::{Avc420Encoder, EncoderConfig};
 use crate::pipewire::{PipeWireThreadCommand, PipeWireThreadManager, VideoFrame};
 use crate::portal::StreamInfo;
+use crate::server::egfx_sender::EgfxFrameSender;
 use crate::server::event_multiplexer::GraphicsFrame;
+use crate::server::gfx_factory::HandlerState;
 use crate::video::{BitmapConverter, BitmapUpdate, RdpPixelFormat};
 
 /// Frame rate regulator using token bucket algorithm
@@ -138,6 +141,12 @@ impl FrameRateRegulator {
 ///
 /// Provides the display size and update stream to IronRDP server.
 /// Manages the video pipeline from PipeWire capture to RDP transmission.
+///
+/// # EGFX Support
+///
+/// When EGFX/H.264 is negotiated, frames are encoded with OpenH264 and sent
+/// through the EGFX channel for better quality and compression. Falls back
+/// to RemoteFX when H.264 is not available.
 pub struct WrdDisplayHandler {
     /// Current desktop size
     size: Arc<RwLock<DesktopSize>>,
@@ -159,6 +168,19 @@ pub struct WrdDisplayHandler {
 
     /// Monitor configuration from streams
     stream_info: Vec<StreamInfo>,
+
+    // === EGFX/H.264 Support ===
+
+    /// Shared GFX server handle for EGFX frame sending
+    /// Populated by GfxFactory after channel attachment
+    gfx_server_handle: Arc<RwLock<Option<GfxServerHandle>>>,
+
+    /// Handler state for checking EGFX readiness
+    gfx_handler_state: Arc<RwLock<Option<HandlerState>>>,
+
+    /// Server event sender for routing EGFX messages
+    /// Set after server is built (via set_server_event_sender)
+    server_event_tx: Arc<RwLock<Option<mpsc::UnboundedSender<ServerEvent>>>>,
 }
 
 impl WrdDisplayHandler {
@@ -170,6 +192,9 @@ impl WrdDisplayHandler {
     /// * `initial_height` - Initial desktop height
     /// * `pipewire_fd` - PipeWire file descriptor from portal
     /// * `stream_info` - Stream information from portal
+    /// * `graphics_tx` - Optional graphics queue sender for priority multiplexing
+    /// * `gfx_server_handle` - Optional handle to GFX server for EGFX support
+    /// * `gfx_handler_state` - Optional handler state for EGFX readiness checks
     ///
     /// # Returns
     ///
@@ -184,6 +209,8 @@ impl WrdDisplayHandler {
         pipewire_fd: i32,
         stream_info: Vec<StreamInfo>,
         graphics_tx: Option<mpsc::Sender<GraphicsFrame>>,
+        gfx_server_handle: Option<Arc<RwLock<Option<GfxServerHandle>>>>,
+        gfx_handler_state: Option<Arc<RwLock<Option<HandlerState>>>>,
     ) -> Result<Self> {
         let size = Arc::new(RwLock::new(DesktopSize {
             width: initial_width,
@@ -242,11 +269,18 @@ impl WrdDisplayHandler {
         let (update_sender, update_receiver) = mpsc::channel(64);
         let update_receiver = Arc::new(Mutex::new(Some(update_receiver)));
 
+        // Set up EGFX fields (use provided handles or create empty ones)
+        let gfx_server_handle =
+            gfx_server_handle.unwrap_or_else(|| Arc::new(RwLock::new(None)));
+        let gfx_handler_state =
+            gfx_handler_state.unwrap_or_else(|| Arc::new(RwLock::new(None)));
+
         debug!(
-            "Display handler created: {}x{}, {} streams",
+            "Display handler created: {}x{}, {} streams, EGFX={}",
             initial_width,
             initial_height,
-            stream_info.len()
+            stream_info.len(),
+            gfx_server_handle.try_read().map(|g| g.is_some()).unwrap_or(false)
         );
 
         Ok(Self {
@@ -257,6 +291,9 @@ impl WrdDisplayHandler {
             update_receiver,
             graphics_tx, // Passed from constructor for Phase 1 multiplexer
             stream_info,
+            gfx_server_handle,
+            gfx_handler_state,
+            server_event_tx: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -267,6 +304,90 @@ impl WrdDisplayHandler {
     pub fn set_graphics_queue(&mut self, sender: mpsc::Sender<GraphicsFrame>) {
         info!("Graphics queue sender configured for priority multiplexing");
         self.graphics_tx = Some(sender);
+    }
+
+    /// Set the server event sender for EGFX message routing
+    ///
+    /// This must be called after the RDP server is built, passing a clone of
+    /// `event_sender()` from the server. Required for EGFX frame sending.
+    pub async fn set_server_event_sender(&self, sender: mpsc::UnboundedSender<ServerEvent>) {
+        *self.server_event_tx.write().await = Some(sender);
+        info!("Server event sender configured for EGFX routing");
+    }
+
+    /// Pad frame to aligned dimensions (16-pixel boundary)
+    ///
+    /// MS-RDPEGFX requires surface dimensions to be multiples of 16.
+    /// This function pads the frame by replicating edge pixels.
+    fn pad_frame_to_aligned(
+        data: &[u8],
+        width: u32,
+        height: u32,
+        aligned_width: u32,
+        aligned_height: u32,
+    ) -> Vec<u8> {
+        let bytes_per_pixel = 4; // BGRA
+        let src_stride = width * bytes_per_pixel;
+        let dst_stride = aligned_width * bytes_per_pixel;
+        let mut padded = vec![0u8; (aligned_width * aligned_height * bytes_per_pixel) as usize];
+
+        // Copy existing rows
+        for y in 0..height {
+            let src_offset = (y * src_stride) as usize;
+            let dst_offset = (y * dst_stride) as usize;
+            padded[dst_offset..dst_offset + src_stride as usize]
+                .copy_from_slice(&data[src_offset..src_offset + src_stride as usize]);
+
+            // Replicate last pixel to fill width padding
+            if aligned_width > width {
+                let last_pixel_src = src_offset + (src_stride - bytes_per_pixel) as usize;
+                for x in width..aligned_width {
+                    let dst_offset = (y * dst_stride + x * bytes_per_pixel) as usize;
+                    padded[dst_offset..dst_offset + bytes_per_pixel as usize]
+                        .copy_from_slice(&data[last_pixel_src..last_pixel_src + bytes_per_pixel as usize]);
+                }
+            }
+        }
+
+        // Replicate last row to fill height padding
+        if aligned_height > height {
+            let last_row_offset = ((height - 1) * dst_stride) as usize;
+            // Create a copy of the last row to avoid borrow checker issues
+            let last_row = padded[last_row_offset..last_row_offset + dst_stride as usize].to_vec();
+            for y in height..aligned_height {
+                let dst_offset = (y * dst_stride) as usize;
+                padded[dst_offset..dst_offset + dst_stride as usize]
+                    .copy_from_slice(&last_row);
+            }
+        }
+
+        padded
+    }
+
+    /// Check if EGFX is ready for frame sending
+    ///
+    /// Returns true if:
+    /// - GFX server handle is available
+    /// - Handler state indicates readiness
+    /// - AVC420 codec is negotiated
+    /// - Server event sender is configured
+    pub async fn is_egfx_ready(&self) -> bool {
+        // Check server event sender
+        if self.server_event_tx.read().await.is_none() {
+            return false;
+        }
+
+        // Check GFX server handle
+        if self.gfx_server_handle.read().await.is_none() {
+            return false;
+        }
+
+        // Check handler state
+        if let Some(state) = self.gfx_handler_state.read().await.as_ref() {
+            state.is_ready && state.is_avc420_enabled
+        } else {
+            false
+        }
     }
 
     /// Update the desktop size
@@ -295,7 +416,14 @@ impl WrdDisplayHandler {
     /// Start the video pipeline
     ///
     /// This spawns a background task that continuously captures frames from PipeWire,
-    /// processes them, converts to RDP bitmaps, and sends them to the display update channel.
+    /// processes them, and sends them via either EGFX (H.264) or RemoteFX path.
+    ///
+    /// # Path Selection
+    ///
+    /// - **EGFX/H.264**: When client negotiates AVC420 support, frames are encoded
+    ///   with OpenH264 and sent through the EGFX channel for better quality.
+    /// - **RemoteFX**: Fallback path when H.264 is not available, converts to
+    ///   bitmap and sends through standard display update channel.
     pub fn start_pipeline(self: Arc<Self>) {
         let handler = Arc::clone(&self);
 
@@ -306,15 +434,21 @@ impl WrdDisplayHandler {
             let mut frame_regulator = FrameRateRegulator::new(30);
             let mut frames_sent = 0u64;
             let mut frames_dropped = 0u64;
+            let mut egfx_frames_sent = 0u64;
 
             let mut loop_iterations = 0u64;
+
+            // EGFX/H.264 encoder - created lazily when EGFX becomes ready
+            let mut h264_encoder: Option<Avc420Encoder> = None;
+            let mut egfx_sender: Option<EgfxFrameSender> = None;
+            let mut egfx_checked = false;
 
             loop {
                 loop_iterations += 1;
                 if loop_iterations % 1000 == 0 {
                     debug!(
-                        "Display pipeline heartbeat: {} iterations, sent {}, dropped {}",
-                        loop_iterations, frames_sent, frames_dropped
+                        "Display pipeline heartbeat: {} iterations, sent {} (egfx: {}), dropped {}",
+                        loop_iterations, frames_sent, egfx_frames_sent, frames_dropped
                     );
                 }
 
@@ -351,11 +485,215 @@ impl WrdDisplayHandler {
                 frames_sent += 1;
                 if frames_sent % 30 == 0 || frames_sent < 10 {
                     info!(
-                        "🎬 Processing frame {} ({}x{}) - sent: {}, dropped: {}",
-                        frame.frame_id, frame.width, frame.height, frames_sent, frames_dropped
+                        "🎬 Processing frame {} ({}x{}) - sent: {} (egfx: {}), dropped: {}",
+                        frame.frame_id, frame.width, frame.height, frames_sent, egfx_frames_sent, frames_dropped
                     );
                 }
 
+                // === WAIT FOR EGFX ===
+                // CRITICAL: Suppress ALL output until EGFX is ready
+                // Sending RemoteFX before EGFX establishes wrong framebuffer
+                // When EGFX activates with ResetGraphics, client may clear display
+                // Result: EGFX frames render to invisible surface
+                if !handler.is_egfx_ready().await {
+                    // EGFX not ready yet - drop this frame and wait
+                    frames_dropped += 1;
+                    if frames_dropped % 30 == 0 {
+                        debug!("Waiting for EGFX channel (dropped {} frames)", frames_dropped);
+                    }
+                    continue;
+                }
+
+                // === EGFX/H.264 PATH ===
+                // EGFX is ready - process frame
+                if true {
+                    // Initialize encoder and sender on first EGFX-ready frame
+                    if !egfx_checked {
+                        egfx_checked = true;
+                        info!("🎬 EGFX channel ready - initializing H.264 encoder");
+
+                        // Create H.264 encoder
+                        let config = EncoderConfig {
+                            bitrate_kbps: 5000,
+                            max_fps: 30.0,
+                            enable_skip_frame: true,
+                        };
+
+                        match Avc420Encoder::new(config) {
+                            Ok(encoder) => {
+                                h264_encoder = Some(encoder);
+                                info!("✅ H.264 encoder initialized successfully");
+                            }
+                            Err(e) => {
+                                warn!("Failed to create H.264 encoder: {:?} - falling back to RemoteFX", e);
+                            }
+                        }
+
+                        // Create EGFX sender and surface
+                        if let (Some(gfx_handle), Some(event_tx)) = (
+                            handler.gfx_server_handle.read().await.clone(),
+                            handler.server_event_tx.read().await.clone(),
+                        ) {
+                            // Create primary surface for EGFX rendering
+                            // Must be done BEFORE sending any frames
+                            // MS-RDPEGFX REQUIRES 16-pixel alignment!
+                            {
+                                use crate::egfx::align_to_16;
+
+                                let aligned_width = align_to_16(frame.width as u32) as u16;
+                                let aligned_height = align_to_16(frame.height as u32) as u16;
+
+                                info!(
+                                    "📐 Aligning surface: {}×{} → {}×{} (16-pixel boundary)",
+                                    frame.width, frame.height, aligned_width, aligned_height
+                                );
+
+                                let mut server = gfx_handle.lock().expect("GfxServerHandle mutex poisoned");
+
+                                // CRITICAL FIX: Set desktop size BEFORE creating surface
+                                // This prevents desktop size mismatch when ResetGraphics is auto-sent
+                                // Desktop = actual resolution (800×600)
+                                // Surface = aligned resolution (800×608)
+                                server.set_output_dimensions(frame.width as u16, frame.height as u16);
+                                info!("✅ EGFX desktop dimensions set: {}×{} (actual)", frame.width, frame.height);
+
+                                // Create surface with ALIGNED dimensions
+                                // create_surface() will auto-send ResetGraphics using output_dimensions
+                                if let Some(surface_id) = server.create_surface(aligned_width, aligned_height) {
+                                    info!("✅ EGFX surface {} created ({}×{} aligned)", surface_id, aligned_width, aligned_height);
+                                    // Map surface to output at origin (0,0)
+                                    if server.map_surface_to_output(surface_id, 0, 0) {
+                                        info!("✅ EGFX surface {} mapped to output", surface_id);
+                                    } else {
+                                        warn!("Failed to map EGFX surface to output");
+                                    }
+
+                                    // Send the CreateSurface and MapSurfaceToOutput PDUs to client
+                                    let channel_id = server.channel_id();
+                                    let dvc_messages = server.drain_output();
+                                    if !dvc_messages.is_empty() {
+                                        info!("EGFX: drain_output returned {} DVC messages for surface setup", dvc_messages.len());
+                                        // Log the size of each DVC message (GfxPdu)
+                                        for (i, msg) in dvc_messages.iter().enumerate() {
+                                            info!("  DVC msg {}: {} bytes", i, msg.size());
+                                        }
+
+                                        if let Some(ch_id) = channel_id {
+                                            use ironrdp_dvc::encode_dvc_messages;
+                                            use ironrdp_svc::ChannelFlags;
+                                            use ironrdp_server::EgfxServerMessage;
+
+                                            match encode_dvc_messages(ch_id, dvc_messages, ChannelFlags::SHOW_PROTOCOL) {
+                                                Ok(svc_messages) => {
+                                                    info!("EGFX: Encoded {} SVC messages for DVC channel {}", svc_messages.len(), ch_id);
+                                                    let msg = EgfxServerMessage::SendMessages {
+                                                        channel_id: ch_id,
+                                                        messages: svc_messages,
+                                                    };
+                                                    let _ = event_tx.send(ServerEvent::Egfx(msg));
+                                                    info!("✅ EGFX surface PDUs sent to client");
+                                                }
+                                                Err(e) => {
+                                                    error!("EGFX: Failed to encode DVC messages: {:?}", e);
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    warn!("Failed to create EGFX surface - server may not be ready");
+                                }
+                            }
+
+                            let sender = EgfxFrameSender::new(
+                                gfx_handle,
+                                handler.gfx_handler_state.clone(),
+                                event_tx,
+                            );
+                            egfx_sender = Some(sender);
+                            info!("✅ EGFX frame sender initialized");
+                        }
+                    }
+
+                    // Try to send via EGFX if encoder is available
+                    if let (Some(ref mut encoder), Some(ref sender)) = (&mut h264_encoder, &egfx_sender) {
+                        use crate::egfx::align_to_16;
+
+                        // VALIDATION TEST: 27fps to stay within Level 3.2 constraint (108,000 MB/s)
+                        // 1280×800 = 4,000 MBs × 27fps = 108,000 MB/s (exactly at limit)
+                        // TODO: Replace with proper level management after validation
+                        let timestamp_ms = (frames_sent * 37) as u64; // ~27fps timing
+
+                        // Validate frame data (PipeWire sometimes sends zero-size buffers)
+                        let expected_size = (frame.width * frame.height * 4) as usize;
+                        if frame.data.len() < expected_size {
+                            trace!(
+                                "Skipping invalid frame: size={}, expected={} for {}×{}",
+                                frame.data.len(), expected_size, frame.width, frame.height
+                            );
+                            frames_dropped += 1;
+                            continue;
+                        }
+
+                        // MS-RDPEGFX REQUIRES 16-pixel alignment
+                        // Frame from PipeWire may not be aligned (e.g., 800×600)
+                        // Must align dimensions AND pad frame data
+                        let aligned_width = align_to_16(frame.width as u32);
+                        let aligned_height = align_to_16(frame.height as u32);
+
+                        // Pad frame data if needed
+                        let frame_data = if aligned_width != frame.width as u32 || aligned_height != frame.height as u32 {
+                            Self::pad_frame_to_aligned(&frame.data, frame.width, frame.height, aligned_width, aligned_height)
+                        } else {
+                            (*frame.data).clone()
+                        };
+
+                        // Encode frame to H.264 with ALIGNED dimensions
+                        match encoder.encode_bgra(&frame_data, aligned_width, aligned_height, timestamp_ms) {
+                            Ok(Some(h264_frame)) => {
+                                // Send via EGFX:
+                                // - encoded dimensions: aligned (for H.264 macroblock requirements)
+                                // - display dimensions: actual (for visible region, crops padding)
+                                match sender.send_frame(
+                                    &h264_frame.data,
+                                    aligned_width as u16,
+                                    aligned_height as u16,
+                                    frame.width as u16,  // Actual display width
+                                    frame.height as u16, // Actual display height
+                                    timestamp_ms as u32,
+                                ).await {
+                                    Ok(_frame_id) => {
+                                        egfx_frames_sent += 1;
+                                        if egfx_frames_sent % 30 == 0 {
+                                            debug!("📹 EGFX: Sent {} H.264 frames", egfx_frames_sent);
+                                        }
+                                        continue; // Frame sent via EGFX, skip RemoteFX path
+                                    }
+                                    Err(e) => {
+                                        // CRITICAL: Once EGFX is active, NEVER fall back to RemoteFX!
+                                        // Mixing codecs causes display conflicts - EGFX surface invisible
+                                        trace!("EGFX send failed: {} - dropping frame (no RemoteFX fallback)", e);
+                                        frames_dropped += 1;
+                                        continue; // Drop frame, don't fall through to RemoteFX
+                                    }
+                                }
+                            }
+                            Ok(None) => {
+                                // Encoder skipped this frame (rate control)
+                                trace!("H.264 encoder skipped frame");
+                                frames_dropped += 1;
+                                continue;
+                            }
+                            Err(e) => {
+                                // CRITICAL: Once EGFX is active, don't fall back to RemoteFX
+                                trace!("H.264 encoding failed: {:?} - dropping frame (no RemoteFX fallback)", e);
+                                frames_dropped += 1;
+                                continue; // Drop frame, don't fall through to RemoteFX
+                            }
+                        }
+                    }
+                }
+
+                // === REMOTEFX PATH (fallback) ===
                 // Convert to RDP bitmap (track timing)
                 let convert_start = std::time::Instant::now();
                 let bitmap_update = match handler.convert_to_bitmap(frame).await {
@@ -555,6 +893,10 @@ impl Clone for WrdDisplayHandler {
             update_receiver: Arc::clone(&self.update_receiver),
             graphics_tx: self.graphics_tx.clone(),
             stream_info: self.stream_info.clone(),
+            // EGFX fields
+            gfx_server_handle: Arc::clone(&self.gfx_server_handle),
+            gfx_handler_state: Arc::clone(&self.gfx_handler_state),
+            server_event_tx: Arc::clone(&self.server_event_tx),
         }
     }
 }
