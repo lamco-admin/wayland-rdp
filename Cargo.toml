@@ -128,8 +128,8 @@ sha2 = "0.10"
 # -----------------------------------------------------------------------------
 # H.264 encoding (optional, for EGFX)
 # -----------------------------------------------------------------------------
-openh264 = { version = "0.6", optional = true }
-openh264-sys2 = { version = "0.6", default-features = false, features = ["source"], optional = true }
+openh264 = { version = "0.9", optional = true }
+openh264-sys2 = { version = "0.9", default-features = false, features = ["source"], optional = true }
 
 # -----------------------------------------------------------------------------
 # System and utilities

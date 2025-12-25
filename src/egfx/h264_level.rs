@@ -111,8 +111,32 @@ impl H264Level {
     }
 
     /// Convert to OpenH264 ELevelIdc constant
-    pub const fn to_openh264_level(&self) -> i32 {
+    pub const fn to_openh264_level_idc(&self) -> i32 {
         *self as i32
+    }
+
+    /// Convert to openh264 crate's Level enum
+    #[cfg(feature = "h264")]
+    pub fn to_openh264_level(&self) -> openh264::encoder::Level {
+        use openh264::encoder::Level;
+        match self {
+            H264Level::L1_0 => Level::Level_1_0,
+            H264Level::L1_1 => Level::Level_1_1,
+            H264Level::L1_2 => Level::Level_1_2,
+            H264Level::L1_3 => Level::Level_1_3,
+            H264Level::L2_0 => Level::Level_2_0,
+            H264Level::L2_1 => Level::Level_2_1,
+            H264Level::L2_2 => Level::Level_2_2,
+            H264Level::L3_0 => Level::Level_3_0,
+            H264Level::L3_1 => Level::Level_3_1,
+            H264Level::L3_2 => Level::Level_3_2,
+            H264Level::L4_0 => Level::Level_4_0,
+            H264Level::L4_1 => Level::Level_4_1,
+            H264Level::L4_2 => Level::Level_4_2,
+            H264Level::L5_0 => Level::Level_5_0,
+            H264Level::L5_1 => Level::Level_5_1,
+            H264Level::L5_2 => Level::Level_5_2,
+        }
     }
 
     /// Select minimum level for given resolution and framerate

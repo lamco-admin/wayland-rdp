@@ -20,7 +20,7 @@
 //! - Target 30 FPS for typical desktop sharing scenarios
 
 #[cfg(feature = "h264")]
-use openh264::encoder::{Encoder, EncoderConfig as OpenH264Config, FrameType, UsageType};
+use openh264::encoder::{BitRate, Encoder, EncoderConfig as OpenH264Config, FrameRate, FrameType, UsageType};
 #[cfg(feature = "h264")]
 use openh264::formats::{BgraSliceU8, YUVBuffer};
 
@@ -58,6 +58,12 @@ pub struct EncoderConfig {
 
     /// Enable frame skipping for rate control (default: true)
     pub enable_skip_frame: bool,
+
+    /// Resolution for level calculation (optional, auto-detected on first frame)
+    pub width: Option<u16>,
+
+    /// Resolution for level calculation (optional, auto-detected on first frame)
+    pub height: Option<u16>,
 }
 
 impl Default for EncoderConfig {
@@ -66,17 +72,30 @@ impl Default for EncoderConfig {
             bitrate_kbps: 5000,
             max_fps: 30.0,
             enable_skip_frame: true,
+            width: None,
+            height: None,
         }
     }
 }
 
 impl EncoderConfig {
+    /// Create config for specific resolution
+    pub fn for_resolution(width: u16, height: u16) -> Self {
+        Self {
+            width: Some(width),
+            height: Some(height),
+            ..Default::default()
+        }
+    }
+
     /// Create config for high quality encoding
     pub fn high_quality() -> Self {
         Self {
             bitrate_kbps: 10000,
             max_fps: 30.0,
             enable_skip_frame: false,
+            width: None,
+            height: None,
         }
     }
 
@@ -86,6 +105,8 @@ impl EncoderConfig {
             bitrate_kbps: 1000,
             max_fps: 15.0,
             enable_skip_frame: true,
+            width: None,
+            height: None,
         }
     }
 }
@@ -214,6 +235,8 @@ pub struct Avc420Encoder {
     frame_count: u64,
     /// Cached SPS/PPS from last IDR frame (for prepending to P-slices)
     cached_sps_pps: Option<Vec<u8>>,
+    /// Current H.264 level (determined from resolution)
+    current_level: Option<super::h264_level::H264Level>,
 }
 
 #[cfg(feature = "h264")]
@@ -351,15 +374,35 @@ impl Avc420Encoder {
     ///
     /// * `config` - Encoder configuration
     ///
-    /// Note: OpenH264 auto-detects dimensions from the input YUV source.
-    /// Dimensions are taken from the BGRA input during encoding.
+    /// Note: If width/height are provided in config, H.264 level will be set automatically.
+    /// Otherwise, level will be set on first frame based on actual dimensions.
     pub fn new(config: EncoderConfig) -> EncoderResult<Self> {
+        // Calculate appropriate H.264 level if dimensions provided
+        let level = config
+            .width
+            .zip(config.height)
+            .map(|(w, h)| super::h264_level::H264Level::for_config(w, h, config.max_fps));
+
         // Configure OpenH264 encoder
-        let encoder_config = OpenH264Config::new()
-            .set_bitrate_bps(config.bitrate_kbps * 1000)
-            .max_frame_rate(config.max_fps)
-            .enable_skip_frame(config.enable_skip_frame)
+        let mut encoder_config = OpenH264Config::new()
+            .bitrate(BitRate::from_bps(config.bitrate_kbps * 1000))
+            .max_frame_rate(FrameRate::from_hz(config.max_fps))
+            .skip_frames(config.enable_skip_frame)
             .usage_type(UsageType::ScreenContentRealTime);
+
+        // Set level if we know dimensions
+        if let Some(level) = level {
+            encoder_config = encoder_config.level(level.to_openh264_level());
+            debug!(
+                "Created H.264 encoder: bitrate={}kbps, max_fps={}, level={}",
+                config.bitrate_kbps, config.max_fps, level
+            );
+        } else {
+            debug!(
+                "Created H.264 encoder: bitrate={}kbps, max_fps={} (level will be auto-detected)",
+                config.bitrate_kbps, config.max_fps
+            );
+        }
 
         let encoder = Encoder::with_api_config(
             openh264::OpenH264API::from_source(),
@@ -367,16 +410,12 @@ impl Avc420Encoder {
         )
         .map_err(|e| EncoderError::InitFailed(format!("OpenH264 init failed: {:?}", e)))?;
 
-        debug!(
-            "Created H.264 encoder: bitrate={}kbps, max_fps={}",
-            config.bitrate_kbps, config.max_fps
-        );
-
         Ok(Self {
             encoder,
             config,
             frame_count: 0,
             cached_sps_pps: None,
+            current_level: level,
         })
     }
 
