@@ -512,17 +512,24 @@ impl WrdDisplayHandler {
                         egfx_checked = true;
                         info!("🎬 EGFX channel ready - initializing H.264 encoder");
 
-                        // Create H.264 encoder
+                        // Calculate aligned dimensions first (needed for encoder and surface)
+                        use crate::egfx::align_to_16;
+                        let aligned_width = align_to_16(frame.width as u32) as u16;
+                        let aligned_height = align_to_16(frame.height as u32) as u16;
+
+                        // Create H.264 encoder with resolution-appropriate level
                         let config = EncoderConfig {
                             bitrate_kbps: 5000,
                             max_fps: 30.0,
                             enable_skip_frame: true,
+                            width: Some(aligned_width),
+                            height: Some(aligned_height),
                         };
 
                         match Avc420Encoder::new(config) {
                             Ok(encoder) => {
                                 h264_encoder = Some(encoder);
-                                info!("✅ H.264 encoder initialized successfully");
+                                info!("✅ H.264 encoder initialized for {}×{} (aligned)", aligned_width, aligned_height);
                             }
                             Err(e) => {
                                 warn!("Failed to create H.264 encoder: {:?} - falling back to RemoteFX", e);
@@ -538,10 +545,6 @@ impl WrdDisplayHandler {
                             // Must be done BEFORE sending any frames
                             // MS-RDPEGFX REQUIRES 16-pixel alignment!
                             {
-                                use crate::egfx::align_to_16;
-
-                                let aligned_width = align_to_16(frame.width as u32) as u16;
-                                let aligned_height = align_to_16(frame.height as u32) as u16;
 
                                 info!(
                                     "📐 Aligning surface: {}×{} → {}×{} (16-pixel boundary)",

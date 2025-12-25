@@ -165,6 +165,8 @@ impl EgfxVideoHandler {
             bitrate_kbps: config.bitrate_kbps,
             max_fps: config.max_fps as f32,
             enable_skip_frame: config.enable_frame_skip,
+            width: Some(initial_width as u16),
+            height: Some(initial_height as u16),
         };
 
         let encoder = Avc420Encoder::new(encoder_config)?;
