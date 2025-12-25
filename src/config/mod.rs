@@ -39,6 +39,21 @@ pub struct Config {
     pub performance: PerformanceConfig,
     /// Logging configuration
     pub logging: LoggingConfig,
+    /// EGFX configuration
+    #[serde(default)]
+    pub egfx: EgfxConfig,
+    /// Damage tracking configuration
+    #[serde(default)]
+    pub damage_tracking: DamageTrackingConfig,
+    /// Hardware encoding configuration
+    #[serde(default)]
+    pub hardware_encoding: HardwareEncodingConfig,
+    /// Display control configuration
+    #[serde(default)]
+    pub display: DisplayConfig,
+    /// Advanced video configuration
+    #[serde(default)]
+    pub advanced_video: AdvancedVideoConfig,
 }
 
 impl Config {
@@ -104,6 +119,11 @@ impl Config {
                 log_dir: None,
                 metrics: true,
             },
+            egfx: EgfxConfig::default(),
+            damage_tracking: DamageTrackingConfig::default(),
+            hardware_encoding: HardwareEncodingConfig::default(),
+            display: DisplayConfig::default(),
+            advanced_video: AdvancedVideoConfig::default(),
         })
     }
 
@@ -133,6 +153,40 @@ impl Config {
         match self.video.cursor_mode.as_str() {
             "embedded" | "metadata" | "hidden" => {}
             _ => anyhow::bail!("Invalid cursor mode: {}", self.video.cursor_mode),
+        }
+
+        // Validate EGFX configuration
+        match self.egfx.zgfx_compression.as_str() {
+            "never" | "auto" | "always" => {}
+            _ => anyhow::bail!("Invalid ZGFX compression mode: {}", self.egfx.zgfx_compression),
+        }
+
+        match self.egfx.codec.as_str() {
+            "avc420" | "avc444" => {}
+            _ => anyhow::bail!("Invalid EGFX codec: {}", self.egfx.codec),
+        }
+
+        // Validate damage tracking method
+        match self.damage_tracking.method.as_str() {
+            "pipewire" | "diff" | "hybrid" => {}
+            _ => anyhow::bail!("Invalid damage tracking method: {}", self.damage_tracking.method),
+        }
+
+        // Validate hardware encoding quality preset
+        match self.hardware_encoding.quality_preset.as_str() {
+            "speed" | "balanced" | "quality" => {}
+            _ => anyhow::bail!("Invalid quality preset: {}", self.hardware_encoding.quality_preset),
+        }
+
+        // Validate QP ranges
+        if self.egfx.qp_min > self.egfx.qp_max {
+            anyhow::bail!("qp_min ({}) cannot be greater than qp_max ({})",
+                         self.egfx.qp_min, self.egfx.qp_max);
+        }
+
+        if self.egfx.qp_default < self.egfx.qp_min || self.egfx.qp_default > self.egfx.qp_max {
+            anyhow::bail!("qp_default ({}) must be between qp_min ({}) and qp_max ({})",
+                         self.egfx.qp_default, self.egfx.qp_min, self.egfx.qp_max);
         }
 
         Ok(())
