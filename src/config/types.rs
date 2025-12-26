@@ -267,7 +267,7 @@ pub struct EgfxConfig {
     /// H.264 level: "auto" or explicit "3.0", "3.1", "4.0", "4.1", "5.0", "5.1", "5.2"
     pub h264_level: String,
 
-    /// H.264 bitrate in kbps
+    /// H.264 bitrate in kbps (main stream for AVC444)
     pub h264_bitrate: u32,
 
     /// ZGFX compression mode: "never", "auto", "always"
@@ -279,13 +279,50 @@ pub struct EgfxConfig {
     /// Frame acknowledgment timeout (ms)
     pub frame_ack_timeout: u64,
 
-    /// Video codec: "avc420", "avc444"
+    /// Video codec preference: "auto", "avc420", "avc444"
+    /// - "auto": Use best available codec (AVC444 if client supports V10+, else AVC420)
+    /// - "avc420": Always use AVC420 (4:2:0 chroma), even if AVC444 is available
+    /// - "avc444": Prefer AVC444 (4:4:4 chroma) for superior text/UI rendering
     pub codec: String,
 
     /// Quality parameter range
     pub qp_min: u8,
     pub qp_max: u8,
     pub qp_default: u8,
+
+    // === AVC444-specific configuration ===
+
+    /// AVC444 auxiliary stream bitrate ratio (0.3-1.0)
+    /// Ratio of auxiliary stream bitrate relative to main stream.
+    /// - 0.5 = aux gets 50% of main's bitrate (good for typical content)
+    /// - 1.0 = aux gets same bitrate as main (best quality for text-heavy)
+    /// - 0.3 = aux gets 30% of main's bitrate (saves bandwidth)
+    #[serde(default = "default_avc444_aux_ratio")]
+    pub avc444_aux_bitrate_ratio: f32,
+
+    /// Color matrix for YUV conversion: "auto", "bt709", "bt601"
+    /// - "auto": Use BT.709 for HD (≥1080p), BT.601 for SD
+    /// - "bt709": Force BT.709 (recommended for HD content)
+    /// - "bt601": Force BT.601 (legacy SD content compatibility)
+    #[serde(default = "default_color_matrix")]
+    pub color_matrix: String,
+
+    /// Enable AVC444 when client supports it
+    /// Set to false to disable AVC444 globally regardless of codec preference
+    #[serde(default = "default_true")]
+    pub avc444_enabled: bool,
+}
+
+fn default_avc444_aux_ratio() -> f32 {
+    0.5
+}
+
+fn default_color_matrix() -> String {
+    "auto".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for EgfxConfig {
@@ -297,10 +334,14 @@ impl Default for EgfxConfig {
             zgfx_compression: "never".to_string(),
             max_frames_in_flight: 3,
             frame_ack_timeout: 5000,
-            codec: "avc420".to_string(),
+            codec: "auto".to_string(), // Use best available (AVC444 if supported, else AVC420)
             qp_min: 10,
             qp_max: 40,
             qp_default: 23,
+            // AVC444-specific defaults
+            avc444_aux_bitrate_ratio: 0.5, // Aux gets 50% of main's bitrate
+            color_matrix: "auto".to_string(), // Auto-detect based on resolution
+            avc444_enabled: true, // Enable AVC444 when client supports it
         }
     }
 }
@@ -337,22 +378,38 @@ impl Default for DamageTrackingConfig {
 }
 
 /// Hardware encoding configuration
+///
+/// Supports multiple GPU backends:
+/// - VA-API: Intel (iHD/i965) and AMD (radeonsi) GPUs
+/// - NVENC: NVIDIA GPUs via Video Codec SDK
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareEncodingConfig {
-    /// Enable hardware-accelerated encoding (VAAPI)
+    /// Enable hardware-accelerated encoding
     pub enabled: bool,
 
-    /// VA-API device path
+    /// VA-API device path (for Intel/AMD GPUs)
     pub vaapi_device: PathBuf,
 
-    /// Enable zero-copy DMA-BUF path
+    /// Enable zero-copy DMA-BUF path (VA-API only)
     pub enable_dmabuf_zerocopy: bool,
 
     /// Fallback to software encoding if hardware fails
     pub fallback_to_software: bool,
 
     /// Encoder quality preset: "speed", "balanced", "quality"
+    /// - speed: Low latency, lower quality (3 Mbps)
+    /// - balanced: Good balance of quality and latency (5 Mbps)
+    /// - quality: Best quality, higher latency (10 Mbps)
     pub quality_preset: String,
+
+    /// Prefer NVENC over VA-API when both are available
+    /// NVENC typically has lower latency but requires NVIDIA GPU
+    #[serde(default = "default_prefer_nvenc")]
+    pub prefer_nvenc: bool,
+}
+
+fn default_prefer_nvenc() -> bool {
+    true // NVENC preferred when available (lower latency)
 }
 
 impl Default for HardwareEncodingConfig {
@@ -363,6 +420,7 @@ impl Default for HardwareEncodingConfig {
             enable_dmabuf_zerocopy: true,
             fallback_to_software: true,
             quality_preset: "balanced".to_string(),
+            prefer_nvenc: true,
         }
     }
 }
