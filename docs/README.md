@@ -50,6 +50,13 @@ This directory contains organized documentation for the wayland-rdp project - a 
 - [IRONRDP-INTEGRATION-GUIDE.md](ironrdp/IRONRDP-INTEGRATION-GUIDE.md) - Integration guide
 - [IRONRDP-QUICK-REFERENCE.md](ironrdp/IRONRDP-QUICK-REFERENCE.md) - Quick reference
 
+### Premium Features & Build Guides
+- [PREMIUM-FEATURES-DEVELOPMENT-PLAN.md](PREMIUM-FEATURES-DEVELOPMENT-PLAN.md) - Premium features overview and status
+- [HARDWARE-ENCODING-BUILD-GUIDE.md](HARDWARE-ENCODING-BUILD-GUIDE.md) - **Comprehensive** GPU encoding build/distribution guide
+- [HARDWARE-ENCODING-QUICKREF.md](HARDWARE-ENCODING-QUICKREF.md) - Quick reference for hardware encoding
+- [AVC444-IMPLEMENTATION-STATUS.md](AVC444-IMPLEMENTATION-STATUS.md) - AVC444 codec implementation details
+- [DAMAGE-TRACKING-STATUS.md](DAMAGE-TRACKING-STATUS.md) - Damage tracking implementation details
+
 ## Project Overview
 
 wayland-rdp is a Wayland-native RDP server that enables remote desktop access to Linux systems running Wayland compositors. Key features:

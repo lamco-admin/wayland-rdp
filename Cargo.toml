@@ -132,6 +132,19 @@ openh264 = { version = "0.9", optional = true }
 openh264-sys2 = { version = "0.9", default-features = false, features = ["source"], optional = true }
 
 # -----------------------------------------------------------------------------
+# Hardware-accelerated encoding (optional)
+# -----------------------------------------------------------------------------
+# VA-API: Intel/AMD GPU encoding (ChromeOS bindings)
+# Requires libva-dev 1.20.0+ installed
+cros-libva = { version = "0.0.13", optional = true }
+
+# NVENC: NVIDIA GPU encoding (Video Codec SDK bindings)
+# Requires NVIDIA driver with libnvidia-encode.so AND CUDA toolkit
+nvidia-video-codec-sdk = { version = "0.4", optional = true }
+# CUDA runtime bindings for NVENC (cudarc used by nvidia-video-codec-sdk but not re-exported)
+cudarc = { version = "0.16", optional = true, default-features = false, features = ["driver", "cuda-version-from-build-system"] }
+
+# -----------------------------------------------------------------------------
 # System and utilities
 # -----------------------------------------------------------------------------
 nix = { version = "0.27", features = ["signal", "process", "mman"] }
@@ -182,6 +195,18 @@ pam-auth = ["pam"]
 # For best performance, ensure `nasm` is installed (3x speedup)
 h264 = ["openh264", "openh264-sys2"]
 
+# Hardware-accelerated H.264 encoding (premium feature)
+# VA-API: Intel (iHD/i965) and AMD (radeonsi) GPU encoding
+# Requires libva-dev and GPU drivers
+vaapi = ["cros-libva"]
+
+# NVENC: NVIDIA GPU encoding via Video Codec SDK
+# Requires NVIDIA driver with libnvidia-encode.so AND CUDA toolkit
+nvenc = ["nvidia-video-codec-sdk", "cudarc"]
+
+# Convenience: enable all hardware backends
+hardware-encoding = ["vaapi", "nvenc"]
+
 # Future features (not yet implemented)
 # multimon = []       # Multi-monitor support
 
@@ -198,6 +223,28 @@ strip = true
 [profile.dev]
 opt-level = 0
 debug = true
+
+# Benchmark profile - optimized for accurate measurements
+[profile.bench]
+opt-level = 3
+debug = false
+lto = "thin"
+
+# =============================================================================
+# Benchmarks
+# =============================================================================
+
+[[bench]]
+name = "video_encoding"
+harness = false
+
+[[bench]]
+name = "color_conversion"
+harness = false
+
+[[bench]]
+name = "damage_detection"
+harness = false
 
 # =============================================================================
 # Lints

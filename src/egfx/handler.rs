@@ -30,6 +30,13 @@ use crate::server::{HandlerState, SharedHandlerState};
 /// a `SharedHandlerState` that `EgfxFrameSender` reads. This allows the
 /// display handler to check EGFX readiness without holding locks on
 /// the GraphicsPipelineServer.
+///
+/// # Codec Support
+///
+/// - **AVC420**: H.264 with 4:2:0 chroma, supported in V8.1+ with AVC420_ENABLED flag
+/// - **AVC444**: H.264 with 4:4:4 chroma via dual-stream encoding, supported in V10+
+///   when AVC420_ENABLED is set (MS-RDPEGFX Section 2.2.3.10: V10 with AVC420_ENABLED
+///   implies AVC444v2 support)
 pub struct WrdGraphicsHandler {
     /// Surface dimensions
     width: u16,
@@ -37,6 +44,9 @@ pub struct WrdGraphicsHandler {
 
     /// Whether AVC420 was negotiated (local fast access)
     avc420_enabled: AtomicBool,
+
+    /// Whether AVC444 was negotiated (V10+ with AVC420)
+    avc444_enabled: AtomicBool,
 
     /// Whether the channel is ready for frames (local fast access)
     ready: AtomicBool,
@@ -65,6 +75,7 @@ impl WrdGraphicsHandler {
             width,
             height,
             avc420_enabled: AtomicBool::new(false),
+            avc444_enabled: AtomicBool::new(false),
             ready: AtomicBool::new(false),
             has_surface: AtomicBool::new(false),
             primary_surface_id: AtomicU16::new(0),
@@ -83,6 +94,7 @@ impl WrdGraphicsHandler {
             width,
             height,
             avc420_enabled: AtomicBool::new(false),
+            avc444_enabled: AtomicBool::new(false),
             ready: AtomicBool::new(false),
             has_surface: AtomicBool::new(false),
             primary_surface_id: AtomicU16::new(0),
@@ -113,7 +125,7 @@ impl WrdGraphicsHandler {
                 let state = HandlerState {
                     is_ready: self.ready.load(Ordering::Acquire),
                     is_avc420_enabled: self.avc420_enabled.load(Ordering::Acquire),
-                    is_avc444_enabled: false, // TODO: Add AVC444 support
+                    is_avc444_enabled: self.avc444_enabled.load(Ordering::Acquire),
                     // Convert has_surface + surface_id to Option<u16>
                     // Surface ID 0 is valid in EGFX, so we use Option instead of sentinel
                     primary_surface_id: if self.has_surface.load(Ordering::Acquire) {
@@ -173,12 +185,20 @@ impl GraphicsPipelineHandler for WrdGraphicsHandler {
             *guard = Some(negotiated.clone());
         }
 
-        // Check for AVC420 support based on capability version
-        let avc420 = match negotiated {
+        // Check for AVC420 and AVC444 support based on capability version
+        //
+        // Per MS-RDPEGFX Section 2.2.3.10 (RDPGFX_CAPSET_VERSION10):
+        // - V8.1 with AVC420_ENABLED → AVC420 only (4:2:0 chroma)
+        // - V10+ with AVC420_ENABLED → AVC420 AND AVC444v2 (4:4:4 chroma via dual-stream)
+        //
+        // AVC444v2 provides superior text/UI rendering through full chroma resolution.
+        let (avc420, avc444) = match negotiated {
             CapabilitySet::V8_1 { flags, .. } => {
-                flags.contains(CapabilitiesV81Flags::AVC420_ENABLED)
+                // V8.1: AVC420 only, no AVC444 support
+                let has_avc420 = flags.contains(CapabilitiesV81Flags::AVC420_ENABLED);
+                (has_avc420, false)
             }
-            // V10+ always support AVC420
+            // V10+ with AVC420 implies AVC444v2 support
             CapabilitySet::V10 { .. }
             | CapabilitySet::V10_1 { .. }
             | CapabilitySet::V10_2 { .. }
@@ -186,21 +206,32 @@ impl GraphicsPipelineHandler for WrdGraphicsHandler {
             | CapabilitySet::V10_4 { .. }
             | CapabilitySet::V10_5 { .. }
             | CapabilitySet::V10_6 { .. }
-            | CapabilitySet::V10_7 { .. } => true,
+            | CapabilitySet::V10_7 { .. } => {
+                // V10+: Both AVC420 and AVC444v2 are implied
+                (true, true)
+            }
             // V8 and earlier don't support AVC
-            _ => false,
+            _ => (false, false),
         };
 
         self.avc420_enabled.store(avc420, Ordering::Release);
+        self.avc444_enabled.store(avc444, Ordering::Release);
         self.ready.store(true, Ordering::Release);
 
         // Sync to shared state for EgfxFrameSender visibility
         self.sync_shared_state();
 
-        if avc420 {
-            info!("EGFX: AVC420 (H.264) encoding enabled");
-        } else {
-            info!("EGFX: AVC420 not supported by client, will use RemoteFX fallback");
+        // Log codec capabilities
+        match (avc420, avc444) {
+            (true, true) => {
+                info!("EGFX: AVC420 + AVC444v2 encoding enabled (V10+ capabilities)");
+            }
+            (true, false) => {
+                info!("EGFX: AVC420 (H.264 4:2:0) encoding enabled");
+            }
+            (false, _) => {
+                info!("EGFX: AVC not supported by client, will use RemoteFX fallback");
+            }
         }
     }
 

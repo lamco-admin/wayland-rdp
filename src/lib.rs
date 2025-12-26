@@ -78,6 +78,18 @@ pub mod clipboard;
 /// - Flow control via frame acknowledgments
 pub mod egfx;
 
+/// Damage region detection for bandwidth optimization
+///
+/// This module implements tile-based frame differencing to detect changed
+/// screen regions, enabling significant bandwidth reduction (90%+ for static content).
+///
+/// Key features:
+/// - SIMD-optimized tile comparison (AVX2/NEON)
+/// - Configurable tile size and threshold
+/// - Automatic region merging
+/// - Statistics tracking for monitoring
+pub mod damage;
+
 // =============================================================================
 // Re-exports from published lamco crates (for convenience)
 // =============================================================================

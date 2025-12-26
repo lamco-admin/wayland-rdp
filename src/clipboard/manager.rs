@@ -2601,6 +2601,21 @@ impl ClipboardManager {
 
         Ok(())
     }
+
+    /// Shutdown the clipboard manager
+    ///
+    /// Sends a shutdown signal to the event loop if it's running.
+    /// If the event loop hasn't been started, this is a no-op.
+    pub async fn shutdown(&mut self) -> Result<()> {
+        if let Some(ref tx) = self.shutdown_tx {
+            tx.send(()).await.map_err(|e| {
+                ClipboardError::InvalidState(format!("Failed to send shutdown signal: {}", e))
+            })?;
+        }
+        // Clear the sender after shutdown
+        self.shutdown_tx = None;
+        Ok(())
+    }
 }
 
 // =============================================================================

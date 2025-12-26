@@ -387,7 +387,8 @@ mod tests {
     #[test]
     fn test_1080p_30fps() {
         let constraints = LevelConstraints::new(1920, 1080);
-        assert_eq!(constraints.macroblocks(), 8100);
+        // 1920x1080 → ceil(1920/16) × ceil(1080/16) = 120 × 68 = 8160
+        assert_eq!(constraints.macroblocks(), 8160);
 
         // Requires Level 4.0
         assert!(constraints.validate(30.0, H264Level::L3_2).is_err());

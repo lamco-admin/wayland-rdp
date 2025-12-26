@@ -18,6 +18,9 @@ pub mod types;
 // Use types from types.rs
 use types::*;
 
+// Re-export types needed by other modules
+pub use types::HardwareEncodingConfig;
+
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {

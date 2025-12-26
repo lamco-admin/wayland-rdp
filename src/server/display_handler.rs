@@ -76,13 +76,68 @@ use std::time::Instant;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::egfx::{Avc420Encoder, EncoderConfig};
+use crate::damage::{DamageConfig, DamageDetector, DamageRegion};
+use crate::egfx::{Avc420Encoder, Avc444Encoder, EncoderConfig};
 use crate::pipewire::{PipeWireThreadCommand, PipeWireThreadManager, VideoFrame};
 use crate::portal::StreamInfo;
 use crate::server::egfx_sender::EgfxFrameSender;
 use crate::server::event_multiplexer::GraphicsFrame;
 use crate::server::gfx_factory::HandlerState;
 use crate::video::{BitmapConverter, BitmapUpdate, RdpPixelFormat};
+
+/// Video encoder abstraction for codec-agnostic frame encoding
+///
+/// Supports both AVC420 (standard H.264 4:2:0) and AVC444 (premium H.264 4:4:4).
+/// The codec is selected at runtime based on client capability negotiation.
+enum VideoEncoder {
+    /// Standard H.264 with 4:2:0 chroma subsampling
+    Avc420(Avc420Encoder),
+    /// Premium H.264 with 4:4:4 chroma via dual-stream encoding
+    Avc444(Avc444Encoder),
+}
+
+/// Result of encoding a frame - varies by codec
+enum EncodedVideoFrame {
+    /// Single H.264 stream (AVC420)
+    Single(Vec<u8>),
+    /// Dual H.264 streams (AVC444: main + auxiliary)
+    Dual { main: Vec<u8>, aux: Vec<u8> },
+}
+
+impl VideoEncoder {
+    /// Encode a BGRA frame to H.264
+    ///
+    /// Returns the encoded frame data, or None if the encoder skipped the frame.
+    fn encode_bgra(
+        &mut self,
+        bgra_data: &[u8],
+        width: u32,
+        height: u32,
+        timestamp_ms: u64,
+    ) -> Result<Option<EncodedVideoFrame>, crate::egfx::EncoderError> {
+        match self {
+            VideoEncoder::Avc420(encoder) => {
+                encoder.encode_bgra(bgra_data, width, height, timestamp_ms)
+                    .map(|opt| opt.map(|frame| EncodedVideoFrame::Single(frame.data)))
+            }
+            VideoEncoder::Avc444(encoder) => {
+                encoder.encode_bgra(bgra_data, width, height, timestamp_ms)
+                    .map(|opt| opt.map(|frame| EncodedVideoFrame::Dual {
+                        main: frame.stream1_data,
+                        aux: frame.stream2_data,
+                    }))
+            }
+        }
+    }
+
+    /// Get codec name for logging
+    fn codec_name(&self) -> &'static str {
+        match self {
+            VideoEncoder::Avc420(_) => "AVC420",
+            VideoEncoder::Avc444(_) => "AVC444",
+        }
+    }
+}
 
 /// Frame rate regulator using token bucket algorithm
 ///
@@ -439,16 +494,23 @@ impl WrdDisplayHandler {
             let mut loop_iterations = 0u64;
 
             // EGFX/H.264 encoder - created lazily when EGFX becomes ready
-            let mut h264_encoder: Option<Avc420Encoder> = None;
+            // Supports both AVC420 (4:2:0) and AVC444 (4:4:4) based on client negotiation
+            let mut video_encoder: Option<VideoEncoder> = None;
             let mut egfx_sender: Option<EgfxFrameSender> = None;
             let mut egfx_checked = false;
+            let mut use_avc444 = false; // Track which codec is active for sending
+
+            // Damage detection for bandwidth optimization
+            // Detects changed screen regions to skip unchanged frames (90%+ bandwidth reduction for static content)
+            let mut damage_detector = DamageDetector::new(DamageConfig::default());
+            let mut frames_skipped_damage = 0u64; // Frames skipped due to no damage
 
             loop {
                 loop_iterations += 1;
                 if loop_iterations % 1000 == 0 {
                     debug!(
-                        "Display pipeline heartbeat: {} iterations, sent {} (egfx: {}), dropped {}",
-                        loop_iterations, frames_sent, egfx_frames_sent, frames_dropped
+                        "Display pipeline heartbeat: {} iterations, sent {} (egfx: {}), dropped {}, skipped_damage {}",
+                        loop_iterations, frames_sent, egfx_frames_sent, frames_dropped, frames_skipped_damage
                     );
                 }
 
@@ -526,13 +588,46 @@ impl WrdDisplayHandler {
                             height: Some(aligned_height),
                         };
 
-                        match Avc420Encoder::new(config) {
-                            Ok(encoder) => {
-                                h264_encoder = Some(encoder);
-                                info!("✅ H.264 encoder initialized for {}×{} (aligned)", aligned_width, aligned_height);
+                        // Check if AVC444 is supported by the client
+                        // AVC444 provides superior chroma quality for text/UI rendering
+                        let avc444_supported = if let Some(state) = handler.gfx_handler_state.read().await.as_ref() {
+                            state.is_avc444_enabled
+                        } else {
+                            false
+                        };
+
+                        if avc444_supported {
+                            // Try AVC444 first (premium 4:4:4 chroma)
+                            match Avc444Encoder::new(config.clone()) {
+                                Ok(encoder) => {
+                                    video_encoder = Some(VideoEncoder::Avc444(encoder));
+                                    use_avc444 = true;
+                                    info!("✅ AVC444 encoder initialized for {}×{} (4:4:4 chroma)", aligned_width, aligned_height);
+                                }
+                                Err(e) => {
+                                    warn!("Failed to create AVC444 encoder: {:?} - falling back to AVC420", e);
+                                    // Fall through to AVC420
+                                    match Avc420Encoder::new(config) {
+                                        Ok(encoder) => {
+                                            video_encoder = Some(VideoEncoder::Avc420(encoder));
+                                            info!("✅ AVC420 encoder initialized for {}×{} (4:2:0 fallback)", aligned_width, aligned_height);
+                                        }
+                                        Err(e) => {
+                                            warn!("Failed to create AVC420 encoder: {:?} - falling back to RemoteFX", e);
+                                        }
+                                    }
+                                }
                             }
-                            Err(e) => {
-                                warn!("Failed to create H.264 encoder: {:?} - falling back to RemoteFX", e);
+                        } else {
+                            // Use AVC420 (standard 4:2:0 chroma)
+                            match Avc420Encoder::new(config) {
+                                Ok(encoder) => {
+                                    video_encoder = Some(VideoEncoder::Avc420(encoder));
+                                    info!("✅ AVC420 encoder initialized for {}×{} (aligned)", aligned_width, aligned_height);
+                                }
+                                Err(e) => {
+                                    warn!("Failed to create H.264 encoder: {:?} - falling back to RemoteFX", e);
+                                }
                             }
                         }
 
@@ -618,7 +713,7 @@ impl WrdDisplayHandler {
                     }
 
                     // Try to send via EGFX if encoder is available
-                    if let (Some(ref mut encoder), Some(ref sender)) = (&mut h264_encoder, &egfx_sender) {
+                    if let (Some(ref mut encoder), Some(ref sender)) = (&mut video_encoder, &egfx_sender) {
                         use crate::egfx::align_to_16;
 
                         // VALIDATION TEST: 27fps to stay within Level 3.2 constraint (108,000 MB/s)
@@ -637,6 +732,47 @@ impl WrdDisplayHandler {
                             continue;
                         }
 
+                        // === DAMAGE DETECTION ===
+                        // Detect which regions changed since the last frame
+                        // Skip encoding entirely if nothing changed (huge bandwidth savings)
+                        let damage_regions = damage_detector.detect(
+                            &frame.data,
+                            frame.width,
+                            frame.height,
+                        );
+
+                        if damage_regions.is_empty() {
+                            // No changes detected - skip this frame entirely
+                            frames_skipped_damage += 1;
+                            if frames_skipped_damage % 100 == 0 {
+                                let stats = damage_detector.stats();
+                                debug!(
+                                    "🎯 Damage tracking: {} frames skipped (no change), {:.1}% bandwidth saved",
+                                    frames_skipped_damage,
+                                    stats.bandwidth_reduction_percent()
+                                );
+                            }
+                            continue;
+                        }
+
+                        // Log damage stats periodically
+                        if frames_sent % 60 == 0 {
+                            let stats = damage_detector.stats();
+                            let damage_ratio = if !damage_regions.is_empty() {
+                                let frame_area = (frame.width * frame.height) as u64;
+                                let damage_area: u64 = damage_regions.iter().map(|r| r.area()).sum();
+                                (damage_area as f32 / frame_area as f32 * 100.0) as u32
+                            } else {
+                                0
+                            };
+                            debug!(
+                                "🎯 Damage: {} regions, {}% of frame, avg {:.1}ms detection",
+                                damage_regions.len(),
+                                damage_ratio,
+                                stats.avg_detection_time_ms
+                            );
+                        }
+
                         // MS-RDPEGFX REQUIRES 16-pixel alignment
                         // Frame from PipeWire may not be aligned (e.g., 800×600)
                         // Must align dimensions AND pad frame data
@@ -651,23 +787,46 @@ impl WrdDisplayHandler {
                         };
 
                         // Encode frame to H.264 with ALIGNED dimensions
+                        // VideoEncoder handles both AVC420 and AVC444 transparently
                         match encoder.encode_bgra(&frame_data, aligned_width, aligned_height, timestamp_ms) {
-                            Ok(Some(h264_frame)) => {
-                                // Send via EGFX:
+                            Ok(Some(encoded_frame)) => {
+                                // Send via EGFX - method varies by codec
                                 // - encoded dimensions: aligned (for H.264 macroblock requirements)
                                 // - display dimensions: actual (for visible region, crops padding)
-                                match sender.send_frame(
-                                    &h264_frame.data,
-                                    aligned_width as u16,
-                                    aligned_height as u16,
-                                    frame.width as u16,  // Actual display width
-                                    frame.height as u16, // Actual display height
-                                    timestamp_ms as u32,
-                                ).await {
+                                let send_result = match encoded_frame {
+                                    EncodedVideoFrame::Single(data) => {
+                                        // AVC420: Single stream with damage regions
+                                        sender.send_frame_with_regions(
+                                            &data,
+                                            aligned_width as u16,
+                                            aligned_height as u16,
+                                            frame.width as u16,
+                                            frame.height as u16,
+                                            &damage_regions,
+                                            timestamp_ms as u32,
+                                        ).await
+                                    }
+                                    EncodedVideoFrame::Dual { main, aux } => {
+                                        // AVC444: Dual streams with damage regions
+                                        sender.send_avc444_frame_with_regions(
+                                            &main,
+                                            &aux,
+                                            aligned_width as u16,
+                                            aligned_height as u16,
+                                            frame.width as u16,
+                                            frame.height as u16,
+                                            &damage_regions,
+                                            timestamp_ms as u32,
+                                        ).await
+                                    }
+                                };
+
+                                match send_result {
                                     Ok(_frame_id) => {
                                         egfx_frames_sent += 1;
                                         if egfx_frames_sent % 30 == 0 {
-                                            debug!("📹 EGFX: Sent {} H.264 frames", egfx_frames_sent);
+                                            let codec = encoder.codec_name();
+                                            debug!("📹 EGFX: Sent {} {} frames", egfx_frames_sent, codec);
                                         }
                                         continue; // Frame sent via EGFX, skip RemoteFX path
                                     }
