@@ -21,12 +21,20 @@
 /// Color matrix standard for RGB to YUV conversion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorMatrix {
-    /// ITU-R BT.601 (SD content, <=720p)
+    /// ITU-R BT.601 (SD content, <=720p) - FULL RANGE
     /// Y =  0.299  R + 0.587  G + 0.114  B
     BT601,
-    /// ITU-R BT.709 (HD content, >=1080p)
+    /// ITU-R BT.709 (HD content, >=1080p) - FULL RANGE
     /// Y =  0.2126 R + 0.7152 G + 0.0722 B
     BT709,
+    /// OpenH264-compatible conversion - LIMITED RANGE (BT.601)
+    /// Matches OpenH264's internal RGB→YUV conversion exactly.
+    /// CRITICAL: Use this for AVC444 when feeding YUVSlices directly!
+    ///
+    /// Y = (66*R + 129*G + 25*B) / 256 + 16  (range: 16-235)
+    /// U = (-38*R - 74*G + 112*B) / 256 + 128  (range: 16-240)
+    /// V = (112*R - 94*G - 18*B) / 256 + 128  (range: 16-240)
+    OpenH264,
 }
 
 impl Default for ColorMatrix {
@@ -60,7 +68,15 @@ impl ColorMatrix {
         match self {
             Self::BT601 => (19595, 38470, 7471),    // 0.299, 0.587, 0.114
             Self::BT709 => (13933, 46871, 4732),    // 0.2126, 0.7152, 0.0722
+            // OpenH264: 66/256, 129/256, 25/256 → scaled by 65536/256 = 256
+            Self::OpenH264 => (16896, 33024, 6400), // 66*256, 129*256, 25*256
         }
+    }
+
+    /// Returns true if this matrix uses limited range (Y: 16-235)
+    #[inline]
+    pub const fn is_limited_range(&self) -> bool {
+        matches!(self, Self::OpenH264)
     }
 
     /// Get RGB to U (Cb) coefficients as fixed-point (16.16 format)
@@ -72,6 +88,8 @@ impl ColorMatrix {
             Self::BT601 => (-11056, -21712, 32768),
             // BT.709: U = -0.1146 R - 0.3854 G + 0.5 B + 128
             Self::BT709 => (-7508, -25260, 32768),
+            // OpenH264: -38/256, -74/256, 112/256 → scaled by 256
+            Self::OpenH264 => (-9728, -18944, 28672), // -38*256, -74*256, 112*256
         }
     }
 
@@ -84,6 +102,8 @@ impl ColorMatrix {
             Self::BT601 => (32768, -27440, -5328),
             // BT.709: V = 0.5 R - 0.4542 G - 0.0458 B + 128
             Self::BT709 => (32768, -29764, -3004),
+            // OpenH264: 112/256, -94/256, -18/256 → scaled by 256
+            Self::OpenH264 => (28672, -24064, -4608), // 112*256, -94*256, -18*256
         }
     }
 }
@@ -159,41 +179,87 @@ pub fn bgra_to_yuv444(
 
     let mut frame = Yuv444Frame::new(width, height);
 
-    // Dispatch to best available implementation
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    {
-        bgra_to_yuv444_avx2(bgra, &mut frame, matrix);
-        return frame;
-    }
+    // DIAGNOSTIC: Force scalar implementation to debug lavender corruption
+    // TODO: Re-enable SIMD after verifying scalar produces correct colors
+    #[allow(clippy::overly_complex_bool_expr)]
+    let use_simd = false; // FORCE SCALAR FOR DEBUGGING
 
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    {
-        bgra_to_yuv444_neon(bgra, &mut frame, matrix);
-        return frame;
-    }
-
-    // Runtime feature detection for x86_64
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            // SAFETY: We verified AVX2 is available
-            unsafe { bgra_to_yuv444_avx2_impl(bgra, &mut frame, matrix) };
+    // SIMD implementations only support full range (BT.601/BT.709).
+    // For limited range (OpenH264), we must use the scalar implementation
+    // which correctly handles Y: 16-235, UV: 16-240 clamping.
+    if use_simd && !matrix.is_limited_range() {
+        // Dispatch to best available SIMD implementation for full range
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+        {
+            bgra_to_yuv444_avx2(bgra, &mut frame, matrix);
             return frame;
+        }
+
+        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+        {
+            bgra_to_yuv444_neon(bgra, &mut frame, matrix);
+            return frame;
+        }
+
+        // Runtime feature detection for x86_64
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx2") {
+                // SAFETY: We verified AVX2 is available
+                unsafe { bgra_to_yuv444_avx2_impl(bgra, &mut frame, matrix) };
+                return frame;
+            }
         }
     }
 
-    // Scalar fallback
+    // Scalar fallback - handles both full and limited range correctly
     bgra_to_yuv444_scalar(bgra, &mut frame, matrix);
+
+    // DEEP DIAGNOSTIC: Sample multiple screen positions to find actual colors
+    use tracing::debug;
+    if width == 1280 && height == 800 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static CONVERT_FRAME_NUM: AtomicU64 = AtomicU64::new(0);
+        let frame_num = CONVERT_FRAME_NUM.fetch_add(1, Ordering::Relaxed);
+
+        // Sample 5 positions across the screen to find colored areas
+        let positions = [
+            (0, 0, "top-left"),
+            (640, 400, "center"),
+            (1000, 100, "top-right area"),
+            (200, 600, "bottom-left"),
+            (800, 300, "middle-right"),
+        ];
+
+        debug!("[Frame #{}] 🎨 COLOR CONVERSION SAMPLES (Matrix::{:?}):", frame_num, matrix);
+        for (x, y, label) in positions {
+            if x < width && y < height {
+                let idx = (y * width + x) * 4;
+                let b = bgra[idx];
+                let g = bgra[idx + 1];
+                let r = bgra[idx + 2];
+                let pix_idx = y * width + x;
+                let y_val = frame.y[pix_idx];
+                let u_val = frame.u[pix_idx];
+                let v_val = frame.v[pix_idx];
+                debug!("  {} ({},{}): BGRA=({:3},{:3},{:3}) → YUV=({:3},{:3},{:3})",
+                       label, x, y, b, g, r, y_val, u_val, v_val);
+            }
+        }
+    }
+
     frame
 }
 
 /// Scalar implementation of BGRA to YUV444 conversion
 ///
 /// Uses fixed-point arithmetic for performance while maintaining precision.
+/// Supports both full range (BT.601/BT.709) and limited range (OpenH264).
 fn bgra_to_yuv444_scalar(bgra: &[u8], frame: &mut Yuv444Frame, matrix: ColorMatrix) {
     let (y_kr, y_kg, y_kb) = matrix.y_coefficients_fixed();
     let (u_kr, u_kg, u_kb) = matrix.u_coefficients_fixed();
     let (v_kr, v_kg, v_kb) = matrix.v_coefficients_fixed();
+    let limited_range = matrix.is_limited_range();
 
     let pixel_count = frame.pixel_count();
 
@@ -203,17 +269,31 @@ fn bgra_to_yuv444_scalar(bgra: &[u8], frame: &mut Yuv444Frame, matrix: ColorMatr
         let r = bgra[i * 4 + 2] as i32;
         // Alpha (bgra[i * 4 + 3]) is ignored
 
-        // Y = Kr*R + Kg*G + Kb*B (full range 0-255)
+        // Y = Kr*R + Kg*G + Kb*B
         // Fixed-point: multiply then shift right 16 bits, add 0.5 for rounding
-        let y_val = ((y_kr * r + y_kg * g + y_kb * b + 32768) >> 16).clamp(0, 255);
+        // For limited range (OpenH264): add +16 offset (Y range: 16-235)
+        let y_base = (y_kr * r + y_kg * g + y_kb * b + 32768) >> 16;
+        let y_val = if limited_range {
+            (y_base + 16).clamp(16, 235)
+        } else {
+            y_base.clamp(0, 255)
+        };
 
         // U = Ur*R + Ug*G + Ub*B + 128
         let u_val = ((u_kr * r + u_kg * g + u_kb * b + 32768) >> 16) + 128;
-        let u_val = u_val.clamp(0, 255);
+        let u_val = if limited_range {
+            u_val.clamp(16, 240)
+        } else {
+            u_val.clamp(0, 255)
+        };
 
         // V = Vr*R + Vg*G + Vb*B + 128
         let v_val = ((v_kr * r + v_kg * g + v_kb * b + 32768) >> 16) + 128;
-        let v_val = v_val.clamp(0, 255);
+        let v_val = if limited_range {
+            v_val.clamp(16, 240)
+        } else {
+            v_val.clamp(0, 255)
+        };
 
         frame.y[i] = y_val as u8;
         frame.u[i] = u_val as u8;

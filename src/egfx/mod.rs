@@ -44,6 +44,7 @@ mod encoder;
 
 // AVC444 support (premium 4:4:4 chroma)
 mod color_convert;
+mod color_space;
 mod yuv444_packing;
 mod avc444_encoder;
 
@@ -51,8 +52,6 @@ mod avc444_encoder;
 #[cfg(any(feature = "vaapi", feature = "nvenc"))]
 pub mod hardware;
 
-// TODO: Fix compilation errors in encoder_ext before enabling
-// mod encoder_ext;
 mod h264_level;
 mod handler;
 mod video_handler;
@@ -69,14 +68,16 @@ pub use avc444_encoder::{Avc444Encoder, Avc444Frame, Avc444Stats, Avc444Timing};
 // Re-export color conversion types (useful for custom processing)
 pub use color_convert::{bgra_to_yuv444, subsample_chroma_420, ColorMatrix, Yuv444Frame};
 
+// Re-export comprehensive color space configuration
+pub use color_space::{
+    ColorPrimaries, ColorRange, ColorSpaceConfig, ColorSpacePreset, MatrixCoefficients,
+    TransferCharacteristics,
+};
+
 // Re-export YUV444 packing types
 pub use yuv444_packing::{
     pack_auxiliary_view, pack_dual_views, pack_main_view, validate_dimensions, Yuv420Frame,
 };
-
-// TODO: Re-enable after fixing compilation
-// Re-export level-aware encoder (with C API access)
-// pub use encoder_ext::LevelAwareEncoder;
 
 // Re-export H.264 level management
 pub use h264_level::{ConstraintViolation, H264Level, LevelConstraints};

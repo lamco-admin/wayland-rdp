@@ -208,7 +208,8 @@ impl GraphicsPipelineHandler for WrdGraphicsHandler {
             | CapabilitySet::V10_6 { .. }
             | CapabilitySet::V10_7 { .. } => {
                 // V10+: Both AVC420 and AVC444v2 are implied
-                (true, true)
+                // DIAGNOSTIC BUILD: Extensive logging added to packing functions
+                (true, true)  // Re-enabled AVC444 with diagnostic logging
             }
             // V8 and earlier don't support AVC
             _ => (false, false),

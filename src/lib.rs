@@ -128,9 +128,15 @@ pub mod portal {
 /// PipeWire types (convenience re-export)
 pub mod pipewire {
     pub use lamco_pipewire::{
+        // Core manager types
         PipeWireConfig, PipeWireConfigBuilder, PipeWireError, PipeWireManager,
-        PipeWireThreadCommand, PipeWireThreadManager, PixelFormat, Result as PipeWireResult,
-        SourceType, StreamHandle, StreamInfo, VideoFrame,
+        PipeWireThreadCommand, PipeWireThreadManager, Result as PipeWireResult,
+        // Connection types
+        PipeWireConnection,
+        // Stream types
+        PixelFormat, SourceType, StreamConfig, StreamHandle, StreamInfo, VideoFrame,
+        // Multi-stream coordinator types
+        MonitorInfo, MultiStreamConfig, MultiStreamCoordinator,
     };
 }
 

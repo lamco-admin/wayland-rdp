@@ -55,7 +55,7 @@
 
 #[cfg(feature = "h264")]
 use openh264::encoder::{
-    BitRate, Encoder, EncoderConfig as OpenH264Config, FrameRate, FrameType, UsageType,
+    BitRate, Encoder, EncoderConfig as OpenH264Config, FrameRate, FrameType, UsageType, VuiConfig,
 };
 #[cfg(feature = "h264")]
 use openh264::formats::YUVSlices;
@@ -165,6 +165,11 @@ pub struct Avc444Encoder {
 
     /// Current H.264 level
     current_level: Option<super::h264_level::H264Level>,
+
+    // === DIAGNOSTIC FLAGS ===
+    /// Force all frames to be keyframes (disable P-frames)
+    /// Set to true to diagnose P-frame specific color issues
+    force_all_keyframes: bool,
 }
 
 #[cfg(feature = "h264")]
@@ -179,12 +184,9 @@ impl Avc444Encoder {
     ///
     /// Initialized AVC444 encoder with two OpenH264 instances
     pub fn new(config: EncoderConfig) -> EncoderResult<Self> {
-        // Auto-select color matrix based on resolution
-        let color_matrix = if let (Some(w), Some(h)) = (config.width, config.height) {
-            ColorMatrix::auto_select(w as u32, h as u32)
-        } else {
-            ColorMatrix::BT709 // Default to HD
-        };
+        // Use BT.709 full range for HD content (1280×800 is HD resolution)
+        // OpenH264 limited range was causing color differences
+        let color_matrix = ColorMatrix::BT709;
 
         // Calculate appropriate H.264 level if dimensions provided
         let level = config
@@ -192,7 +194,7 @@ impl Avc444Encoder {
             .zip(config.height)
             .map(|(w, h)| super::h264_level::H264Level::for_config(w, h, config.max_fps));
 
-        // Configure OpenH264 encoders
+        // DIAGNOSTIC: No VUI - test if Windows expects limited range by default
         let mut encoder_config = OpenH264Config::new()
             .bitrate(BitRate::from_bps(config.bitrate_kbps * 1000))
             .max_frame_rate(FrameRate::from_hz(config.max_fps))
@@ -238,6 +240,11 @@ impl Avc444Encoder {
             main_cached_sps_pps: None,
             aux_cached_sps_pps: None,
             current_level: level,
+            // DIAGNOSTIC FLAG: Force all keyframes to disable P-frame inter-prediction
+            // Set to true to diagnose P-frame specific issues
+            // CONFIRMED 2025-12-27: All-keyframes WORKS! P-frames cause lavender corruption
+            // Now testing with temporal stability logging to find WHY
+            force_all_keyframes: false,  // Re-enabled P-frames with temporal logging
         })
     }
 
@@ -301,6 +308,22 @@ impl Avc444Encoder {
         // converting YUV420→BGRA→YUV420 (saves ~10-20ms per frame!)
         let dims = (width as usize, height as usize);
         let strides = main_yuv420.strides();
+
+        // === DIAGNOSTIC: Force keyframes if flag is set ===
+        // This disables P-frames to test if "original OK, changes wrong" is P-frame related
+        if self.force_all_keyframes {
+            self.main_encoder.force_intra_frame();
+            self.aux_encoder.force_intra_frame();
+            if self.frame_count == 0 {
+                debug!("🔧 DIAGNOSTIC: force_all_keyframes=true - All frames will be IDR");
+            }
+        }
+
+        // === DIAGNOSTIC: Force BOTH encoders to all-I ===
+        // Main all-I wasn't enough - auxiliary P-frames also cause corruption!
+        // When content changes, aux P-frame prediction breaks → brown/dark corruption
+        self.main_encoder.force_intra_frame();
+        self.aux_encoder.force_intra_frame();  // ADDED: Force aux to all-I too!
 
         // Encode main view (full luma + subsampled chroma)
         let main_yuv_slices = YUVSlices::new(

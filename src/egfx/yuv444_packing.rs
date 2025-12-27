@@ -84,8 +84,9 @@ impl Yuv420Frame {
         let mut bgra = vec![0u8; pixel_count * 4];
 
         // Get inverse matrix coefficients
+        // Note: OpenH264 uses BT.601 matrix with limited range, so same inverse coefficients
         let (rv, gu, gv, bu) = match matrix {
-            ColorMatrix::BT601 => (1.402, -0.344136, -0.714136, 1.772),
+            ColorMatrix::BT601 | ColorMatrix::OpenH264 => (1.402, -0.344136, -0.714136, 1.772),
             ColorMatrix::BT709 => (1.5748, -0.1873, -0.4681, 1.8556),
         };
 
@@ -229,10 +230,64 @@ pub fn pack_main_view(yuv444: &Yuv444Frame) -> Yuv420Frame {
     let y = yuv444.y.clone();
 
     // U plane: 2×2 box filter subsample
-    let u = subsample_chroma_420(&yuv444.u, width, height);
+    let mut u = subsample_chroma_420(&yuv444.u, width, height);
 
     // V plane: 2×2 box filter subsample
-    let v = subsample_chroma_420(&yuv444.v, width, height);
+    let mut v = subsample_chroma_420(&yuv444.v, width, height);
+
+    // CRITICAL: Pad main view chroma to 8×8 macroblock boundaries for temporal stability
+    // Same issue as auxiliary: encoder needs deterministic padding for P-frames
+    let chroma_width = width / 2;
+    let chroma_height = height / 2;
+    let padded_chroma_width = ((chroma_width + 7) / 8) * 8;
+    let padded_chroma_height = ((chroma_height + 7) / 8) * 8;
+    let actual_size = chroma_width * chroma_height;
+    let padded_size = padded_chroma_width * padded_chroma_height;
+
+    if padded_size > actual_size {
+        // Resize to padded size, filling extra with neutral chroma (128)
+        u.resize(padded_size, 128);
+        v.resize(padded_size, 128);
+    }
+
+    // DEEP DIAGNOSTIC: Sample multiple screen positions to capture colorful areas
+    use tracing::{trace, debug};
+    if width == 1280 && height == 800 {
+        debug!("═══ MAIN VIEW MULTI-POSITION ANALYSIS ═══");
+
+        // Sample 5 strategic positions: top-left, top-right, center, bottom-left, bottom-right
+        let sample_positions = [
+            (0, 0, "Top-Left (0,0)"),
+            (width - 4, 0, "Top-Right"),
+            (width / 2, height / 2, "Center"),
+            (0, height - 4, "Bottom-Left"),
+            (width - 4, height - 4, "Bottom-Right"),
+        ];
+
+        for (x, y, label) in sample_positions {
+            let idx = y * width + x;
+            debug!("📍 {} @ ({}, {})", label, x, y);
+
+            // Sample 2x2 block for analysis
+            debug!("  Y444: [{:3},{:3}] [{:3},{:3}]",
+                   yuv444.y[idx], yuv444.y[idx+1],
+                   yuv444.y[idx+width], yuv444.y[idx+width+1]);
+            debug!("  U444: [{:3},{:3}] [{:3},{:3}]",
+                   yuv444.u[idx], yuv444.u[idx+1],
+                   yuv444.u[idx+width], yuv444.u[idx+width+1]);
+            debug!("  V444: [{:3},{:3}] [{:3},{:3}]",
+                   yuv444.v[idx], yuv444.v[idx+1],
+                   yuv444.v[idx+width], yuv444.v[idx+width+1]);
+
+            // Show subsampled result for this position
+            let chroma_x = x / 2;
+            let chroma_y = y / 2;
+            let chroma_idx = chroma_y * (width / 2) + chroma_x;
+            debug!("  Main U420: {:3}, Main V420: {:3}", u[chroma_idx], v[chroma_idx]);
+        }
+
+        debug!("═══════════════════════════════════════════");
+    }
 
     Yuv420Frame {
         y,
@@ -271,126 +326,298 @@ pub fn pack_main_view(yuv444: &Yuv444Frame) -> Yuv420Frame {
 ///
 /// YUV420 frame with chroma data packed as luma for H.264 encoding
 pub fn pack_auxiliary_view(yuv444: &Yuv444Frame) -> Yuv420Frame {
+    // TESTING: Row-level macroblock packing WITH all-keyframes encoder
+    // This will tell us if the packing is correct but P-frame prediction is the issue
     pack_auxiliary_view_spec_compliant(yuv444)
+
+    // Other variants for testing:
+    // pack_auxiliary_view_minimal(yuv444)         // All 128s (breaks colors completely)
+    // pack_auxiliary_view_simplified(yuv444)      // Pixel-level (also shows lavender)
 }
 
-/// Spec-compliant auxiliary view packing (MS-RDPEGFX Section 3.3.8.3.2)
+/// Minimal auxiliary view for diagnostic testing
 ///
-/// Implements the exact macroblock-level interleaving pattern from the spec.
+/// Returns an auxiliary view with ALL planes set to neutral (128).
+/// This effectively disables the auxiliary chroma contribution, making
+/// AVC444 behave like AVC420 (reduced color quality but should be corruption-free).
 ///
-/// # Macroblock Structure (16×16 pixels)
-///
-/// For each 16×16 macroblock, the auxiliary Y plane contains:
-/// - All U444 samples where at least one coordinate is odd
-/// - Even-even positions filled with neutral value or interpolated
-///
-/// The auxiliary U plane contains V444 odd samples, subsampled to 8×8.
-fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
+/// **Purpose**: Isolate whether corruption is caused by auxiliary view packing.
+fn pack_auxiliary_view_minimal(yuv444: &Yuv444Frame) -> Yuv420Frame {
     let width = yuv444.width;
     let height = yuv444.height;
 
-    // Y plane: Pack U444 odd samples
-    // At each pixel position:
-    // - If odd position: copy U444 value
-    // - If even position: use neutral (128) or interpolate
-    let mut aux_y = vec![128u8; width * height];
-
-    for y in 0..height {
-        for x in 0..width {
-            let idx = y * width + x;
-            let is_odd = (x % 2 == 1) || (y % 2 == 1);
-
-            if is_odd {
-                // Pack the U chroma at this odd position
-                aux_y[idx] = yuv444.u[idx];
-            } else {
-                // Even position - this sample is already in the main view
-                // Use average of surrounding odd U samples for better encoding
-                // This helps the encoder produce smoother gradients
-                aux_y[idx] = interpolate_even_position(&yuv444.u, x, y, width, height);
-            }
-        }
-    }
-
-    // U plane: Pack V444 odd samples (subsampled to chroma resolution)
-    // For each 2×2 block in auxiliary Y, we need one V chroma sample
-    let chroma_width = width / 2;
-    let chroma_height = height / 2;
-    let mut aux_u = vec![128u8; chroma_width * chroma_height];
-
-    for cy in 0..chroma_height {
-        for cx in 0..chroma_width {
-            let chroma_idx = cy * chroma_width + cx;
-
-            // The chroma sample position in the full-res grid
-            let x = cx * 2;
-            let y = cy * 2;
-
-            // For auxiliary U plane, we want V444 values at odd positions
-            // Use the average of odd-position V samples in this 2×2 block
-            // Positions: (x+1, y), (x, y+1), (x+1, y+1) are all odd
-            let v_01 = yuv444.v[y * width + (x + 1)] as u32;        // (x+1, y)
-            let v_10 = yuv444.v[(y + 1) * width + x] as u32;        // (x, y+1)
-            let v_11 = yuv444.v[(y + 1) * width + (x + 1)] as u32;  // (x+1, y+1)
-
-            // Average the three odd-position samples with rounding
-            let avg = (v_01 + v_10 + v_11 + 1) / 3;
-            aux_u[chroma_idx] = avg as u8;
-        }
-    }
-
-    // V plane: Neutral (128) for encoder stability
-    // The auxiliary V plane isn't used for reconstruction, but encoding
-    // works better with valid chroma than with zeros
-    let aux_v = vec![128u8; chroma_width * chroma_height];
+    // All neutral gray (128)
+    let y_size = width * height;
+    let uv_size = (width / 2) * (height / 2);
 
     Yuv420Frame {
-        y: aux_y,
-        u: aux_u,
-        v: aux_v,
+        y: vec![128u8; y_size],
+        u: vec![128u8; uv_size],
+        v: vec![128u8; uv_size],
         width,
         height,
     }
 }
 
-/// Interpolate value at even position from surrounding odd positions
+/// Spec-compliant auxiliary view packing (MS-RDPEGFX Section 3.3.8.3.2)
 ///
-/// For smoother auxiliary Y plane, we interpolate even positions from
-/// the average of neighboring odd samples.
-#[inline]
-fn interpolate_even_position(plane: &[u8], x: usize, y: usize, width: usize, height: usize) -> u8 {
-    let mut sum: u32 = 0;
-    let mut count: u32 = 0;
+/// Implements the row-level macroblock structure defined in the MS-RDPEGFX specification.
+///
+/// # Macroblock Structure (16-row alignment)
+///
+/// The auxiliary Y plane is organized in 16-row macroblocks:
+/// - Rows 0-7 of each macroblock: U444 odd rows (1, 3, 5, 7, 9, 11, 13, 15, ...)
+/// - Rows 8-15 of each macroblock: V444 odd rows (1, 3, 5, 7, 9, 11, 13, 15, ...)
+/// - Pattern repeats every 16 rows for multi-macroblock frames
+///
+/// Each row is copied ENTIRELY from the source U444/V444 (all columns, not just odd pixels).
+/// This row-level structure ensures temporal consistency for H.264 P-frame inter-prediction.
+///
+/// # Client Reconstruction
+///
+/// The decoder (FreeRDP, Windows RDP) reads entire rows from auxiliary Y and writes
+/// them to U444/V444 odd rows. The row-based structure (not pixel-based) is critical
+/// for matching client expectations.
+///
+/// # Temporal Consistency
+///
+/// Direct row copying (no interpolation) ensures that static content produces identical
+/// auxiliary frames across time, resulting in zero P-frame residuals and no artifacts.
+///
+/// # References
+///
+/// - MS-RDPEGFX Section 3.3.8.3.2 (B4/B5 blocks)
+/// - FreeRDP: general_YUV444SplitToYUV420 in prim_YUV.c
+/// - Microsoft Research: "Tunneling High-Resolution Color Content" (Wu et al., 2013)
+fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
+    let width = yuv444.width;
+    let height = yuv444.height;
 
-    // Check all 8 neighbors and use odd-position ones
-    let neighbors = [
-        (x.wrapping_sub(1), y),           // left
-        (x + 1, y),                        // right
-        (x, y.wrapping_sub(1)),           // top
-        (x, y + 1),                        // bottom
-        (x.wrapping_sub(1), y.wrapping_sub(1)), // top-left
-        (x + 1, y.wrapping_sub(1)),       // top-right
-        (x.wrapping_sub(1), y + 1),       // bottom-left
-        (x + 1, y + 1),                    // bottom-right
-    ];
+    // Pad to 16-row macroblock boundary (required by spec)
+    // MS-RDPEGFX: "The auxiliary frame is aligned to multiples of 16×16"
+    let padded_height = ((height + 15) / 16) * 16;
+    let mut aux_y = vec![128u8; padded_height * width];
 
-    for (nx, ny) in neighbors {
-        if nx < width && ny < height {
-            // Only use odd-position neighbors
-            if (nx % 2 == 1) || (ny % 2 == 1) {
-                sum += plane[ny * width + nx] as u32;
-                count += 1;
+    // B4 and B5 blocks: Pack odd rows from U444 and V444
+    //
+    // MS-RDPEGFX Section 3.3.8.3.2 macroblock structure:
+    // - Auxiliary row 0: U444 row 1 (entire row)
+    // - Auxiliary row 1: U444 row 3
+    // - ...
+    // - Auxiliary row 7: U444 row 15
+    // - Auxiliary row 8: V444 row 1 (switches to V444)
+    // - Auxiliary row 9: V444 row 3
+    // - ...
+    // - Auxiliary row 15: V444 row 15
+    // - Auxiliary row 16: U444 row 17 (pattern repeats)
+
+    let mut u_row_counter = 0;  // Tracks which U444 odd row to pack next
+    let mut v_row_counter = 0;  // Tracks which V444 odd row to pack next
+
+    for aux_row in 0..padded_height {
+        let macroblock_row = aux_row % 16;
+
+        if macroblock_row < 8 {
+            // Rows 0-7 of macroblock: Pack from U444 odd rows
+            let source_row = 2 * u_row_counter + 1;
+            u_row_counter += 1;
+
+            // Skip padding rows beyond actual frame
+            if source_row >= height {
+                continue;  // Keep padding as neutral (128)
             }
+
+            // Copy ENTIRE row from U444 (all columns: even and odd!)
+            let aux_start = aux_row * width;
+            let src_start = source_row * width;
+            aux_y[aux_start..aux_start + width]
+                .copy_from_slice(&yuv444.u[src_start..src_start + width]);
+        } else {
+            // Rows 8-15 of macroblock: Pack from V444 odd rows
+            let source_row = 2 * v_row_counter + 1;
+            v_row_counter += 1;
+
+            // Skip padding rows beyond actual frame
+            if source_row >= height {
+                continue;  // Keep padding as neutral (128)
+            }
+
+            // Copy ENTIRE row from V444 (all columns: even and odd!)
+            let aux_start = aux_row * width;
+            let src_start = source_row * width;
+            aux_y[aux_start..aux_start + width]
+                .copy_from_slice(&yuv444.v[src_start..src_start + width]);
         }
     }
 
-    if count > 0 {
-        ((sum + count / 2) / count) as u8
-    } else {
-        128 // Neutral if no neighbors available
+    // B6 and B7 blocks: Pack chroma from odd columns at even rows
+    //
+    // MS-RDPEGFX Section 3.3.8.3.2 B6/B7 blocks:
+    // - Auxiliary U/V planes are standard YUV420 chroma (halfWidth × halfHeight)
+    // - Sample from U444/V444 at positions: (2x+1, 2y) - odd column, even row
+    //
+    // This captures the chroma values not included in the main view's subsampling.
+    let chroma_width = width / 2;
+    let chroma_height = height / 2;
+
+    // CRITICAL: Pad chroma planes to 8×8 macroblock boundaries for encoder stability
+    // H.264 YUV420 uses 8×8 chroma macroblocks (corresponding to 16×16 luma)
+    let padded_chroma_width = ((chroma_width + 7) / 8) * 8;
+    let padded_chroma_height = ((chroma_height + 7) / 8) * 8;
+
+    // Initialize with neutral chroma (128) for deterministic padding
+    let mut aux_u = vec![128u8; padded_chroma_width * padded_chroma_height];
+    let mut aux_v = vec![128u8; padded_chroma_width * padded_chroma_height];
+
+    // Fill actual data (not padding)
+    for cy in 0..chroma_height {
+        let y = cy * 2;  // Even row in source (0, 2, 4, 6, ...)
+
+        for cx in 0..chroma_width {
+            let x = cx * 2 + 1;  // Odd column in source (1, 3, 5, 7, ...)
+            let idx = y * width + x;
+
+            // Write to padded buffer
+            let out_idx = cy * padded_chroma_width + cx;
+
+            // B6: Sample U444 at (odd_col, even_row)
+            aux_u[out_idx] = yuv444.u[idx];
+
+            // B7: Sample V444 at (odd_col, even_row)
+            aux_v[out_idx] = yuv444.v[idx];
+        }
+    }
+
+    // DIAGNOSTIC: Multi-position auxiliary view analysis
+    use tracing::{trace, debug};
+    if width == 1280 && height == 800 {
+        debug!("═══ AUXILIARY VIEW MULTI-POSITION ANALYSIS ═══");
+
+        // Sample same positions as main view for comparison
+        let sample_positions = [
+            (0, 0, "Top-Left"),
+            (width - 8, 0, "Top-Right"),
+            (width / 2, height / 2, "Center"),
+        ];
+
+        for (x, y, label) in sample_positions {
+            debug!("📍 {} @ ({}, {})", label, x, y);
+
+            // Auxiliary Y: should contain U444 odd rows (0-7) and V444 odd rows (8-15)
+            // Check what row of auxiliary Y this position maps to
+            let aux_row = y;  // Simplified - just check the row directly
+            let aux_idx = aux_row * width + x;
+
+            // Sample auxiliary Y plane at this position
+            if aux_row < aux_y.len() / width {
+                debug!("  Aux Y (row {}): [{:3},{:3},{:3},{:3}]",
+                       aux_row,
+                       aux_y.get(aux_idx).unwrap_or(&0),
+                       aux_y.get(aux_idx+1).unwrap_or(&0),
+                       aux_y.get(aux_idx+2).unwrap_or(&0),
+                       aux_y.get(aux_idx+3).unwrap_or(&0));
+
+                // Show corresponding source U444/V444 odd row
+                let source_row = if (aux_row % 16) < 8 {
+                    // Rows 0-7 of macroblock: from U444 odd rows
+                    2 * (aux_row % 16) + 1
+                } else {
+                    // Rows 8-15: from V444 odd rows
+                    2 * ((aux_row % 16) - 8) + 1
+                };
+
+                if source_row < height {
+                    let src_idx = source_row * width + x;
+                    if (aux_row % 16) < 8 {
+                        debug!("  Source U444[row {}]: [{:3},{:3},{:3},{:3}]",
+                               source_row,
+                               yuv444.u.get(src_idx).unwrap_or(&0),
+                               yuv444.u.get(src_idx+1).unwrap_or(&0),
+                               yuv444.u.get(src_idx+2).unwrap_or(&0),
+                               yuv444.u.get(src_idx+3).unwrap_or(&0));
+                    } else {
+                        debug!("  Source V444[row {}]: [{:3},{:3},{:3},{:3}]",
+                               source_row,
+                               yuv444.v.get(src_idx).unwrap_or(&0),
+                               yuv444.v.get(src_idx+1).unwrap_or(&0),
+                               yuv444.v.get(src_idx+2).unwrap_or(&0),
+                               yuv444.v.get(src_idx+3).unwrap_or(&0));
+                    }
+                }
+            }
+
+            // Sample auxiliary U/V chroma at this position
+            let chroma_x = x / 2;
+            let chroma_y = y / 2;
+            let chroma_idx = chroma_y * padded_chroma_width + chroma_x;
+            if chroma_idx < aux_u.len() {
+                debug!("  Aux U420: {:3}, Aux V420: {:3}", aux_u[chroma_idx], aux_v[chroma_idx]);
+
+                // Show source position (odd column, even row)
+                let src_x = chroma_x * 2 + 1;  // Odd column
+                let src_y = chroma_y * 2;      // Even row
+                let src_idx = src_y * width + src_x;
+                debug!("  Source U444[{},{}]: {:3}, V444: {:3}",
+                       src_x, src_y,
+                       yuv444.u.get(src_idx).unwrap_or(&0),
+                       yuv444.v.get(src_idx).unwrap_or(&0));
+            }
+        }
+
+        debug!("═══════════════════════════════════════════");
+    }
+
+    // CRITICAL: Do NOT trim padding! Encoder needs deterministic buffer sizes.
+    // For dimensions that are already 16-aligned (like 1280×800), padding size equals actual size.
+    // But we must avoid the `.to_vec()` allocation which can introduce non-determinism.
+    //
+    // Note: We resize aux_y to remove macroblock padding but keep memory deterministic
+    aux_y.truncate(height * width);
+
+    // DIAGNOSTIC: Compute hash AFTER truncate so we only hash what OpenH264 sees
+    if width == 1280 && height == 800 {
+        use tracing::debug;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        aux_y.hash(&mut hasher);
+        aux_u.hash(&mut hasher);
+        aux_v.hash(&mut hasher);
+        let frame_hash = hasher.finish();
+
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static PREV_HASH: AtomicU64 = AtomicU64::new(0);
+        static FRAME_NUM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+        let frame_num = FRAME_NUM.fetch_add(1, Ordering::Relaxed);
+        let prev = PREV_HASH.swap(frame_hash, Ordering::Relaxed);
+
+        if prev == frame_hash {
+            debug!("[Frame #{}] ✅ TEMPORAL STABLE: Auxiliary IDENTICAL (hash: 0x{:016x})", frame_num, frame_hash);
+        } else if prev != 0 {
+            debug!("[Frame #{}] ⚠️  TEMPORAL CHANGE: Auxiliary DIFFERENT (prev: 0x{:016x}, curr: 0x{:016x})", frame_num, prev, frame_hash);
+        } else {
+            debug!("[Frame #{}] 🔵 FIRST FRAME: Auxiliary hash: 0x{:016x}", frame_num, frame_hash);
+        }
+    }
+
+    Yuv420Frame {
+        y: aux_y,  // Full buffer (padded_height * width, truncated to height * width)
+        u: aux_u,  // Full padded chroma buffer
+        v: aux_v,  // Full padded chroma buffer
+        width,
+        height,
     }
 }
 
+/// Historical: Old pixel-level packing approach (REMOVED - caused P-frame corruption)
+///
+/// This was the original implementation that used pixel-level odd/even filtering
+/// with interpolation at even positions. It caused lavender corruption in P-frames
+/// due to frame-dependent interpolated values creating artificial temporal changes.
+///
+/// Replaced with row-level macroblock packing (2025-12-27) to match MS-RDPEGFX spec
+/// and eliminate P-frame artifacts. See docs/AVC444-COMPREHENSIVE-RESEARCH-AND-FIX-2025-12-27.md
+///
 /// Alternative simplified packing for debugging/testing
 ///
 /// Uses a simpler pixel extraction pattern that may not match the spec
