@@ -38,7 +38,10 @@ path = "src/lib.rs"
 lamco-wayland = "0.2.2"
 lamco-rdp = "0.4.0"
 lamco-portal = { version = "0.2.2", features = ["dbus-clipboard"] }
-lamco-pipewire = "0.1.3"
+# Local fork with fix for zero-size buffer passthrough bug
+# See docs/QUALITY-ISSUE-ANALYSIS-2025-12-27.md for details
+# TODO: Publish fix to crates.io and revert to version dependency
+lamco-pipewire = { path = "../lamco-rdp-workspace/crates/lamco-pipewire" }
 lamco-video = "0.1.2"
 lamco-rdp-input = "0.1.1"
 lamco-clipboard-core = { version = "0.4.0", features = ["image"] }
@@ -128,8 +131,10 @@ sha2 = "0.10"
 # -----------------------------------------------------------------------------
 # H.264 encoding (optional, for EGFX)
 # -----------------------------------------------------------------------------
-openh264 = { version = "0.9", optional = true }
-openh264-sys2 = { version = "0.9", default-features = false, features = ["source"], optional = true }
+# Using fork with VUI support for proper color space signaling (full range)
+# PR: https://github.com/ralfbiedert/openh264-rs/pull/86
+openh264 = { git = "https://github.com/glamberson/openh264-rs.git", branch = "feature/vui-support", optional = true }
+openh264-sys2 = { git = "https://github.com/glamberson/openh264-rs.git", branch = "feature/vui-support", default-features = false, features = ["source"], optional = true }
 
 # -----------------------------------------------------------------------------
 # Hardware-accelerated encoding (optional)
@@ -284,6 +289,10 @@ cast_possible_wrap = "allow"
 # =============================================================================
 
 [patch.crates-io]
+# Lamco crates with local fixes (not yet published)
+# lamco-pipewire: Zero-size buffer validation fix (see docs/QUALITY-ISSUE-ANALYSIS-2025-12-27.md)
+lamco-pipewire = { path = "../lamco-rdp-workspace/crates/lamco-pipewire" }
+
 # IronRDP local fork - combined EGFX + file transfer support
 # PRs pending upstream: #1057 (EGFX), #1064-1066 (file transfer)
 # All crates patched to same source to avoid trait conflicts
@@ -298,3 +307,9 @@ ironrdp-core = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-core" }
 ironrdp-tokio = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-tokio" }
 ironrdp-displaycontrol = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-displaycontrol" }
 ironrdp-egfx = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-egfx" }
+
+# Patch git dependencies from lamco-rdp-workspace (lamco-rdp-clipboard uses git fork)
+# This ensures trait compatibility between git and local IronRDP sources
+[patch."https://github.com/glamberson/IronRDP"]
+ironrdp-cliprdr = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-cliprdr" }
+ironrdp-core = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-core" }

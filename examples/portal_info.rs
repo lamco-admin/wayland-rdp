@@ -6,9 +6,8 @@
 //! Run with: cargo run --example portal_info
 
 use anyhow::Result;
-use std::sync::Arc;
-use wrd_server::config::Config;
-use wrd_server::portal::PortalManager;
+use lamco_rdp_server::config::Config;
+use lamco_rdp_server::portal::PortalManager;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,15 +19,17 @@ async fn main() -> Result<()> {
     println!("=================================\n");
 
     println!("Creating portal manager...");
-    let config = Arc::new(Config::default_config()?);
-    let portal_manager = PortalManager::new(&config).await?;
+    let config = Config::default_config()?;
+    let portal_config = config.to_portal_config();
+    let portal_manager = PortalManager::new(portal_config).await?;
     println!("✓ Portal manager created\n");
 
     println!("Creating portal session...");
     println!("⚠️  A permission dialog will appear on your desktop.");
     println!("    Please APPROVE the request to continue.\n");
 
-    let session = portal_manager.create_session().await?;
+    let session_id = format!("portal-info-{}", uuid::Uuid::new_v4());
+    let session = portal_manager.create_session(session_id, None).await?;
     println!("✓ Portal session created!\n");
 
     println!("Session Information:");
@@ -56,7 +57,7 @@ async fn main() -> Result<()> {
 
     println!("Moving mouse cursor (you should see it move)...");
     for _ in 0..10 {
-        rd.notify_pointer_motion(5.0, 0.0).await?;
+        rd.notify_pointer_motion(session.ashpd_session(), 5.0, 0.0).await?;
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
     println!("✓ Mouse moved\n");
@@ -65,7 +66,7 @@ async fn main() -> Result<()> {
     tokio::signal::ctrl_c().await?;
 
     println!("\nClosing session...");
-    session.close().await?;
+    session.close();
     println!("✓ Session closed\n");
 
     println!("=================================");

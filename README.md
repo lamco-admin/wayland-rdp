@@ -12,125 +12,124 @@ Built in Rust with a focus on security, performance, and compatibility with mode
 
 ## Features
 
-- **✅ RDP Protocol Support**: Full RDP server implementation via IronRDP
-- **✅ Wayland Native**: Portal mode using XDG Desktop Portal (no X11 required)
-- **✅ PipeWire Screen Capture**: Zero-copy DMA-BUF support for efficient streaming
-- **✅ Video Encoding**: H.264 support via OpenH264 with EGFX channel
-- **✅ Secure Authentication**: TLS 1.3 and Network Level Authentication (NLA)
-- **✅ Input Handling**: Full keyboard and mouse support with 200+ key mappings
-- **✅ Clipboard Sharing**: Bidirectional clipboard sync (text and images)
-- **✅ Multi-Monitor**: Layout negotiation and display management
+### Core Features (Implemented)
+- **RDP Protocol Support**: Full RDP 10.x server implementation via IronRDP
+- **Wayland Native**: Portal mode using XDG Desktop Portal (no X11 required)
+- **PipeWire Screen Capture**: Zero-copy DMA-BUF support for efficient streaming
+- **H.264 Video Encoding**: EGFX channel with AVC420/AVC444 codec support
+- **Secure Authentication**: TLS 1.3 and Network Level Authentication (NLA)
+- **Input Handling**: Full keyboard and mouse support with 200+ key mappings
+- **Clipboard Sharing**: Bidirectional clipboard sync (text and images)
+- **Multi-Monitor**: Layout negotiation and display management
+- **Damage Detection**: SIMD-optimized tile-based frame differencing (90%+ bandwidth reduction)
 
-## Production Ready
+### Premium Features (Optional)
+- **Hardware Encoding (VA-API)**: Intel/AMD GPU acceleration (`--features vaapi`)
+- **Hardware Encoding (NVENC)**: NVIDIA GPU acceleration (`--features nvenc`)
+- **AVC444**: Full 4:4:4 chroma with sRGB/full-range VUI signaling for perfect text clarity
 
-All core modules are implemented and tested:
-- Portal integration (600+ lines)
-- PipeWire capture (3,392 lines)
-- Video pipeline (1,735 lines)
-- Input handling (3,727 lines)
-- Clipboard sync (3,145 lines)
-- Security and authentication
-- Configuration management
+## Architecture
+
+```
+lamco-rdp-server
+  ├─> Portal Session (screen capture + input injection permissions)
+  ├─> PipeWire Manager (video frame capture)
+  ├─> EGFX Video Handler (H.264 encoding via OpenH264/VAAPI/NVENC)
+  ├─> Input Handler (keyboard/mouse from RDP clients)
+  ├─> Clipboard Manager (bidirectional clipboard sync)
+  └─> IronRDP Server (RDP protocol, TLS, channel management)
+```
+
+See `docs/architecture/COMPREHENSIVE-ARCHITECTURE-AUDIT-2025-12-27.md` for detailed architecture documentation.
 
 ## Building
 
 ### Prerequisites
 
-- Rust 1.70 or later
-- OpenSSL (for certificate generation)
+- Rust 1.77 or later
+- OpenSSL development libraries
+- PipeWire development libraries
+- For H.264: `nasm` (3x speedup for OpenH264)
 
 ### Build Instructions
 
 ```bash
-# Run setup script (generates test certificates, checks dependencies)
-./scripts/setup.sh
-
-# Build the project
-cargo build
-
-# Or use the build script (includes formatting and clippy checks)
-./scripts/build.sh
-
-# Run tests
-cargo test
-# Or use the test script
-./scripts/test.sh
-```
-
-## Quick Start (Development)
-
-**IMPORTANT**: The default config path is `/etc/wrd-server/config.toml`. For development, you MUST specify the local config file:
-
-```bash
-# Build release (from project root)
+# Default build (software H.264 encoding)
 cargo build --release
 
-# Run with local config (REQUIRED for development)
-./target/release/wrd-server -c config.toml
+# With VA-API hardware encoding (Intel/AMD)
+cargo build --release --features vaapi
 
-# Or with verbose logging
-./target/release/wrd-server -c config.toml -vv
+# With NVENC hardware encoding (NVIDIA)
+cargo build --release --features nvenc
+
+# With all hardware backends
+cargo build --release --features hardware-encoding
 ```
+
+### Hardware Encoding Requirements
+
+**VA-API (Intel/AMD):**
+- `libva-dev` >= 1.20.0
+- Intel iHD driver (modern Intel) or i965 (older Intel)
+- AMD radeonsi driver
+
+**NVENC (NVIDIA):**
+- NVIDIA driver with `libnvidia-encode.so`
+- CUDA toolkit
+- NVENC-capable GPU (GTX 6xx+, any RTX)
+
+## Quick Start
 
 ### Prerequisites for Running
 
 1. **TLS Certificates** in `certs/` directory:
-   - `certs/cert.pem` - Certificate file
-   - `certs/key.pem` - Private key file
-   - Generate with: `./scripts/generate-certs.sh` or copy from test certs:
-     ```bash
-     cp certs/test-cert.pem certs/cert.pem
-     cp certs/test-key.pem certs/key.pem
-     ```
+   ```bash
+   # Generate test certificates
+   ./scripts/generate-certs.sh
+   # Or copy existing test certs
+   cp certs/test-cert.pem certs/cert.pem
+   cp certs/test-key.pem certs/key.pem
+   ```
 
-2. **D-Bus Session** (for portal access via SSH):
+2. **D-Bus Session** (required for portal access via SSH):
    ```bash
    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
    ```
 
-3. **GNOME Extension** (for clipboard on GNOME):
-   - Install from `extension/` directory
-   - Log out/in to activate
+3. **PipeWire** running for screen capture
 
-### One-Liner for SSH Testing
+### Running
 
 ```bash
-ssh user@host 'export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus" && cd ~/wayland/wrd-server-specs && ./target/release/wrd-server -c config.toml'
+# Run with local configuration
+./target/release/lamco-rdp-server -c config.toml
+
+# With verbose logging
+./target/release/lamco-rdp-server -c config.toml -vv
+
+# With log file
+./target/release/lamco-rdp-server -c config.toml -vv --log-file server.log
 ```
 
-## Usage
+### Connecting
 
-### Basic Usage
+Use any RDP client:
+- Windows: `mstsc.exe` (Remote Desktop Connection)
+- Linux: `xfreerdp`, `remmina`
+- macOS: Microsoft Remote Desktop
 
 ```bash
-# Run with local configuration (development)
-./target/release/wrd-server -c config.toml
-
-# Run with system configuration (production)
-wrd-server  # Uses /etc/wrd-server/config.toml
-
-# Show help
-wrd-server --help
-
-# Run with custom port
-./target/release/wrd-server -c config.toml --port 5000
-
-# Enable verbose logging
-./target/release/wrd-server -c config.toml -vv
-
-# Use JSON logging format
-./target/release/wrd-server -c config.toml --log-format json
+# FreeRDP example
+xfreerdp /v:hostname:3389 /u:username /p:password /gfx:AVC444
 ```
 
-### Configuration
+## Configuration
 
 Configuration can be provided via:
-
 1. **TOML file** (default: `/etc/wrd-server/config.toml`)
 2. **Environment variables** (prefixed with `WRD_`)
 3. **Command-line arguments** (highest priority)
-
-See `config/wrd-server.toml` for a complete example configuration.
 
 ### Command-Line Options
 
@@ -141,90 +140,77 @@ Options:
   -p, --port <PORT>              Listen port [env: WRD_PORT=] [default: 3389]
   -v, --verbose...               Verbose logging (can be specified multiple times)
       --log-format <LOG_FORMAT>  Log format (json|pretty|compact) [default: pretty]
+      --log-file <PATH>          Log to file
   -h, --help                     Print help
   -V, --version                  Print version
 ```
 
-## Development
+See `config.toml` for a complete example configuration.
 
-### Project Structure
+## Project Structure
 
 ```
-wrd-server/
+lamco-rdp-server/
 ├── src/
+│   ├── lib.rs          # Library root, module exports
+│   ├── main.rs         # Binary entry point
 │   ├── config/         # Configuration management
-│   ├── server/         # Server implementation (future)
-│   ├── rdp/            # RDP protocol (future)
-│   ├── portal/         # XDG Portal integration (future)
-│   ├── pipewire/       # PipeWire integration (future)
-│   ├── video/          # Video encoding (future)
-│   ├── input/          # Input handling (future)
-│   ├── clipboard/      # Clipboard sync (future)
-│   ├── multimon/       # Multi-monitor support (future)
-│   ├── security/       # Authentication and TLS (future)
-│   ├── protocol/       # Protocol utilities (future)
-│   └── utils/          # Common utilities (future)
-├── config/             # Example configurations
-├── certs/              # TLS certificates (test only)
+│   ├── server/         # Main server implementation
+│   ├── rdp/            # RDP channel management
+│   ├── egfx/           # EGFX video pipeline
+│   │   ├── encoder.rs        # OpenH264 AVC420 encoder
+│   │   ├── avc444_encoder.rs # Dual-stream AVC444 encoder
+│   │   ├── color_space.rs    # VUI parameters, color presets
+│   │   ├── color_convert.rs  # BGRA→YUV444 with SIMD
+│   │   ├── yuv444_packing.rs # AVC444 dual-stream packing
+│   │   └── hardware/         # Hardware encoders
+│   │       ├── vaapi/        # VA-API (Intel/AMD)
+│   │       └── nvenc/        # NVENC (NVIDIA)
+│   ├── clipboard/      # Clipboard orchestration
+│   ├── damage/         # Damage region detection
+│   ├── multimon/       # Multi-monitor support
+│   ├── security/       # Authentication and TLS
+│   ├── protocol/       # Protocol utilities
+│   └── utils/          # Common utilities
+├── docs/               # Documentation
+│   ├── architecture/   # Architecture docs
+│   ├── specs/          # Specifications
+│   └── guides/         # User guides
+├── certs/              # TLS certificates
 ├── scripts/            # Build and setup scripts
-├── tests/              # Integration tests
-└── benches/            # Benchmarks
-
+└── benches/            # Performance benchmarks
 ```
+
+## Documentation
+
+- **Architecture**: `docs/architecture/COMPREHENSIVE-ARCHITECTURE-AUDIT-2025-12-27.md`
+- **Color Infrastructure**: `docs/architecture/NVENC-AND-COLOR-INFRASTRUCTURE.md`
+- **IronRDP Integration**: `docs/ironrdp/IRONRDP-INTEGRATION-GUIDE.md`
+- **Testing Setup**: `docs/guides/TESTING-ENVIRONMENT-RECOMMENDATIONS.md`
+
+## Development
 
 ### Running Tests
 
 ```bash
-# Run all tests
 cargo test
+cargo test -- --nocapture  # With output
+```
 
-# Run with verbose output
-cargo test -- --nocapture
+### Benchmarks
 
-# Run specific test
-cargo test test_default_config
+```bash
+cargo bench --bench video_encoding
+cargo bench --bench color_conversion
+cargo bench --bench damage_detection
 ```
 
 ### Code Quality
 
 ```bash
-# Format code
 cargo fmt
-
-# Check formatting
-cargo fmt -- --check
-
-# Run linter
 cargo clippy
-
-# Run with all warnings as errors
-cargo clippy -- -D warnings
 ```
-
-## Roadmap
-
-### Phase 1: Foundation (Current)
-- [x] Project structure and configuration
-- [ ] Security and authentication module
-- [ ] Basic RDP protocol implementation
-
-### Phase 2: Core Functionality
-- [ ] PipeWire screen capture integration
-- [ ] Video encoding (VAAPI/OpenH264)
-- [ ] Input handling via libei
-- [ ] Basic RDP server
-
-### Phase 3: Advanced Features
-- [ ] Multi-monitor support
-- [ ] Clipboard synchronization
-- [ ] Performance optimizations
-- [ ] Comprehensive testing
-
-### Phase 4: Production Ready
-- [ ] Security hardening
-- [ ] Documentation
-- [ ] Packaging (deb, rpm, flatpak)
-- [ ] CI/CD pipeline
 
 ## License
 
@@ -244,10 +230,9 @@ You may use lamco-rdp-server **for free** if you meet **ALL** of the following c
 
 Larger organizations or commercial deployments require a commercial license:
 
-- **Annual License**: $49.99/year per server (includes updates and support)
-- **Perpetual License**: $99.00 one-time per server (lifetime use of purchased version)
+- **Annual License**: $49.99/year per server
+- **Perpetual License**: $99.00 one-time per server
 
-**Purchase**: [Coming Soon - Lemon Squeezy store]
 **Contact**: office@lamco.io
 
 ### Future Open Source
@@ -256,32 +241,17 @@ This software will **automatically convert** to the **Apache License 2.0** three
 
 See the [LICENSE](LICENSE) file for complete terms.
 
-### License Summary
-
-- ✅ **Free** for personal use, students, hobbyists
-- ✅ **Free** for non-profits and charities
-- ✅ **Free** for tiny businesses (≤3 employees, <$1M revenue)
-- ✅ **View and modify** source code
-- ❌ **Commercial use** requires paid license
-- ❌ **Cannot** build competing RDP/VDI products
-- ⏰ **Becomes Apache-2.0** after 3 years
-
 ## Contributing
 
-Contributions are welcome! This project uses the BSL 1.1 license, which means:
-
-- You can fork and modify for personal/non-commercial use
-- Contributions will be licensed under the same BSL 1.1 terms
-- The codebase will become Apache-2.0 in 3 years
-
-Please open an issue before starting significant work to discuss your proposed changes.
+Contributions are welcome! Please open an issue before starting significant work.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Acknowledgments
 
 Built with:
+- [IronRDP](https://github.com/Devolutions/IronRDP) - RDP protocol implementation
 - [tokio](https://tokio.rs/) - Async runtime
-- [clap](https://github.com/clap-rs/clap) - CLI parsing
-- [tracing](https://github.com/tokio-rs/tracing) - Structured logging
-- [serde](https://serde.rs/) - Serialization
+- [OpenH264](https://github.com/cisco/openh264) - H.264 codec
+- [PipeWire](https://pipewire.org/) - Screen capture
+- [ashpd](https://github.com/bilelmoussaoui/ashpd) - XDG Portal bindings

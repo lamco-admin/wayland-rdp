@@ -39,8 +39,6 @@
 //! - P4: Balanced (default)
 //! - P5-P7: Quality/slow
 
-use std::sync::Arc;
-
 use tracing::{debug, info, warn};
 
 use cudarc::driver::CudaContext;
@@ -48,7 +46,7 @@ use nvidia_video_codec_sdk::{
     Bitstream, Buffer, Encoder, EncoderInitParams, EncodePictureParams,
     Session,
     sys::nvEncodeAPI::{
-        NV_ENC_BUFFER_FORMAT, NV_ENC_CODEC_H264_GUID, NV_ENC_CONFIG,
+        NV_ENC_BUFFER_FORMAT, NV_ENC_CODEC_H264_GUID,
         NV_ENC_CONFIG_VER, NV_ENC_H264_PROFILE_HIGH_GUID, NV_ENC_PIC_TYPE,
         NV_ENC_PRESET_P1_GUID, NV_ENC_PRESET_P2_GUID, NV_ENC_PRESET_P3_GUID,
         NV_ENC_PRESET_P4_GUID, NV_ENC_PRESET_P5_GUID, NV_ENC_PRESET_P6_GUID,
@@ -151,15 +149,24 @@ impl NvencTuning {
 ///
 /// Provides GPU-accelerated H.264 encoding for NVIDIA GPUs.
 /// Accepts BGRA input directly (NVENC handles color conversion internally).
+///
+/// IMPORTANT: All NVENC types (Session, Buffer, Bitstream) are wrapped in Box
+/// to prevent move-invalidation. The nvidia-video-codec-sdk types contain internal
+/// pointers that become invalid when the struct is moved in memory. Boxing prevents
+/// this by keeping them at a stable heap address.
+///
+/// Field order matters for drop safety - buffers must be dropped BEFORE session.
 pub struct NvencEncoder {
-    /// NVENC session (owns the encoder)
-    session: Session,
+    /// Input buffers (triple buffered) - Option<Box> for explicit drop control
+    /// Must drop before session since they reference the encoder.
+    input_buffers: Vec<Option<Box<Buffer<'static>>>>,
 
-    /// Input buffers (triple buffered)
-    input_buffers: Vec<Buffer<'static>>,
+    /// Output bitstreams (triple buffered) - Option<Box> for explicit drop control
+    /// Must drop before session since they reference the encoder.
+    output_bitstreams: Vec<Option<Box<Bitstream<'static>>>>,
 
-    /// Output bitstreams (triple buffered)
-    output_bitstreams: Vec<Bitstream<'static>>,
+    /// CUDA context - needed to bind before NVENC operations
+    cuda_ctx: std::sync::Arc<cudarc::driver::CudaContext>,
 
     /// Current buffer index
     current_buffer: usize,
@@ -191,6 +198,10 @@ pub struct NvencEncoder {
 
     /// Encoder statistics
     stats: HardwareEncoderStats,
+
+    /// NVENC session (owns the encoder) - Boxed to prevent move-invalidation.
+    /// MUST BE LAST for drop order safety - buffers reference the encoder.
+    session: Box<Session>,
 }
 
 // SAFETY: NVENC handles are safe to send between threads.
@@ -198,6 +209,34 @@ pub struct NvencEncoder {
 // Session contains Encoder which contains raw pointers, but the NVENC API
 // allows calling from different threads as long as calls are serialized.
 unsafe impl Send for NvencEncoder {}
+
+impl Drop for NvencEncoder {
+    fn drop(&mut self) {
+        // CRITICAL: Rebind CUDA context before dropping NVENC resources.
+        // CUDA contexts are thread-local, and between the last encode_bgra call
+        // and this drop, the context may have been unbound. The Buffer and Bitstream
+        // types need a valid CUDA context to destroy their GPU resources.
+        if let Err(e) = self.cuda_ctx.bind_to_thread() {
+            warn!(
+                "Failed to bind CUDA context during NvencEncoder drop: {:?}. \
+                 GPU resources may leak.",
+                e
+            );
+            return; // Don't try to drop buffers if context binding failed
+        }
+
+        // Explicitly drop buffers BEFORE session by setting Options to None.
+        // This ensures proper cleanup order: buffers reference the session's encoder,
+        // so they must be destroyed first.
+        for buf in &mut self.input_buffers {
+            *buf = None;
+        }
+        for buf in &mut self.output_bitstreams {
+            *buf = None;
+        }
+        // session drops automatically when this function returns
+    }
+}
 
 impl NvencEncoder {
     /// Create a new NVENC encoder
@@ -248,8 +287,11 @@ impl NvencEncoder {
             )))
         })?;
 
+        // Clone the context Arc - we need to keep a reference for binding before operations
+        let cuda_ctx_for_encoder = cuda_ctx.clone();
+
         // Create NVENC encoder with CUDA device
-        let encoder = Encoder::initialize_with_cuda(cuda_ctx).map_err(|e| {
+        let encoder = Encoder::initialize_with_cuda(cuda_ctx_for_encoder).map_err(|e| {
             HardwareEncoderError::from(NvencError::ApiInitFailed(format!(
                 "Failed to initialize NVENC: {}",
                 e
@@ -330,19 +372,20 @@ impl NvencEncoder {
             .preset_guid(nvenc_preset.to_guid())
             .tuning_info(tuning.to_nvenc_tuning())
             .framerate(30, 1)
-            .display_aspect_ratio(width, height)
-            .enable_picture_type_decision()
+            // Note: display_aspect_ratio and enable_picture_type_decision removed for compatibility
             .encode_config(&mut encode_config);
 
-        // Start session
-        let session = encoder.start_session(buffer_format, init_params).map_err(|e| {
+        // Start session - Box IMMEDIATELY to prevent move-invalidation
+        // The nvidia-video-codec-sdk types contain internal pointers that become
+        // invalid when moved. Boxing keeps them at a stable heap address.
+        let session = Box::new(encoder.start_session(buffer_format, init_params).map_err(|e| {
             HardwareEncoderError::from(NvencError::SessionCreationFailed(format!(
                 "Failed to start session: {}",
                 e
             )))
-        })?;
+        })?);
 
-        // Create input/output buffers
+        // Create input/output buffers - each wrapped in Option<Box> for move safety
         // SAFETY: We're extending the lifetime of buffers/bitstreams to 'static.
         // This is safe because we ensure they are dropped before the session.
         // The Session owns the Encoder, so the lifetime relationships are:
@@ -359,7 +402,8 @@ impl NvencEncoder {
             })?;
             // SAFETY: buffer lifetime is tied to session which we own
             let input: Buffer<'static> = unsafe { std::mem::transmute(input) };
-            input_buffers.push(input);
+            // Box to prevent move-invalidation
+            input_buffers.push(Some(Box::new(input)));
 
             let output = session.create_output_bitstream().map_err(|e| {
                 HardwareEncoderError::from(NvencError::BitstreamError(format!(
@@ -369,7 +413,8 @@ impl NvencEncoder {
             })?;
             // SAFETY: bitstream lifetime is tied to session which we own
             let output: Bitstream<'static> = unsafe { std::mem::transmute(output) };
-            output_bitstreams.push(output);
+            // Box to prevent move-invalidation
+            output_bitstreams.push(Some(Box::new(output)));
         }
 
         info!(
@@ -381,9 +426,9 @@ impl NvencEncoder {
         let stats = HardwareEncoderStats::new("nvenc", preset.bitrate_kbps());
 
         Ok(Self {
-            session,
             input_buffers,
             output_bitstreams,
+            cuda_ctx,
             current_buffer: 0,
             cached_sps_pps: None,
             width,
@@ -395,6 +440,7 @@ impl NvencEncoder {
             force_idr: true, // First frame is always IDR
             gop_size,
             stats,
+            session, // MUST BE LAST for drop order safety
         })
     }
 
@@ -477,6 +523,13 @@ impl HardwareEncoder for NvencEncoder {
     ) -> HardwareEncoderResult<Option<H264Frame>> {
         let timer = EncodeTimer::start();
 
+        // Bind CUDA context to this thread before NVENC operations
+        // This is critical - CUDA contexts are thread-local and must be bound
+        // before any NVENC API calls, including in Drop
+        self.cuda_ctx.bind_to_thread().map_err(|e| {
+            HardwareEncoderError::EncodeFailed(format!("Failed to bind CUDA context: {:?}", e))
+        })?;
+
         // Validate dimensions
         if width != self.width || height != self.height {
             return Err(HardwareEncoderError::InvalidDimensions {
@@ -505,12 +558,17 @@ impl HardwareEncoder for NvencEncoder {
         // Determine if this should be an IDR frame
         let is_idr = self.force_idr || (self.frame_count % self.gop_size as u64 == 0);
 
-        // Get current buffers
+        // Get current buffer index
         let buf_idx = self.current_buffer;
         self.current_buffer = (self.current_buffer + 1) % NUM_BUFFERS;
 
-        let input_buffer = &mut self.input_buffers[buf_idx];
-        let output_bitstream = &mut self.output_bitstreams[buf_idx];
+        // Get buffer references - unwrap Option and deref Box
+        let input_buffer = self.input_buffers[buf_idx]
+            .as_mut()
+            .ok_or_else(|| HardwareEncoderError::EncodeFailed("Input buffer was dropped".to_string()))?;
+        let output_bitstream = self.output_bitstreams[buf_idx]
+            .as_mut()
+            .ok_or_else(|| HardwareEncoderError::EncodeFailed("Output bitstream was dropped".to_string()))?;
 
         // Lock input buffer and write BGRA data
         {
@@ -536,7 +594,7 @@ impl HardwareEncoder for NvencEncoder {
 
         // Encode the frame
         self.session
-            .encode_picture(input_buffer, output_bitstream, params)
+            .encode_picture(&mut **input_buffer, &mut **output_bitstream, params)
             .map_err(|e| {
                 HardwareEncoderError::EncodeFailed(format!("NVENC encode failed: {}", e))
             })?;

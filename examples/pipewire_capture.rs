@@ -33,16 +33,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("================================");
 
     // Create configuration
-    let config = Arc::new(Config::default_config()?);
+    let config = Config::default_config()?;
+    let portal_config = config.to_portal_config();
 
     // Create portal manager
     tracing::info!("Creating portal manager...");
-    let portal = PortalManager::new(&config).await?;
+    let portal = PortalManager::new(portal_config).await?;
 
     // Create portal session (this will trigger permission dialog)
     tracing::info!("Creating portal session...");
     tracing::info!("A permission dialog should appear - please grant screen capture permission");
-    let session = portal.create_session().await?;
+    let session_id = format!("pipewire-capture-{}", uuid::Uuid::new_v4());
+    let session = portal.create_session(session_id, None).await?;
 
     tracing::info!("Portal session created successfully");
     tracing::info!("  Session ID: {}", session.session_id());
@@ -190,7 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Cleanup
     tracing::info!("Cleaning up...");
     connection.disconnect().await?;
-    session.close().await?;
+    session.close();
 
     tracing::info!("Example completed successfully");
 

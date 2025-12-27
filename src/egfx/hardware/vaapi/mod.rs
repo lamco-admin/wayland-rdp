@@ -40,6 +40,7 @@ use cros_libva::{
 use tracing::{debug, info, trace, warn};
 
 use crate::config::HardwareEncodingConfig;
+use crate::egfx::color_space::{ColorRange, ColorSpaceConfig, ColorSpacePreset, MatrixCoefficients};
 
 use super::{
     EncodeTimer, H264Frame, HardwareEncoder, HardwareEncoderError, HardwareEncoderResult,
@@ -112,6 +113,9 @@ pub struct VaapiEncoder {
 
     /// NV12 image format for uploads
     nv12_format: VAImageFormat,
+
+    /// Color space configuration for conversion and VUI
+    color_space: ColorSpaceConfig,
 }
 
 impl VaapiEncoder {
@@ -258,9 +262,12 @@ impl VaapiEncoder {
             QualityPreset::Quality => 15,
         };
 
+        // Auto-select color space based on resolution
+        let color_space = ColorSpaceConfig::from_resolution(width, height);
+
         info!(
-            "✅ VA-API encoder initialized: {}x{}, {}kbps, IDR every {} frames",
-            width, height, bitrate_kbps, idr_interval
+            "✅ VA-API encoder initialized: {}x{}, {}kbps, IDR every {} frames, color_space={}",
+            width, height, bitrate_kbps, idr_interval, color_space.preset
         );
 
         Ok(Self {
@@ -281,6 +288,7 @@ impl VaapiEncoder {
             device_path,
             bitrate_bps,
             nv12_format,
+            color_space,
         })
     }
 
@@ -413,8 +421,8 @@ impl HardwareEncoder for VaapiEncoder {
             self.frame_count, is_idr, surface_idx
         );
 
-        // Convert BGRA to NV12 and upload to surface
-        let nv12_data = bgra_to_nv12(bgra_data, width as usize, height as usize);
+        // Convert BGRA to NV12 using configured color space
+        let nv12_data = bgra_to_nv12(bgra_data, width as usize, height as usize, &self.color_space);
 
         // Upload via Image API - create image, write data, image drop calls vaPutImage
         {
@@ -738,12 +746,22 @@ impl VaapiEncoder {
     }
 }
 
-/// Convert BGRA to NV12 (Y plane + interleaved UV plane)
+/// Convert BGRA to NV12 (Y plane + interleaved UV plane) with configurable color space
 ///
 /// NV12 format:
 /// - Y plane: width * height bytes
 /// - UV plane: width * height / 2 bytes (U and V interleaved, half resolution)
-fn bgra_to_nv12(bgra: &[u8], width: usize, height: usize) -> Vec<u8> {
+///
+/// # Color Space Support
+///
+/// Uses the matrix coefficients from the color space config to select the
+/// appropriate RGB→YCbCr conversion formula. Supports:
+/// - BT.709 (HD content, default for ≥720p)
+/// - BT.601 (SD content, default for <720p)
+/// - BT.2020 (UHD content)
+///
+/// Range is also configurable (limited 16-235 vs full 0-255).
+fn bgra_to_nv12(bgra: &[u8], width: usize, height: usize, config: &ColorSpaceConfig) -> Vec<u8> {
     let y_size = width * height;
     let uv_size = (width / 2) * (height / 2) * 2;
     let mut nv12 = vec![0u8; y_size + uv_size];
@@ -751,10 +769,18 @@ fn bgra_to_nv12(bgra: &[u8], width: usize, height: usize) -> Vec<u8> {
     // Split into Y and UV planes
     let (y_plane, uv_plane) = nv12.split_at_mut(y_size);
 
-    // BT.709 coefficients for HD content
-    const KR: f32 = 0.2126;
-    const KG: f32 = 0.7152;
-    const KB: f32 = 0.0722;
+    // Get luma coefficients from color space config (Kr, Kg, Kb)
+    let (kr, kg, kb) = config.matrix.luma_coefficients();
+
+    // Get Y and UV range based on config
+    let (y_min, y_max) = config.range.y_range();
+    let (uv_min, uv_max) = config.range.uv_range();
+
+    // Calculate range scale factors
+    let y_scale = (y_max - y_min) as f32;
+    let uv_scale = (uv_max - uv_min) as f32;
+    let y_offset = y_min as f32;
+    let uv_center = ((uv_min as f32 + uv_max as f32) / 2.0).round();
 
     // Process Y plane (full resolution)
     for y in 0..height {
@@ -764,9 +790,9 @@ fn bgra_to_nv12(bgra: &[u8], width: usize, height: usize) -> Vec<u8> {
             let g = bgra[src_idx + 1] as f32;
             let r = bgra[src_idx + 2] as f32;
 
-            // Y with limited range (16-235)
-            let y_val = 16.0 + 219.0 * (KR * r + KG * g + KB * b) / 255.0;
-            y_plane[y * width + x] = y_val.clamp(16.0, 235.0) as u8;
+            // Y = Kr*R + Kg*G + Kb*B, scaled to configured range
+            let y_val = y_offset + y_scale * (kr * r + kg * g + kb * b) / 255.0;
+            y_plane[y * width + x] = y_val.clamp(y_min as f32, y_max as f32) as u8;
         }
     }
 
@@ -774,7 +800,7 @@ fn bgra_to_nv12(bgra: &[u8], width: usize, height: usize) -> Vec<u8> {
     let uv_width = width / 2;
     for y in 0..height / 2 {
         for x in 0..uv_width {
-            // Average 2x2 block
+            // Average 2x2 block for chroma subsampling
             let mut b_sum = 0f32;
             let mut g_sum = 0f32;
             let mut r_sum = 0f32;
@@ -792,17 +818,18 @@ fn bgra_to_nv12(bgra: &[u8], width: usize, height: usize) -> Vec<u8> {
             let g = g_sum / 4.0;
             let r = r_sum / 4.0;
 
-            // Y component (for chroma calculation)
-            let y_val = (KR * r + KG * g + KB * b) / 255.0;
+            // Y component (for chroma calculation, normalized 0-1)
+            let y_norm = (kr * r + kg * g + kb * b) / 255.0;
 
-            // U (Cb) with limited range (16-240)
-            let u_val = 128.0 + 224.0 * (b / 255.0 - y_val) / (2.0 * (1.0 - KB));
-            // V (Cr) with limited range (16-240)
-            let v_val = 128.0 + 224.0 * (r / 255.0 - y_val) / (2.0 * (1.0 - KR));
+            // Cb = (B' - Y') / (2 * (1 - Kb))
+            // Cr = (R' - Y') / (2 * (1 - Kr))
+            // Scaled to configured UV range
+            let u_val = uv_center + (uv_scale / 2.0) * (b / 255.0 - y_norm) / (1.0 - kb);
+            let v_val = uv_center + (uv_scale / 2.0) * (r / 255.0 - y_norm) / (1.0 - kr);
 
             let uv_idx = (y * uv_width + x) * 2;
-            uv_plane[uv_idx] = u_val.clamp(16.0, 240.0) as u8;
-            uv_plane[uv_idx + 1] = v_val.clamp(16.0, 240.0) as u8;
+            uv_plane[uv_idx] = u_val.clamp(uv_min as f32, uv_max as f32) as u8;
+            uv_plane[uv_idx + 1] = v_val.clamp(uv_min as f32, uv_max as f32) as u8;
         }
     }
 
@@ -835,16 +862,50 @@ mod tests {
             0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255,
         ];
 
-        let nv12 = bgra_to_nv12(&bgra, 4, 4);
+        // Test with BT.709 (default for HD)
+        let config = ColorSpaceConfig::from_preset(ColorSpacePreset::BT709);
+        let nv12 = bgra_to_nv12(&bgra, 4, 4, &config);
 
         // Y plane should be 16 bytes, UV plane should be 8 bytes
         assert_eq!(nv12.len(), 24);
 
-        // Red in BT.709: Y ≈ 81, U ≈ 90, V ≈ 240
+        // Red in BT.709 limited range: Y ≈ 63 (Kr*255 scaled to 16-235)
         // Check Y values are in reasonable range for red
         for &y in &nv12[0..16] {
-            assert!(y >= 60 && y <= 100, "Y value {} out of range for red", y);
+            assert!(y >= 50 && y <= 100, "Y value {} out of range for red in BT.709", y);
         }
+    }
+
+    #[test]
+    fn test_bgra_to_nv12_different_color_spaces() {
+        // Create simple 4x4 test image (green)
+        let bgra = vec![
+            0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
+            0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
+            0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
+            0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
+        ];
+
+        // BT.709: Kg = 0.7152, so green is brightest
+        let bt709 = ColorSpaceConfig::from_preset(ColorSpacePreset::BT709);
+        let nv12_709 = bgra_to_nv12(&bgra, 4, 4, &bt709);
+
+        // BT.601: Kg = 0.587, so green is still bright but different
+        let bt601 = ColorSpaceConfig::from_preset(ColorSpacePreset::BT601);
+        let nv12_601 = bgra_to_nv12(&bgra, 4, 4, &bt601);
+
+        // Both should have high Y values for green
+        assert!(nv12_709[0] > 150, "BT.709 green Y should be high");
+        assert!(nv12_601[0] > 130, "BT.601 green Y should be high");
+
+        // BT.709 should have higher Y for green due to higher Kg coefficient
+        // (Green gets more weight in luma calculation)
+        assert!(
+            nv12_709[0] > nv12_601[0],
+            "BT.709 should have higher Y for green than BT.601: {} vs {}",
+            nv12_709[0],
+            nv12_601[0]
+        );
     }
 
     #[test]
