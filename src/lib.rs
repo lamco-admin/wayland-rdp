@@ -133,6 +133,26 @@ pub mod performance;
 /// making cursor movement feel instant even with 100ms+ network latency.
 pub mod cursor;
 
+/// Service Advertisement Registry (Premium)
+///
+/// This module bridges Wayland compositor capabilities to RDP clients through
+/// a unified registry that translates detected features into RDP-compatible
+/// service advertisements.
+///
+/// Key features:
+/// - **ServiceRegistry**: Central registry of all advertised services
+/// - **ServiceLevel**: Guarantee levels (Guaranteed/BestEffort/Degraded/Unavailable)
+/// - **WaylandFeature**: Detected Wayland capabilities (damage tracking, DMA-BUF, etc.)
+/// - **RdpCapability**: Translated RDP capability sets
+///
+/// The registry enables runtime decisions based on what's actually available:
+/// ```ignore
+/// if registry.service_level(ServiceId::DamageTracking) >= ServiceLevel::BestEffort {
+///     adaptive_fps.enable_activity_detection();
+/// }
+/// ```
+pub mod services;
+
 // =============================================================================
 // Re-exports from published lamco crates (for convenience)
 // =============================================================================
