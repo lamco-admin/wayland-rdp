@@ -340,10 +340,10 @@ pub struct EgfxConfig {
     pub avc444_aux_change_threshold: f32,
 
     /// Force auxiliary IDR when reintroducing after omission
-    /// true: Safe mode, always IDR (recommended)
-    /// false: Allow P-frames (experimental, may reduce quality)
-    /// Default: true
-    #[serde(default = "default_true")]
+    /// true: Safe mode, but with single encoder forces Main to IDR too!
+    /// false: Required for single encoder to allow Main P-frames (PRODUCTION)
+    /// Default: false
+    #[serde(default = "default_false")]
     pub avc444_force_aux_idr_on_return: bool,
 }
 
