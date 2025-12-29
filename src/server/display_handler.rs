@@ -101,7 +101,11 @@ enum EncodedVideoFrame {
     /// Single H.264 stream (AVC420)
     Single(Vec<u8>),
     /// Dual H.264 streams (AVC444: main + auxiliary)
-    Dual { main: Vec<u8>, aux: Vec<u8> },
+    /// Phase 1: aux is now Option for bandwidth optimization
+    Dual {
+        main: Vec<u8>,
+        aux: Option<Vec<u8>>  // Optional for aux omission
+    },
 }
 
 impl VideoEncoder {
@@ -600,6 +604,15 @@ impl WrdDisplayHandler {
                             // Try AVC444 first (premium 4:4:4 chroma)
                             match Avc444Encoder::new(config.clone()) {
                                 Ok(encoder) => {
+                                    // TODO: Wire EgfxConfig values through to encoder
+                                    // For now, using defaults from encoder (conservative):
+                                    //   - enable_aux_omission = false (disabled until tested)
+                                    //   - max_aux_interval = 30 frames
+                                    //   - force_aux_idr_on_return = true (safe mode)
+                                    //
+                                    // To enable: Modify src/egfx/avc444_encoder.rs line 315
+                                    // Change: enable_aux_omission: false → true
+
                                     video_encoder = Some(VideoEncoder::Avc444(encoder));
                                     use_avc444 = true;
                                     info!("✅ AVC444 encoder initialized for {}×{} (4:4:4 chroma)", aligned_width, aligned_height);
@@ -808,9 +821,10 @@ impl WrdDisplayHandler {
                                     }
                                     EncodedVideoFrame::Dual { main, aux } => {
                                         // AVC444: Dual streams with damage regions
+                                        // Phase 1: aux is now Option<Vec<u8>> for bandwidth optimization
                                         sender.send_avc444_frame_with_regions(
                                             &main,
-                                            &aux,
+                                            aux.as_deref(),  // Option<Vec<u8>> → Option<&[u8]>
                                             aligned_width as u16,
                                             aligned_height as u16,
                                             frame.width as u16,

@@ -657,10 +657,16 @@ impl EgfxFrameSender {
     /// Send an AVC444 frame with specific damage regions
     ///
     /// Similar to `send_frame_with_regions` but for AVC444 dual-stream encoding.
+    ///
+    /// # Phase 1: Auxiliary Stream Omission
+    ///
+    /// The `stream2_data` parameter is now Optional. When `None`, IronRDP's
+    /// `send_avc444_frame` will set LC=1 (luma only), instructing the client
+    /// to reuse its cached auxiliary stream for bandwidth optimization.
     pub async fn send_avc444_frame_with_regions(
         &self,
         stream1_data: &[u8],
-        stream2_data: &[u8],
+        stream2_data: Option<&[u8]>,  // Now optional!
         encoded_width: u16,
         encoded_height: u16,
         display_width: u16,
@@ -709,14 +715,18 @@ impl EgfxFrameSender {
             let mut server = self.gfx_server.lock().map_err(|_| SendError::LockFailed)?;
             let channel_id = server.channel_id().ok_or(SendError::NotReady)?;
 
-            // Both streams use the same regions
+            // === PHASE 1: PASS OPTIONAL AUX TO IRONRDP ===
+            // IronRDP's send_avc444_frame accepts Option<&[u8]> for aux stream
+            // - Some(data) → LC=0 (both streams present)
+            // - None → LC=1 (luma only, client reuses previous aux)
+            // This was verified in Step 0 of Phase 1 research
             let frame_id = server
                 .send_avc444_frame(
                     surface_id,
                     stream1_data,
                     &regions,
-                    Some(stream2_data),
-                    Some(&regions),
+                    stream2_data,  // Pass Option<&[u8]> - IronRDP handles it!
+                    stream2_data.map(|_| regions.as_slice()),  // Option<&[Avc420Region]>
                     timestamp_ms,
                 )
                 .ok_or(SendError::Backpressure)?;
