@@ -311,10 +311,56 @@ pub struct EgfxConfig {
     /// Set to false to disable AVC444 globally regardless of codec preference
     #[serde(default = "default_true")]
     pub avc444_enabled: bool,
+
+    // === PHASE 1: AUX OMISSION (BANDWIDTH OPTIMIZATION) ===
+
+    /// Enable auxiliary stream omission for bandwidth optimization
+    /// When true: Implements FreeRDP-style aux omission (LC field)
+    /// When false: Always sends both streams (backward compatible)
+    /// Default: false (for gradual rollout and testing)
+    #[serde(default = "default_false")]
+    pub avc444_enable_aux_omission: bool,
+
+    /// Maximum frames between auxiliary updates (1-120)
+    /// Forces aux refresh even if unchanged for quality assurance
+    /// - 10-20: Responsive to color changes, higher bandwidth
+    /// - 30-40: Balanced (recommended)
+    /// - 60-120: Aggressive omission, static content optimized
+    /// Default: 30 frames (1 second @ 30fps)
+    #[serde(default = "default_aux_interval")]
+    pub avc444_max_aux_interval: u32,
+
+    /// Auxiliary change detection threshold (0.0-1.0)
+    /// Fraction of pixels that must change to trigger aux update
+    /// - 0.0: Any change triggers update
+    /// - 0.05: 5% changed (balanced, recommended)
+    /// - 0.1: 10% changed (aggressive)
+    /// Default: 0.05 (5%)
+    #[serde(default = "default_aux_threshold")]
+    pub avc444_aux_change_threshold: f32,
+
+    /// Force auxiliary IDR when reintroducing after omission
+    /// true: Safe mode, always IDR (recommended)
+    /// false: Allow P-frames (experimental, may reduce quality)
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub avc444_force_aux_idr_on_return: bool,
 }
 
 fn default_avc444_aux_ratio() -> f32 {
     0.5
+}
+
+fn default_aux_interval() -> u32 {
+    30  // 1 second @ 30fps
+}
+
+fn default_aux_threshold() -> f32 {
+    0.05  // 5% pixels changed
+}
+
+fn default_false() -> bool {
+    false
 }
 
 fn default_color_matrix() -> String {
@@ -342,6 +388,11 @@ impl Default for EgfxConfig {
             avc444_aux_bitrate_ratio: 0.5, // Aux gets 50% of main's bitrate
             color_matrix: "auto".to_string(), // Auto-detect based on resolution
             avc444_enabled: true, // Enable AVC444 when client supports it
+            // Phase 1: Aux omission defaults (conservative for gradual rollout)
+            avc444_enable_aux_omission: false,  // Disabled by default, enable after testing
+            avc444_max_aux_interval: 30,        // 1 second @ 30fps
+            avc444_aux_change_threshold: 0.05,  // 5% pixels changed
+            avc444_force_aux_idr_on_return: true,  // Safe mode
         }
     }
 }
