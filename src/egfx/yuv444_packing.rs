@@ -962,26 +962,8 @@ mod tests {
         assert_eq!(frame.total_size(), 1920 * 1080 + 2 * (960 * 540));
     }
 
-    #[test]
-    fn test_interpolate_even_position_center() {
-        // 4×4 plane with values set at odd positions
-        let mut plane = vec![0u8; 16];
-        // Set odd positions: (1,0)=10, (0,1)=20, (1,1)=30, (3,0)=40, ...
-        plane[1] = 10;  // (1, 0)
-        plane[4] = 20;  // (0, 1)
-        plane[5] = 30;  // (1, 1)
-        plane[3] = 40;  // (3, 0)
-        plane[7] = 50;  // (3, 1)
-        plane[12] = 60; // (0, 3)
-        plane[13] = 70; // (1, 3)
-        plane[15] = 80; // (3, 3)
-
-        // Position (0, 0) should average nearby odd positions
-        let result = interpolate_even_position(&plane, 0, 0, 4, 4);
-        // Neighbors at odd positions: (1,0)=10, (0,1)=20, (1,1)=30
-        // Average: (10 + 20 + 30 + 1) / 3 = 20
-        assert_eq!(result, 20);
-    }
+    // NOTE: test_interpolate_even_position_center removed - function was removed
+    // during aux omission refactoring (interpolation no longer used)
 
     #[test]
     fn test_pack_and_unpack_roundtrip() {

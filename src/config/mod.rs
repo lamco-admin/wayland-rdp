@@ -20,6 +20,7 @@ use types::*;
 
 // Re-export types needed by other modules
 pub use types::HardwareEncodingConfig;
+pub use types::{CursorConfig, CursorPredictorConfig};
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +58,9 @@ pub struct Config {
     /// Advanced video configuration
     #[serde(default)]
     pub advanced_video: AdvancedVideoConfig,
+    /// Cursor handling configuration (Premium)
+    #[serde(default)]
+    pub cursor: CursorConfig,
 }
 
 impl Config {
@@ -116,6 +120,8 @@ impl Config {
                 network_threads: 0,
                 buffer_pool_size: 16,
                 zero_copy: true,
+                adaptive_fps: AdaptiveFpsConfig::default(),
+                latency: LatencyConfig::default(),
             },
             logging: LoggingConfig {
                 level: "info".to_string(),
@@ -127,6 +133,7 @@ impl Config {
             hardware_encoding: HardwareEncodingConfig::default(),
             display: DisplayConfig::default(),
             advanced_video: AdvancedVideoConfig::default(),
+            cursor: CursorConfig::default(),
         })
     }
 
@@ -152,10 +159,16 @@ impl Config {
             _ => anyhow::bail!("Invalid encoder: {}", self.video.encoder),
         }
 
-        // Validate cursor mode
+        // Validate cursor mode (video config - legacy)
         match self.video.cursor_mode.as_str() {
             "embedded" | "metadata" | "hidden" => {}
             _ => anyhow::bail!("Invalid cursor mode: {}", self.video.cursor_mode),
+        }
+
+        // Validate cursor config (premium cursor strategies)
+        match self.cursor.mode.as_str() {
+            "metadata" | "painted" | "hidden" | "predictive" => {}
+            _ => anyhow::bail!("Invalid cursor strategy mode: {}", self.cursor.mode),
         }
 
         // Validate EGFX configuration

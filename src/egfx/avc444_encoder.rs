@@ -1004,11 +1004,14 @@ mod tests {
 
         if let Ok(Some(frame)) = result {
             assert!(!frame.stream1_data.is_empty(), "Stream 1 is empty");
-            assert!(!frame.stream2_data.is_empty(), "Stream 2 is empty");
-            assert_eq!(
-                frame.total_size,
-                frame.stream1_data.len() + frame.stream2_data.len()
-            );
+            // stream2_data is Option<Vec<u8>> - may be None with aux omission
+            if let Some(ref stream2) = frame.stream2_data {
+                assert!(!stream2.is_empty(), "Stream 2 is empty");
+                assert_eq!(
+                    frame.total_size,
+                    frame.stream1_data.len() + stream2.len()
+                );
+            }
         }
     }
 
@@ -1234,7 +1237,10 @@ mod tests {
 
         if let Ok(Some(frame)) = result {
             assert!(!frame.stream1_data.is_empty());
-            assert!(!frame.stream2_data.is_empty());
+            // stream2_data is Option<Vec<u8>> - may be None with aux omission
+            if let Some(ref stream2) = frame.stream2_data {
+                assert!(!stream2.is_empty());
+            }
             // 1080p keyframe should be substantial but not enormous
             assert!(frame.total_size > 1000, "1080p frame too small");
             assert!(frame.total_size < 10_000_000, "1080p frame unreasonably large");
@@ -1368,7 +1374,7 @@ mod tests {
         // Test that Avc444Frame derives Debug
         let frame = Avc444Frame {
             stream1_data: vec![1, 2, 3],
-            stream2_data: vec![4, 5, 6],
+            stream2_data: Some(vec![4, 5, 6]),  // Option<Vec<u8>> for aux omission
             is_keyframe: true,
             timestamp_ms: 100,
             total_size: 6,

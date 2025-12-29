@@ -1486,6 +1486,25 @@ impl ClipboardManager {
                 debug!("Unknown image MIME for DIB: {}, passing through", mime_type);
                 portal_data
             }
+        } else if format_id == 17 {
+            // CF_DIBV5 - Windows wants DIBV5 with alpha channel support
+            if mime_type.starts_with("image/png") {
+                info!("🎨 Converting PNG to DIBV5 for Windows (with alpha)");
+                lamco_clipboard_core::image::png_to_dibv5(&portal_data).map_err(|e| {
+                    error!("PNG to DIBV5 conversion failed: {}", e);
+                    ClipboardError::Core(e)
+                })?
+            } else if mime_type.starts_with("image/jpeg") {
+                info!("🎨 Converting JPEG to DIBV5 for Windows");
+                lamco_clipboard_core::image::jpeg_to_dibv5(&portal_data).map_err(|e| {
+                    error!("JPEG to DIBV5 conversion failed: {}", e);
+                    ClipboardError::Core(e)
+                })?
+            } else {
+                // Unsupported MIME for DIBV5, fall back to raw data
+                debug!("Unknown image MIME for DIBV5: {}, passing through", mime_type);
+                portal_data
+            }
         } else if format_id == 0xD011 {
             // CF_PNG - Windows wants PNG
             if mime_type.starts_with("image/png") {
@@ -1903,19 +1922,65 @@ impl ClipboardManager {
 
         // Convert RDP data to Portal format based on requested MIME type
         let portal_data = if requested_mime.starts_with("image/png") {
-            // Portal wants PNG, Windows sent DIB (CF_DIB)
-            info!("🎨 Converting DIB to PNG for Portal");
-            lamco_clipboard_core::image::dib_to_png(&data).map_err(|e| {
-                error!("DIB to PNG conversion failed: {}", e);
-                ClipboardError::Core(e)
-            })?
+            // Portal wants PNG, Windows sent DIB or DIBV5
+            // Auto-detect format based on header size
+            if data.len() >= 4 {
+                let header_size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+                match header_size {
+                    124 => {
+                        // DIBV5 format with alpha channel
+                        info!("🎨 Converting DIBV5 to PNG for Portal (with alpha)");
+                        lamco_clipboard_core::image::dibv5_to_png(&data).map_err(|e| {
+                            error!("DIBV5 to PNG conversion failed: {}", e);
+                            ClipboardError::Core(e)
+                        })?
+                    }
+                    40 => {
+                        // Standard DIB format
+                        info!("🎨 Converting DIB to PNG for Portal");
+                        lamco_clipboard_core::image::dib_to_png(&data).map_err(|e| {
+                            error!("DIB to PNG conversion failed: {}", e);
+                            ClipboardError::Core(e)
+                        })?
+                    }
+                    _ => {
+                        // Unknown header size, try DIBV5 parser which handles both
+                        debug!("Unknown bitmap header size {}, trying auto-detect", header_size);
+                        lamco_clipboard_core::image::dibv5_to_png(&data).map_err(|e| {
+                            error!("Bitmap to PNG conversion failed: {}", e);
+                            ClipboardError::Core(e)
+                        })?
+                    }
+                }
+            } else {
+                error!("Image data too small for bitmap header: {} bytes", data.len());
+                return Err(ClipboardError::Core(lamco_clipboard_core::ClipboardError::ImageDecode(
+                    "Data too small for bitmap".to_string()
+                )));
+            }
         } else if requested_mime.starts_with("image/jpeg") {
-            // Portal wants JPEG, Windows sent DIB
-            info!("🎨 Converting DIB to JPEG for Portal");
-            lamco_clipboard_core::image::dib_to_jpeg(&data).map_err(|e| {
-                error!("DIB to JPEG conversion failed: {}", e);
-                ClipboardError::Core(e)
-            })?
+            // Portal wants JPEG, Windows sent DIB or DIBV5
+            if data.len() >= 4 {
+                let header_size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+                if header_size == 124 {
+                    info!("🎨 Converting DIBV5 to JPEG for Portal");
+                    lamco_clipboard_core::image::dibv5_to_jpeg(&data).map_err(|e| {
+                        error!("DIBV5 to JPEG conversion failed: {}", e);
+                        ClipboardError::Core(e)
+                    })?
+                } else {
+                    info!("🎨 Converting DIB to JPEG for Portal");
+                    lamco_clipboard_core::image::dib_to_jpeg(&data).map_err(|e| {
+                        error!("DIB to JPEG conversion failed: {}", e);
+                        ClipboardError::Core(e)
+                    })?
+                }
+            } else {
+                error!("Image data too small for bitmap header: {} bytes", data.len());
+                return Err(ClipboardError::Core(lamco_clipboard_core::ClipboardError::ImageDecode(
+                    "Data too small for bitmap".to_string()
+                )));
+            }
         } else if requested_mime.starts_with("image/bmp") || requested_mime.starts_with("image/x-bmp") {
             // Portal wants BMP, Windows sent DIB
             info!("🎨 Converting DIB to BMP for Portal");
