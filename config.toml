@@ -131,7 +131,8 @@ qp_default = 23
 [damage_tracking]
 # Enable damage region detection (only encode changed areas)
 # Provides 50-90% bandwidth reduction for static content
-enabled = false
+# Combined with AVC444 aux omission: potential 0.2-0.4 MB/s for static screens
+enabled = true
 
 # Detection method: "pipewire", "diff", "hybrid"
 # pipewire = Use compositor-provided damage hints (if available)
@@ -162,9 +163,10 @@ merge_distance = 32
 # Expected: 70-85% bandwidth reduction (4.3 MB/s → 0.7-1.5 MB/s)
 # Status: Implemented, disabled by default for testing
 
-# Enable auxiliary stream omission (set true after validating)
-# TEST 3A: Disabled - testing P-frames alone first
-avc444_enable_aux_omission = false
+# Enable auxiliary stream omission
+# NOW PROPERLY WIRED: This setting actually controls aux omission!
+# Combined with single encoder + scene change off: Achieves 0.81 MB/s
+avc444_enable_aux_omission = true
 
 # Maximum frames between aux updates (quality assurance refresh)
 # 30 = 1 second @ 30fps (balanced), 60 = 2 seconds (aggressive)
@@ -173,8 +175,10 @@ avc444_max_aux_interval = 30
 # Change detection threshold (Phase 2 feature, currently unused)
 avc444_aux_change_threshold = 0.05
 
-# Force aux IDR when returning after omission (safe mode)
-avc444_force_aux_idr_on_return = true
+# Force aux IDR when returning after omission
+# NOTE: With single encoder, this forces Main to IDR too!
+# MUST be false for proper P-frame operation
+avc444_force_aux_idr_on_return = false
 
 # ============================================================================
 # Hardware Encoding - GPU Acceleration (Premium Feature)
