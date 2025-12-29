@@ -396,7 +396,9 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
     // Pad to 16-row macroblock boundary (required by spec)
     // MS-RDPEGFX: "The auxiliary frame is aligned to multiples of 16×16"
     let padded_height = ((height + 15) / 16) * 16;
-    let mut aux_y = vec![128u8; padded_height * width];
+    // Use explicit allocation + fill to ensure deterministic memory state
+    let mut aux_y = vec![0u8; padded_height * width];
+    aux_y.fill(128);
 
     // B4 and B5 blocks: Pack odd rows from U444 and V444
     //
@@ -460,16 +462,18 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
     let chroma_width = width / 2;
     let chroma_height = height / 2;
 
-    // CRITICAL: Pad chroma planes to 8×8 macroblock boundaries for encoder stability
-    // H.264 YUV420 uses 8×8 chroma macroblocks (corresponding to 16×16 luma)
-    let padded_chroma_width = ((chroma_width + 7) / 8) * 8;
-    let padded_chroma_height = ((chroma_height + 7) / 8) * 8;
+    // CRITICAL FIX: Don't pad aux_u/aux_v!
+    // Previous code padded to 8x8 boundaries but told encoder unpadded stride.
+    // This stride mismatch caused encoder to read wrong memory regions.
+    // Let OpenH264 handle any padding it needs internally.
 
-    // Initialize with neutral chroma (128) for deterministic padding
-    let mut aux_u = vec![128u8; padded_chroma_width * padded_chroma_height];
-    let mut aux_v = vec![128u8; padded_chroma_width * padded_chroma_height];
+    // Initialize with neutral chroma (128) for deterministic state
+    let mut aux_u = vec![0u8; chroma_width * chroma_height];
+    let mut aux_v = vec![0u8; chroma_width * chroma_height];
+    aux_u.fill(128);
+    aux_v.fill(128);
 
-    // Fill actual data (not padding)
+    // Fill actual data with UNPADDED stride (matches what we tell encoder)
     for cy in 0..chroma_height {
         let y = cy * 2;  // Even row in source (0, 2, 4, 6, ...)
 
@@ -477,14 +481,23 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
             let x = cx * 2 + 1;  // Odd column in source (1, 3, 5, 7, ...)
             let idx = y * width + x;
 
-            // Write to padded buffer
-            let out_idx = cy * padded_chroma_width + cx;
+            // Write to buffer with UNPADDED stride (matches strides() return value)
+            let out_idx = cy * chroma_width + cx;  // ← Use chroma_width, not padded!
 
             // B6: Sample U444 at (odd_col, even_row)
             aux_u[out_idx] = yuv444.u[idx];
 
             // B7: Sample V444 at (odd_col, even_row)
             aux_v[out_idx] = yuv444.v[idx];
+
+            // DIAGNOSTIC: Log the cycling position
+            if width == 1280 && height == 800 && out_idx == 39204 {
+                use tracing::debug;
+                debug!("🔍 PACKING aux_u[{}] (cy={}, cx={}) ← yuv444.u[{}] (x={}, y={}): value={}",
+                       out_idx, cy, cx, idx, x, y, yuv444.u[idx]);
+                debug!("🔍 PACKING aux_v[{}] (cy={}, cx={}) ← yuv444.v[{}] (x={}, y={}): value={}",
+                       out_idx, cy, cx, idx, x, y, yuv444.v[idx]);
+            }
         }
     }
 
@@ -549,7 +562,7 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
             // Sample auxiliary U/V chroma at this position
             let chroma_x = x / 2;
             let chroma_y = y / 2;
-            let chroma_idx = chroma_y * padded_chroma_width + chroma_x;
+            let chroma_idx = chroma_y * chroma_width + chroma_x;  // Use actual stride
             if chroma_idx < aux_u.len() {
                 debug!("  Aux U420: {:3}, Aux V420: {:3}", aux_u[chroma_idx], aux_v[chroma_idx]);
 
@@ -567,11 +580,8 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
         debug!("═══════════════════════════════════════════");
     }
 
-    // CRITICAL: Do NOT trim padding! Encoder needs deterministic buffer sizes.
-    // For dimensions that are already 16-aligned (like 1280×800), padding size equals actual size.
-    // But we must avoid the `.to_vec()` allocation which can introduce non-determinism.
-    //
-    // Note: We resize aux_y to remove macroblock padding but keep memory deterministic
+    // Trim aux_y to actual frame size (remove 16-row macroblock padding)
+    // This ensures aux_y size matches what we tell the encoder (height * width)
     aux_y.truncate(height * width);
 
     // DIAGNOSTIC: Compute hash AFTER truncate so we only hash what OpenH264 sees
@@ -585,8 +595,10 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
         let frame_hash = hasher.finish();
 
         use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::{Mutex, OnceLock};
         static PREV_HASH: AtomicU64 = AtomicU64::new(0);
         static FRAME_NUM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        static PREV_BUFFERS: OnceLock<Mutex<(Vec<u8>, Vec<u8>, Vec<u8>)>> = OnceLock::new();
 
         let frame_num = FRAME_NUM.fetch_add(1, Ordering::Relaxed);
         let prev = PREV_HASH.swap(frame_hash, Ordering::Relaxed);
@@ -595,15 +607,81 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
             debug!("[Frame #{}] ✅ TEMPORAL STABLE: Auxiliary IDENTICAL (hash: 0x{:016x})", frame_num, frame_hash);
         } else if prev != 0 {
             debug!("[Frame #{}] ⚠️  TEMPORAL CHANGE: Auxiliary DIFFERENT (prev: 0x{:016x}, curr: 0x{:016x})", frame_num, prev, frame_hash);
+
+            // OPTION 2: Find first byte that differs
+            let buffers = PREV_BUFFERS.get_or_init(|| {
+                Mutex::new((Vec::new(), Vec::new(), Vec::new()))
+            });
+
+            if let Ok(mut prev_bufs) = buffers.lock() {
+                let (prev_y, prev_u, prev_v) = &*prev_bufs;
+
+                if !prev_y.is_empty() {
+                    // Check aux_y
+                    if let Some((idx, old_val, new_val)) = aux_y.iter().zip(prev_y.iter())
+                        .enumerate()
+                        .find(|(_, (&a, &b))| a != b)
+                        .map(|(i, (&a, &b))| (i, b, a))
+                    {
+                        let region = if idx < height * width { "DATA" } else { "PADDING" };
+                        debug!("  📍 aux_y[{}] differs: {} (was {}) → {} (now {}) [{}]",
+                               idx, old_val, old_val, new_val, new_val, region);
+                    }
+
+                    // Check aux_u
+                    if let Some((idx, old_val, new_val)) = aux_u.iter().zip(prev_u.iter())
+                        .enumerate()
+                        .find(|(_, (&a, &b))| a != b)
+                        .map(|(i, (&a, &b))| (i, b, a))
+                    {
+                        let data_size = chroma_height * chroma_width;
+                        let region = if idx < data_size { "DATA" } else { "PADDING" };
+                        let row = idx / chroma_width;  // Use actual stride, not padded
+                        let col = idx % chroma_width;
+                        debug!("  📍 aux_u[{}] (row {}, col {}) differs: {} → {} [{}]",
+                               idx, row, col, old_val, new_val, region);
+                        debug!("     (chroma_width={}, data_size={})",
+                               chroma_width, data_size);
+                    }
+
+                    // Check aux_v
+                    if let Some((idx, old_val, new_val)) = aux_v.iter().zip(prev_v.iter())
+                        .enumerate()
+                        .find(|(_, (&a, &b))| a != b)
+                        .map(|(i, (&a, &b))| (i, b, a))
+                    {
+                        let data_size = chroma_height * chroma_width;
+                        let region = if idx < data_size { "DATA" } else { "PADDING" };
+                        let row = idx / chroma_width;  // Use actual stride, not padded
+                        let col = idx % chroma_width;
+                        debug!("  📍 aux_v[{}] (row {}, col {}) differs: {} → {} [{}]",
+                               idx, row, col, old_val, new_val, region);
+                        debug!("     (chroma_width={}, data_size={})",
+                               chroma_width, data_size);
+                    }
+                }
+
+                // Store current buffers for next comparison
+                *prev_bufs = (aux_y.clone(), aux_u.clone(), aux_v.clone());
+            }
         } else {
             debug!("[Frame #{}] 🔵 FIRST FRAME: Auxiliary hash: 0x{:016x}", frame_num, frame_hash);
+
+            // Store first frame buffers
+            let buffers = PREV_BUFFERS.get_or_init(|| {
+                Mutex::new((Vec::new(), Vec::new(), Vec::new()))
+            });
+
+            if let Ok(mut prev_bufs) = buffers.lock() {
+                *prev_bufs = (aux_y.clone(), aux_u.clone(), aux_v.clone());
+            }
         }
     }
 
     Yuv420Frame {
-        y: aux_y,  // Full buffer (padded_height * width, truncated to height * width)
-        u: aux_u,  // Full padded chroma buffer
-        v: aux_v,  // Full padded chroma buffer
+        y: aux_y,  // Luma buffer (height * width)
+        u: aux_u,  // Chroma buffer (chroma_width * chroma_height = width/2 * height/2)
+        v: aux_v,  // Chroma buffer (chroma_width * chroma_height = width/2 * height/2)
         width,
         height,
     }
