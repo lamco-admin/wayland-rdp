@@ -88,11 +88,12 @@ rg "hash:" colorful-test-*.log
 
 ## Current Deployment (2025-12-29)
 
-**Binary MD5**: `f415eec59d996114a97923a11a2ba087`
-**Changes**: ✅ STABLE - All-I workaround active, all hacks reverted
-**Purpose**: Stable working version while planning single encoder architecture
-**Previous MD5**: `4836d38a00ab88d7068942e3327f814f` (Quantization test - STILL corrupted)
-**Status**: ROOT CAUSE IDENTIFIED - Two encoders instead of one (spec violation)
+**Binary MD5**: `6bc1df27435452e7a622286de716862b`
+**Changes**: ✅ STABLE - Reverted to committed stable (dual encoder, all-I workaround)
+**Purpose**: Restore working state after temporal layers protocol errors
+**Previous**: Temporal layers created empty Aux bitstreams → connection errors
+**Config**: Dual encoder (original architecture), both forced to all-I frames
+**Status**: STABLE AND WORKING - Perfect quality confirmed
 
 ## Important Notes
 

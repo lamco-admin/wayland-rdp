@@ -78,6 +78,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::damage::{DamageConfig, DamageDetector, DamageRegion};
 use crate::egfx::{Avc420Encoder, Avc444Encoder, EncoderConfig};
+use crate::performance::{AdaptiveFpsController, LatencyGovernor, LatencyMode, EncodingDecision};
 use crate::pipewire::{PipeWireThreadCommand, PipeWireThreadManager, VideoFrame};
 use crate::portal::StreamInfo;
 use crate::server::egfx_sender::EgfxFrameSender;
@@ -494,7 +495,42 @@ impl WrdDisplayHandler {
         tokio::spawn(async move {
             info!("🎬 Starting display update pipeline task");
 
-            // Initialize frame rate regulator for 30 FPS (optimal RDP performance)
+            // === ADAPTIVE FPS CONTROLLER (Premium Feature) ===
+            // Dynamically adjusts frame rate based on screen activity:
+            // - Static screen: 5 FPS (saves CPU/bandwidth)
+            // - Low activity (typing): 15 FPS
+            // - Medium activity (scrolling): 20 FPS
+            // - High activity (video): 30 FPS
+            let adaptive_fps_enabled = self.config.performance.adaptive_fps.enabled;
+            let adaptive_fps_config = crate::performance::AdaptiveFpsConfig {
+                enabled: adaptive_fps_enabled,
+                min_fps: self.config.performance.adaptive_fps.min_fps,
+                max_fps: self.config.performance.adaptive_fps.max_fps,
+                high_activity_threshold: self.config.performance.adaptive_fps.high_activity_threshold,
+                medium_activity_threshold: self.config.performance.adaptive_fps.medium_activity_threshold,
+                low_activity_threshold: self.config.performance.adaptive_fps.low_activity_threshold,
+                ..Default::default()
+            };
+            let mut adaptive_fps = AdaptiveFpsController::new(adaptive_fps_config);
+
+            // === LATENCY GOVERNOR (Premium Feature) ===
+            // Controls encoding latency vs quality trade-off:
+            // - Interactive (<50ms): Gaming, CAD - encode immediately
+            // - Balanced (<100ms): General desktop - smart batching
+            // - Quality (<300ms): Photo/video editing - accumulate for quality
+            let latency_mode = match self.config.performance.latency.mode.as_str() {
+                "interactive" => LatencyMode::Interactive,
+                "quality" => LatencyMode::Quality,
+                _ => LatencyMode::Balanced,
+            };
+            let mut latency_governor = LatencyGovernor::new(latency_mode);
+
+            info!(
+                "🎛️ Performance features: adaptive_fps={}, latency_mode={:?}",
+                adaptive_fps_enabled, latency_mode
+            );
+
+            // Legacy frame regulator (fallback when adaptive FPS disabled)
             let mut frame_regulator = FrameRateRegulator::new(30);
             let mut frames_sent = 0u64;
             let mut frames_dropped = 0u64;
@@ -558,23 +594,42 @@ impl WrdDisplayHandler {
                     }
                 };
 
-                // FRAME RATE REGULATION: Check if we should send this frame
-                if !frame_regulator.should_send_frame() {
+                // === FRAME RATE REGULATION ===
+                // Use adaptive FPS if enabled, otherwise fall back to fixed 30 FPS
+                let should_process = if adaptive_fps_enabled {
+                    // Adaptive FPS: check based on current activity-driven target
+                    adaptive_fps.should_capture_frame()
+                } else {
+                    // Fixed FPS: use legacy regulator
+                    frame_regulator.should_send_frame()
+                };
+
+                if !should_process {
                     frames_dropped += 1;
                     if frames_dropped % 30 == 0 {
+                        let current_fps = if adaptive_fps_enabled {
+                            adaptive_fps.current_fps()
+                        } else {
+                            30
+                        };
                         info!(
-                            "Frame rate regulation: dropped {} frames, sent {}",
-                            frames_dropped, frames_sent
+                            "Frame rate regulation: dropped {} frames, sent {}, target_fps={}",
+                            frames_dropped, frames_sent, current_fps
                         );
                     }
-                    continue; // Drop this frame to maintain 30 FPS
+                    continue;
                 }
 
                 frames_sent += 1;
                 if frames_sent % 30 == 0 || frames_sent < 10 {
+                    let activity = if adaptive_fps_enabled {
+                        format!(" [activity={:?}, fps={}]", adaptive_fps.activity_level(), adaptive_fps.current_fps())
+                    } else {
+                        String::new()
+                    };
                     info!(
-                        "🎬 Processing frame {} ({}x{}) - sent: {} (egfx: {}), dropped: {}",
-                        frame.frame_id, frame.width, frame.height, frames_sent, egfx_frames_sent, frames_dropped
+                        "🎬 Processing frame {} ({}x{}) - sent: {} (egfx: {}), dropped: {}{}",
+                        frame.frame_id, frame.width, frame.height, frames_sent, egfx_frames_sent, frames_dropped, activity
                     );
                 }
 
@@ -777,6 +832,43 @@ impl WrdDisplayHandler {
                             vec![DamageRegion::full_frame(frame.width, frame.height)]
                         };
 
+                        // Calculate damage ratio for adaptive FPS and latency governor
+                        let damage_ratio = if !damage_regions.is_empty() {
+                            let frame_area = (frame.width * frame.height) as u64;
+                            let damage_area: u64 = damage_regions.iter().map(|r| r.area()).sum();
+                            damage_area as f32 / frame_area as f32
+                        } else {
+                            0.0
+                        };
+
+                        // === UPDATE ADAPTIVE FPS (Premium Feature) ===
+                        // Feed damage ratio to update activity level and target FPS
+                        if adaptive_fps_enabled {
+                            adaptive_fps.update(damage_ratio);
+                        }
+
+                        // === LATENCY GOVERNOR DECISION (Premium Feature) ===
+                        // Decide whether to encode now, batch, or skip based on mode
+                        let encoding_decision = latency_governor.should_encode_frame(damage_ratio);
+                        match encoding_decision {
+                            EncodingDecision::Skip => {
+                                // Governor says skip this frame
+                                frames_dropped += 1;
+                                continue;
+                            }
+                            EncodingDecision::WaitForMore => {
+                                // Governor wants to accumulate more damage
+                                // Don't continue yet - let damage accumulate
+                                continue;
+                            }
+                            EncodingDecision::EncodeNow
+                            | EncodingDecision::EncodeKeepalive
+                            | EncodingDecision::EncodeBatch
+                            | EncodingDecision::EncodeTimeout => {
+                                // Governor says encode - proceed
+                            }
+                        }
+
                         if damage_regions.is_empty() {
                             // No changes detected - skip this frame entirely
                             frames_skipped_damage += 1;
@@ -790,6 +882,10 @@ impl WrdDisplayHandler {
                                     );
                                 }
                             }
+                            // Update adaptive FPS with zero damage
+                            if adaptive_fps_enabled {
+                                adaptive_fps.update(0.0);
+                            }
                             continue;
                         }
 
@@ -797,18 +893,19 @@ impl WrdDisplayHandler {
                         if frames_sent % 60 == 0 {
                             if let Some(ref detector) = damage_detector_opt {
                                 let stats = detector.stats();
-                                let damage_ratio = if !damage_regions.is_empty() {
-                                    let frame_area = (frame.width * frame.height) as u64;
-                                    let damage_area: u64 = damage_regions.iter().map(|r| r.area()).sum();
-                                    (damage_area as f32 / frame_area as f32 * 100.0) as u32
-                                } else {
-                                    0
-                                };
                                 debug!(
-                                    "🎯 Damage: {} regions, {}% of frame, avg {:.1}ms detection",
+                                    "🎯 Damage: {} regions, {:.1}% of frame, avg {:.1}ms detection",
                                     damage_regions.len(),
-                                    damage_ratio,
+                                    damage_ratio * 100.0,
                                     stats.avg_detection_time_ms
+                                );
+                            }
+                            if adaptive_fps_enabled {
+                                debug!(
+                                    "🎛️ Adaptive FPS: activity={:?}, fps={}, latency_mode={:?}",
+                                    adaptive_fps.activity_level(),
+                                    adaptive_fps.current_fps(),
+                                    latency_governor.mode()
                                 );
                             }
                         }
