@@ -44,7 +44,7 @@ lamco-portal = { version = "0.2.2", features = ["dbus-clipboard"] }
 lamco-pipewire = { path = "../lamco-rdp-workspace/crates/lamco-pipewire" }
 lamco-video = "0.1.2"
 lamco-rdp-input = "0.1.1"
-lamco-clipboard-core = { version = "0.4.0", features = ["image"] }
+lamco-clipboard-core = { path = "../lamco-rdp-workspace/crates/lamco-clipboard-core", features = ["image"] }
 # Local path required - tightly coupled to patched ironrdp-cliprdr
 lamco-rdp-clipboard = { path = "../lamco-rdp-workspace/crates/lamco-rdp-clipboard" }
 
@@ -133,8 +133,9 @@ sha2 = "0.10"
 # -----------------------------------------------------------------------------
 # Using fork with VUI support for proper color space signaling (full range)
 # PR: https://github.com/ralfbiedert/openh264-rs/pull/86
-openh264 = { git = "https://github.com/glamberson/openh264-rs.git", branch = "feature/vui-support", optional = true }
-openh264-sys2 = { git = "https://github.com/glamberson/openh264-rs.git", branch = "feature/vui-support", default-features = false, features = ["source"], optional = true }
+# TEMPORARY: Using local path with NUM_REF extension for AVC444 dual-subframe support
+openh264 = { path = "/home/greg/openh264-rs/openh264", optional = true }
+openh264-sys2 = { path = "/home/greg/openh264-rs/openh264-sys2", default-features = false, features = ["source"], optional = true }
 
 # -----------------------------------------------------------------------------
 # Hardware-accelerated encoding (optional)

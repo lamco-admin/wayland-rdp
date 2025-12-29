@@ -119,6 +119,278 @@ pub struct PerformanceConfig {
 
     /// Enable zero-copy operations where possible
     pub zero_copy: bool,
+
+    /// Adaptive FPS configuration (Premium feature)
+    #[serde(default)]
+    pub adaptive_fps: AdaptiveFpsConfig,
+
+    /// Latency governor configuration (Premium feature)
+    #[serde(default)]
+    pub latency: LatencyConfig,
+}
+
+/// Adaptive FPS configuration
+///
+/// Dynamically adjusts frame rate based on screen activity:
+/// - Static screen: 5 FPS (saves CPU/bandwidth)
+/// - Low activity: 15 FPS (typing, cursor)
+/// - Medium activity: 20 FPS (scrolling)
+/// - High activity: 30 FPS (video, dragging)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdaptiveFpsConfig {
+    /// Enable adaptive FPS (false = fixed FPS)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Minimum FPS even for static content
+    #[serde(default = "default_min_fps")]
+    pub min_fps: u32,
+
+    /// Maximum FPS for high activity
+    #[serde(default = "default_max_fps")]
+    pub max_fps: u32,
+
+    /// Damage ratio threshold for high activity (0.0-1.0)
+    #[serde(default = "default_high_activity")]
+    pub high_activity_threshold: f32,
+
+    /// Damage ratio threshold for medium activity (0.0-1.0)
+    #[serde(default = "default_medium_activity")]
+    pub medium_activity_threshold: f32,
+
+    /// Damage ratio threshold for low activity (0.0-1.0)
+    #[serde(default = "default_low_activity")]
+    pub low_activity_threshold: f32,
+}
+
+fn default_min_fps() -> u32 {
+    5
+}
+fn default_max_fps() -> u32 {
+    30
+}
+fn default_high_activity() -> f32 {
+    0.30
+}
+fn default_medium_activity() -> f32 {
+    0.10
+}
+fn default_low_activity() -> f32 {
+    0.01
+}
+
+impl Default for AdaptiveFpsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_fps: 5,
+            max_fps: 30,
+            high_activity_threshold: 0.30,
+            medium_activity_threshold: 0.10,
+            low_activity_threshold: 0.01,
+        }
+    }
+}
+
+/// Latency governor configuration
+///
+/// Professional latency vs quality tradeoffs:
+/// - Interactive: <50ms (gaming, CAD)
+/// - Balanced: <100ms (general desktop)
+/// - Quality: <300ms (photo/video editing)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LatencyConfig {
+    /// Latency mode: "interactive", "balanced", "quality"
+    #[serde(default = "default_latency_mode")]
+    pub mode: String,
+
+    /// Interactive mode max frame delay (ms)
+    #[serde(default = "default_interactive_delay")]
+    pub interactive_max_delay_ms: u32,
+
+    /// Balanced mode max frame delay (ms)
+    #[serde(default = "default_balanced_delay")]
+    pub balanced_max_delay_ms: u32,
+
+    /// Quality mode max frame delay (ms)
+    #[serde(default = "default_quality_delay")]
+    pub quality_max_delay_ms: u32,
+
+    /// Balanced mode damage threshold
+    #[serde(default = "default_balanced_threshold")]
+    pub balanced_damage_threshold: f32,
+
+    /// Quality mode damage threshold
+    #[serde(default = "default_quality_threshold")]
+    pub quality_damage_threshold: f32,
+}
+
+fn default_latency_mode() -> String {
+    "balanced".to_string()
+}
+fn default_interactive_delay() -> u32 {
+    16
+}
+fn default_balanced_delay() -> u32 {
+    33
+}
+fn default_quality_delay() -> u32 {
+    100
+}
+fn default_balanced_threshold() -> f32 {
+    0.02
+}
+fn default_quality_threshold() -> f32 {
+    0.05
+}
+
+impl Default for LatencyConfig {
+    fn default() -> Self {
+        Self {
+            mode: "balanced".to_string(),
+            interactive_max_delay_ms: 16,
+            balanced_max_delay_ms: 33,
+            quality_max_delay_ms: 100,
+            balanced_damage_threshold: 0.02,
+            quality_damage_threshold: 0.05,
+        }
+    }
+}
+
+/// Cursor handling configuration (Premium)
+///
+/// Controls how cursors are rendered and managed:
+/// - Metadata: Client-side rendering (lowest latency)
+/// - Painted: Composited into video frames (maximum compatibility)
+/// - Hidden: No cursor (touch/pen)
+/// - Predictive: Physics-based prediction (compensates for latency)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CursorConfig {
+    /// Cursor rendering mode: "metadata", "painted", "hidden", "predictive"
+    #[serde(default = "default_cursor_mode")]
+    pub mode: String,
+
+    /// Enable automatic mode selection based on latency
+    /// When true, switches to predictive mode if latency exceeds threshold
+    #[serde(default = "default_true")]
+    pub auto_mode: bool,
+
+    /// Latency threshold (ms) above which to enable predictive mode
+    #[serde(default = "default_predictive_threshold")]
+    pub predictive_latency_threshold_ms: u32,
+
+    /// Cursor update rate for separate stream (FPS)
+    #[serde(default = "default_cursor_fps")]
+    pub cursor_update_fps: u32,
+
+    /// Predictor configuration (for predictive mode)
+    #[serde(default)]
+    pub predictor: CursorPredictorConfig,
+}
+
+fn default_cursor_mode() -> String {
+    "metadata".to_string()
+}
+
+fn default_predictive_threshold() -> u32 {
+    100 // ms - enable predictive when latency exceeds this
+}
+
+fn default_cursor_fps() -> u32 {
+    60 // Hz - cursor updates faster than video for responsiveness
+}
+
+impl Default for CursorConfig {
+    fn default() -> Self {
+        Self {
+            mode: "metadata".to_string(),
+            auto_mode: true,
+            predictive_latency_threshold_ms: 100,
+            cursor_update_fps: 60,
+            predictor: CursorPredictorConfig::default(),
+        }
+    }
+}
+
+/// Predictive cursor configuration
+///
+/// Physics-based cursor prediction to compensate for network latency.
+/// Uses velocity and acceleration tracking to predict where the cursor
+/// will be N milliseconds in the future.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CursorPredictorConfig {
+    /// Number of samples to keep in history for velocity calculation
+    #[serde(default = "default_history_size")]
+    pub history_size: usize,
+
+    /// Default lookahead time (ms) for prediction
+    #[serde(default = "default_lookahead_ms")]
+    pub lookahead_ms: f32,
+
+    /// Velocity smoothing factor (0.0-1.0, higher = more responsive)
+    #[serde(default = "default_velocity_smoothing")]
+    pub velocity_smoothing: f32,
+
+    /// Acceleration smoothing factor (0.0-1.0)
+    #[serde(default = "default_accel_smoothing")]
+    pub acceleration_smoothing: f32,
+
+    /// Maximum prediction distance (pixels)
+    /// Prevents cursor from "jumping" too far ahead
+    #[serde(default = "default_max_prediction")]
+    pub max_prediction_distance: i32,
+
+    /// Minimum velocity to apply prediction (pixels/second)
+    /// Below this, cursor stays at actual position
+    #[serde(default = "default_min_velocity")]
+    pub min_velocity_threshold: f32,
+
+    /// Convergence rate when cursor stops (0.0-1.0)
+    /// How quickly predicted position returns to actual when stopped
+    #[serde(default = "default_convergence")]
+    pub stop_convergence_rate: f32,
+}
+
+fn default_history_size() -> usize {
+    8
+}
+
+fn default_lookahead_ms() -> f32 {
+    50.0
+}
+
+fn default_velocity_smoothing() -> f32 {
+    0.4
+}
+
+fn default_accel_smoothing() -> f32 {
+    0.2
+}
+
+fn default_max_prediction() -> i32 {
+    100
+}
+
+fn default_min_velocity() -> f32 {
+    50.0
+}
+
+fn default_convergence() -> f32 {
+    0.5
+}
+
+impl Default for CursorPredictorConfig {
+    fn default() -> Self {
+        Self {
+            history_size: 8,
+            lookahead_ms: 50.0,
+            velocity_smoothing: 0.4,
+            acceleration_smoothing: 0.2,
+            max_prediction_distance: 100,
+            min_velocity_threshold: 50.0,
+            stop_convergence_rate: 0.5,
+        }
+    }
 }
 
 /// Logging configuration

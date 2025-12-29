@@ -121,6 +121,50 @@ impl WrdServer {
         info!("Initializing WRD Server");
         let config = Arc::new(config);
 
+        // === CAPABILITY PROBING ===
+        // Detect compositor and adapt configuration automatically
+        info!("Probing compositor capabilities...");
+        let capabilities = crate::compositor::probe_capabilities()
+            .await
+            .context("Failed to probe compositor capabilities")?;
+
+        // Apply quirks based on detected profile
+        for quirk in &capabilities.profile.quirks {
+            match quirk {
+                crate::compositor::Quirk::RequiresWaylandSession => {
+                    if !crate::compositor::is_wayland_session() {
+                        warn!("⚠️  Not in Wayland session - may have issues");
+                    }
+                }
+                crate::compositor::Quirk::SlowPortalPermissions => {
+                    info!("📋 Increasing portal timeout for slow permissions");
+                    // Note: Portal timeout is handled via capabilities.profile.portal_timeout_ms
+                }
+                crate::compositor::Quirk::PoorDmaBufSupport => {
+                    info!("📋 DMA-BUF support may be limited, using MemFd fallback");
+                }
+                crate::compositor::Quirk::NeedsExplicitCursorComposite => {
+                    info!("📋 Cursor compositing may be needed (no metadata cursor)");
+                }
+                crate::compositor::Quirk::RestartCaptureOnResize => {
+                    info!("📋 Capture will restart on resolution changes");
+                }
+                crate::compositor::Quirk::MultiMonitorPositionQuirk => {
+                    info!("📋 Multi-monitor positions may need adjustment");
+                }
+                _ => {
+                    debug!("Applying quirk: {:?}", quirk);
+                }
+            }
+        }
+
+        info!(
+            "✅ Compositor detection complete: {} (profile: {:?} capture, {:?} buffers)",
+            capabilities.compositor,
+            capabilities.profile.recommended_capture,
+            capabilities.profile.recommended_buffer_type
+        );
+
         // Initialize Portal manager with config mapped from server settings
         info!("Setting up Portal connection");
         let portal_config = config.to_portal_config();
