@@ -85,6 +85,7 @@ use crate::config::Config;
 use crate::input::MonitorInfo as InputMonitorInfo;
 use crate::portal::PortalManager;
 use crate::security::TlsConfig;
+use crate::services::{ServiceId, ServiceLevel, ServiceRegistry};
 
 /// WRD Server
 ///
@@ -164,6 +165,35 @@ impl WrdServer {
             capabilities.profile.recommended_capture,
             capabilities.profile.recommended_buffer_type
         );
+
+        // === SERVICE ADVERTISEMENT ===
+        // Translate compositor capabilities into advertised services
+        let service_registry = ServiceRegistry::from_compositor(capabilities.clone());
+        service_registry.log_summary();
+
+        // Log service-aware premium feature decisions
+        let damage_level = service_registry.service_level(ServiceId::DamageTracking);
+        let cursor_level = service_registry.service_level(ServiceId::MetadataCursor);
+        let dmabuf_level = service_registry.service_level(ServiceId::DmaBufZeroCopy);
+
+        info!("🎛️ Service-based feature configuration:");
+        if damage_level >= ServiceLevel::BestEffort {
+            info!("   ✅ Damage tracking: {} - enabling adaptive FPS", damage_level);
+        } else {
+            info!("   ⚠️ Damage tracking: {} - using frame diff fallback", damage_level);
+        }
+
+        if cursor_level >= ServiceLevel::BestEffort {
+            info!("   ✅ Metadata cursor: {} - client-side rendering", cursor_level);
+        } else {
+            info!("   ⚠️ Metadata cursor: {} - painted cursor mode", cursor_level);
+        }
+
+        if dmabuf_level >= ServiceLevel::Guaranteed {
+            info!("   ✅ DMA-BUF zero-copy: {} - optimal path", dmabuf_level);
+        } else {
+            info!("   ⚠️ DMA-BUF: {} - using memory copy path", dmabuf_level);
+        }
 
         // Initialize Portal manager with config mapped from server settings
         info!("Setting up Portal connection");
