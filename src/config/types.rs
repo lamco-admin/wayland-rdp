@@ -317,8 +317,8 @@ pub struct EgfxConfig {
     /// Enable auxiliary stream omission for bandwidth optimization
     /// When true: Implements FreeRDP-style aux omission (LC field)
     /// When false: Always sends both streams (backward compatible)
-    /// Default: false (for gradual rollout and testing)
-    #[serde(default = "default_false")]
+    /// Default: true (production proven at 0.81 MB/s)
+    #[serde(default = "default_true")]
     pub avc444_enable_aux_omission: bool,
 
     /// Maximum frames between auxiliary updates (1-120)
