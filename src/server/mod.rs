@@ -221,6 +221,7 @@ impl WrdServer {
                 Some(graphics_tx), // Graphics queue for multiplexer
                 Some(gfx_server_handle), // EGFX server handle for H.264 frame sending
                 Some(gfx_handler_state), // EGFX handler state for readiness checks
+                Arc::clone(&config),  // Pass config for feature flags
             )
             .await
             .context("Failed to create display handler")?,

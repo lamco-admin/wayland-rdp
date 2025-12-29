@@ -240,6 +240,9 @@ pub struct WrdDisplayHandler {
     /// Server event sender for routing EGFX messages
     /// Set after server is built (via set_server_event_sender)
     server_event_tx: Arc<RwLock<Option<mpsc::UnboundedSender<ServerEvent>>>>,
+
+    /// Server configuration (for feature flags and settings)
+    config: Arc<crate::config::Config>,
 }
 
 impl WrdDisplayHandler {
@@ -270,6 +273,7 @@ impl WrdDisplayHandler {
         graphics_tx: Option<mpsc::Sender<GraphicsFrame>>,
         gfx_server_handle: Option<Arc<RwLock<Option<GfxServerHandle>>>>,
         gfx_handler_state: Option<Arc<RwLock<Option<HandlerState>>>>,
+        config: Arc<crate::config::Config>,  // Add config parameter
     ) -> Result<Self> {
         let size = Arc::new(RwLock::new(DesktopSize {
             width: initial_width,
@@ -353,6 +357,7 @@ impl WrdDisplayHandler {
             gfx_server_handle,
             gfx_handler_state,
             server_event_tx: Arc::new(RwLock::new(None)),
+            config,  // Store config for feature flags
         })
     }
 
@@ -504,9 +509,26 @@ impl WrdDisplayHandler {
             let mut egfx_checked = false;
             let mut use_avc444 = false; // Track which codec is active for sending
 
-            // Damage detection for bandwidth optimization
+            // === DAMAGE DETECTION (Config-controlled) ===
             // Detects changed screen regions to skip unchanged frames (90%+ bandwidth reduction for static content)
-            let mut damage_detector = DamageDetector::new(DamageConfig::default());
+            // Now properly wired to config.toml damage_tracking section
+            let damage_config = DamageConfig {
+                tile_size: self.config.damage_tracking.tile_size,
+                diff_threshold: self.config.damage_tracking.diff_threshold,
+                pixel_threshold: 4,  // Not in config yet, use default
+                merge_distance: self.config.damage_tracking.merge_distance,
+                min_region_area: 256,  // Not in config yet, use default
+            };
+
+            let mut damage_detector_opt = if self.config.damage_tracking.enabled {
+                debug!("🎯 Damage tracking ENABLED: tile_size={}, threshold={:.2}, merge_distance={}",
+                    damage_config.tile_size, damage_config.diff_threshold, damage_config.merge_distance);
+                Some(DamageDetector::new(damage_config))
+            } else {
+                debug!("🎯 Damage tracking DISABLED via config");
+                None
+            };
+
             let mut frames_skipped_damage = 0u64; // Frames skipped due to no damage
 
             loop {
@@ -603,15 +625,14 @@ impl WrdDisplayHandler {
                         if avc444_supported {
                             // Try AVC444 first (premium 4:4:4 chroma)
                             match Avc444Encoder::new(config.clone()) {
-                                Ok(encoder) => {
-                                    // TODO: Wire EgfxConfig values through to encoder
-                                    // For now, using defaults from encoder (conservative):
-                                    //   - enable_aux_omission = false (disabled until tested)
-                                    //   - max_aux_interval = 30 frames
-                                    //   - force_aux_idr_on_return = true (safe mode)
-                                    //
-                                    // To enable: Modify src/egfx/avc444_encoder.rs line 315
-                                    // Change: enable_aux_omission: false → true
+                                Ok(mut encoder) => {
+                                    // Wire aux omission config from EgfxConfig
+                                    encoder.configure_aux_omission(
+                                        self.config.egfx.avc444_enable_aux_omission,
+                                        self.config.egfx.avc444_max_aux_interval,
+                                        self.config.egfx.avc444_aux_change_threshold,
+                                        self.config.egfx.avc444_force_aux_idr_on_return,
+                                    );
 
                                     video_encoder = Some(VideoEncoder::Avc444(encoder));
                                     use_avc444 = true;
@@ -745,45 +766,51 @@ impl WrdDisplayHandler {
                             continue;
                         }
 
-                        // === DAMAGE DETECTION ===
+                        // === DAMAGE DETECTION (Config-controlled) ===
                         // Detect which regions changed since the last frame
                         // Skip encoding entirely if nothing changed (huge bandwidth savings)
-                        let damage_regions = damage_detector.detect(
-                            &frame.data,
-                            frame.width,
-                            frame.height,
-                        );
+                        let damage_regions = if let Some(ref mut detector) = damage_detector_opt {
+                            // Damage tracking enabled - detect changed regions
+                            detector.detect(&frame.data, frame.width, frame.height)
+                        } else {
+                            // Damage tracking disabled - use full frame
+                            vec![DamageRegion::full_frame(frame.width, frame.height)]
+                        };
 
                         if damage_regions.is_empty() {
                             // No changes detected - skip this frame entirely
                             frames_skipped_damage += 1;
                             if frames_skipped_damage % 100 == 0 {
-                                let stats = damage_detector.stats();
-                                debug!(
-                                    "🎯 Damage tracking: {} frames skipped (no change), {:.1}% bandwidth saved",
-                                    frames_skipped_damage,
-                                    stats.bandwidth_reduction_percent()
-                                );
+                                if let Some(ref detector) = damage_detector_opt {
+                                    let stats = detector.stats();
+                                    debug!(
+                                        "🎯 Damage tracking: {} frames skipped (no change), {:.1}% bandwidth saved",
+                                        frames_skipped_damage,
+                                        stats.bandwidth_reduction_percent()
+                                    );
+                                }
                             }
                             continue;
                         }
 
                         // Log damage stats periodically
                         if frames_sent % 60 == 0 {
-                            let stats = damage_detector.stats();
-                            let damage_ratio = if !damage_regions.is_empty() {
-                                let frame_area = (frame.width * frame.height) as u64;
-                                let damage_area: u64 = damage_regions.iter().map(|r| r.area()).sum();
-                                (damage_area as f32 / frame_area as f32 * 100.0) as u32
-                            } else {
-                                0
-                            };
-                            debug!(
-                                "🎯 Damage: {} regions, {}% of frame, avg {:.1}ms detection",
-                                damage_regions.len(),
-                                damage_ratio,
-                                stats.avg_detection_time_ms
-                            );
+                            if let Some(ref detector) = damage_detector_opt {
+                                let stats = detector.stats();
+                                let damage_ratio = if !damage_regions.is_empty() {
+                                    let frame_area = (frame.width * frame.height) as u64;
+                                    let damage_area: u64 = damage_regions.iter().map(|r| r.area()).sum();
+                                    (damage_area as f32 / frame_area as f32 * 100.0) as u32
+                                } else {
+                                    0
+                                };
+                                debug!(
+                                    "🎯 Damage: {} regions, {}% of frame, avg {:.1}ms detection",
+                                    damage_regions.len(),
+                                    damage_ratio,
+                                    stats.avg_detection_time_ms
+                                );
+                            }
                         }
 
                         // MS-RDPEGFX REQUIRES 16-pixel alignment
@@ -1073,6 +1100,7 @@ impl Clone for WrdDisplayHandler {
             gfx_server_handle: Arc::clone(&self.gfx_server_handle),
             gfx_handler_state: Arc::clone(&self.gfx_handler_state),
             server_event_tx: Arc::clone(&self.server_event_tx),
+            config: Arc::clone(&self.config),  // Clone config Arc
         }
     }
 }

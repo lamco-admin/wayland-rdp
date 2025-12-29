@@ -297,13 +297,15 @@ impl Avc444Encoder {
             // CONFIRMED 2025-12-27: All-keyframes WORKS! P-frames cause lavender corruption
             // Now testing with temporal stability logging to find WHY
             force_all_keyframes: false,  // Re-enabled P-frames with temporal logging
-            // Phase 1: Aux omission defaults (conservative, safe)
+            // Phase 1: Aux omission defaults
+            // NOTE: These are now overridden by configure_aux_omission() called from display_handler
+            // using config.toml values
             last_aux_hash: None,
             frames_since_aux: 0,
-            max_aux_interval: 30,         // 1 second @ 30fps
-            aux_change_threshold: 0.05,   // 5% pixels changed
-            force_aux_idr_on_return: false,  // DISABLED: With single encoder, forces Main too!
-            enable_aux_omission: true,    // ENABLED
+            max_aux_interval: 30,         // Default, overridden by config
+            aux_change_threshold: 0.05,   // Default, overridden by config
+            force_aux_idr_on_return: false,  // Default, overridden by config
+            enable_aux_omission: false,   // Default, overridden by config
         })
     }
 
