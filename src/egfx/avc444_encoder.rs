@@ -215,7 +215,7 @@ impl Avc444Encoder {
             EncoderError::InitFailed(format!("Main OpenH264 encoder init failed: {:?}", e))
         })?;
 
-        // Create auxiliary encoder (same config)
+        // Create auxiliary encoder (same config as main)
         let aux_encoder = Encoder::with_api_config(
             openh264::OpenH264API::from_source(),
             encoder_config,
@@ -319,11 +319,13 @@ impl Avc444Encoder {
             }
         }
 
-        // === DIAGNOSTIC: Force BOTH encoders to all-I ===
-        // Main all-I wasn't enough - auxiliary P-frames also cause corruption!
-        // When content changes, aux P-frame prediction breaks → brown/dark corruption
+        // === WORKAROUND: Force all-I frames until single encoder architecture implemented ===
+        // ROOT CAUSE IDENTIFIED: MS-RDPEGFX requires ONE encoder for both subframes
+        // Our current architecture uses TWO separate encoders → separate DPBs → P-frame corruption
+        // All-I frames work perfectly because they don't use reference frames
+        // TODO: Restructure to use single encoder with interleaved subframe encoding
         self.main_encoder.force_intra_frame();
-        self.aux_encoder.force_intra_frame();  // ADDED: Force aux to all-I too!
+        self.aux_encoder.force_intra_frame();
 
         // Encode main view (full luma + subsampled chroma)
         let main_yuv_slices = YUVSlices::new(
@@ -363,6 +365,16 @@ impl Avc444Encoder {
             matches!(main_bitstream.frame_type(), FrameType::IDR | FrameType::I);
         let aux_is_keyframe =
             matches!(aux_bitstream.frame_type(), FrameType::IDR | FrameType::I);
+
+        // DIAGNOSTIC: Log frame types and sizes for P-frame investigation
+        debug!(
+            "[AVC444 Frame #{}] Main: {:?} ({}B), Aux: {:?} ({}B)",
+            self.frame_count,
+            main_bitstream.frame_type(),
+            stream1_data.len(),
+            aux_bitstream.frame_type(),
+            stream2_data.len()
+        );
 
         // Handle SPS/PPS caching for P-frames (same as Avc420Encoder)
         stream1_data = self.handle_sps_pps_main(stream1_data, main_is_keyframe);

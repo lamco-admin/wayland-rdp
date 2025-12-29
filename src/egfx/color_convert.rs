@@ -223,12 +223,14 @@ pub fn bgra_to_yuv444(
         let frame_num = CONVERT_FRAME_NUM.fetch_add(1, Ordering::Relaxed);
 
         // Sample 5 positions across the screen to find colored areas
+        // PLUS position (329, 122) which corresponds to aux_u[39204] that cycles!
         let positions = [
             (0, 0, "top-left"),
             (640, 400, "center"),
             (1000, 100, "top-right area"),
             (200, 600, "bottom-left"),
             (800, 300, "middle-right"),
+            (329, 122, "🔍 CYCLING POSITION"),  // aux_u[39204] source
         ];
 
         debug!("[Frame #{}] 🎨 COLOR CONVERSION SAMPLES (Matrix::{:?}):", frame_num, matrix);
