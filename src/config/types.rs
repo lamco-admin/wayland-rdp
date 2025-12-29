@@ -388,11 +388,11 @@ impl Default for EgfxConfig {
             avc444_aux_bitrate_ratio: 0.5, // Aux gets 50% of main's bitrate
             color_matrix: "auto".to_string(), // Auto-detect based on resolution
             avc444_enabled: true, // Enable AVC444 when client supports it
-            // Phase 1: Aux omission defaults (conservative for gradual rollout)
-            avc444_enable_aux_omission: false,  // Disabled by default, enable after testing
+            // Phase 1: Aux omission defaults (NOW PRODUCTION DEFAULTS)
+            avc444_enable_aux_omission: true,   // Enabled by default (production proven)
             avc444_max_aux_interval: 30,        // 1 second @ 30fps
             avc444_aux_change_threshold: 0.05,  // 5% pixels changed
-            avc444_force_aux_idr_on_return: true,  // Safe mode
+            avc444_force_aux_idr_on_return: false,  // Must be false for single encoder
         }
     }
 }
