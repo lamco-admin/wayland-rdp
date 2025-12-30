@@ -725,6 +725,7 @@ impl WrdDisplayHandler {
                             enable_skip_frame: true,
                             width: Some(aligned_width),
                             height: Some(aligned_height),
+                            color_space: None, // Auto-select based on resolution
                         };
 
                         // Check if AVC444 is supported by the client

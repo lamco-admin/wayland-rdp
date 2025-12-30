@@ -61,6 +61,7 @@ use openh264::encoder::{
 use openh264::formats::YUVSlices;
 
 use super::color_convert::{bgra_to_yuv444, ColorMatrix};
+use super::color_space::{ColorRange, ColorSpaceConfig};
 use super::encoder::{EncoderConfig, EncoderError, EncoderResult};
 use super::yuv444_packing::pack_dual_views;
 
@@ -173,7 +174,10 @@ pub struct Avc444Encoder {
     /// Configuration
     config: EncoderConfig,
 
-    /// Color matrix for RGB→YUV conversion
+    /// Color space configuration (includes matrix + VUI parameters)
+    color_space: ColorSpaceConfig,
+
+    /// Color matrix for RGB→YUV conversion (derived from color_space)
     color_matrix: ColorMatrix,
 
     /// Frame counter
@@ -245,9 +249,18 @@ impl Avc444Encoder {
     ///
     /// Initialized AVC444 encoder with two OpenH264 instances
     pub fn new(config: EncoderConfig) -> EncoderResult<Self> {
-        // Use BT.709 full range for HD content (1280×800 is HD resolution)
-        // OpenH264 limited range was causing color differences
-        let color_matrix = ColorMatrix::BT709;
+        // Determine color space configuration:
+        // 1. Use explicit config if provided
+        // 2. Otherwise, auto-select based on resolution (BT.709 for HD, BT.601 for SD)
+        let color_space = config.color_space.unwrap_or_else(|| {
+            match (config.width, config.height) {
+                (Some(w), Some(h)) if w >= 1280 && h >= 720 => ColorSpaceConfig::BT709_FULL,
+                (Some(_), Some(_)) => ColorSpaceConfig::BT601_LIMITED,
+                // Default to BT.709 when dimensions unknown (will be HD in most cases)
+                _ => ColorSpaceConfig::BT709_FULL,
+            }
+        });
+        let color_matrix = color_space.matrix;
 
         // Calculate appropriate H.264 level if dimensions provided
         let level = config
@@ -255,13 +268,21 @@ impl Avc444Encoder {
             .zip(config.height)
             .map(|(w, h)| super::h264_level::H264Level::for_config(w, h, config.max_fps));
 
-        // DIAGNOSTIC: No VUI - test if Windows expects limited range by default
+        // Build VuiConfig from ColorSpaceConfig for H.264 SPS signaling
+        // Map our color space configuration to openh264's VuiConfig presets
+        let vui = match (color_space.matrix, color_space.range) {
+            (ColorMatrix::BT709, ColorRange::Full) => VuiConfig::bt709_full(),
+            (ColorMatrix::BT709, ColorRange::Limited) => VuiConfig::bt709(),
+            (ColorMatrix::BT601, _) | (ColorMatrix::OpenH264, _) => VuiConfig::bt601(),
+        };
+
         let mut encoder_config = OpenH264Config::new()
             .bitrate(BitRate::from_bps(config.bitrate_kbps * 1000))
             .max_frame_rate(FrameRate::from_hz(config.max_fps))
             .skip_frames(config.enable_skip_frame)
             .usage_type(UsageType::ScreenContentRealTime)
-            .scene_change_detect(false);  // Disable auto-IDR for bandwidth optimization
+            .scene_change_detect(false)  // Disable auto-IDR for bandwidth optimization
+            .vui(vui);  // Signal color space to decoder
 
         // Set level if we know dimensions
         if let Some(level) = level {
@@ -278,14 +299,21 @@ impl Avc444Encoder {
         })?;
 
         debug!(
-            "Created AVC444 SINGLE encoder: {:?} matrix, {}kbps, level={:?}",
-            color_matrix, config.bitrate_kbps, level
+            "Created AVC444 SINGLE encoder: {} color space, {}kbps, level={:?}",
+            color_space.description(), config.bitrate_kbps, level
         );
-        info!("🔧 AVC444: Using SINGLE encoder for both Main and Aux (spec-compliant)");
+        info!(
+            "🔧 AVC444: VUI enabled ({}, primaries={}, transfer={}, matrix={})",
+            if color_space.range == ColorRange::Full { "full range" } else { "limited range" },
+            color_space.vui_colour_primaries(),
+            color_space.vui_transfer_characteristics(),
+            color_space.vui_matrix_coefficients()
+        );
 
         Ok(Self {
             encoder,
             config,
+            color_space,
             color_matrix,
             frame_count: 0,
             bytes_encoded: 0,
@@ -310,10 +338,23 @@ impl Avc444Encoder {
     }
 
     /// Create encoder with specific color matrix
+    ///
+    /// **Deprecated**: Use `EncoderConfig::with_color_space()` instead for full VUI support.
+    /// This method only affects the conversion matrix, not VUI signaling.
+    #[deprecated(note = "Use EncoderConfig::with_color_space() for full VUI support")]
     pub fn with_color_matrix(config: EncoderConfig, matrix: ColorMatrix) -> EncoderResult<Self> {
         let mut encoder = Self::new(config)?;
         encoder.color_matrix = matrix;
         Ok(encoder)
+    }
+
+    /// Create encoder with specific color space configuration
+    ///
+    /// This is the preferred method for setting color space, as it configures
+    /// both the conversion matrix AND VUI signaling in the H.264 stream.
+    pub fn with_color_space(mut config: EncoderConfig, color_space: ColorSpaceConfig) -> EncoderResult<Self> {
+        config.color_space = Some(color_space);
+        Self::new(config)
     }
 
     /// Configure Phase 1 auxiliary omission parameters
@@ -885,6 +926,11 @@ impl Avc444Encoder {
         self.color_matrix
     }
 
+    /// Get the color space configuration
+    pub fn color_space(&self) -> &ColorSpaceConfig {
+        &self.color_space
+    }
+
     /// Get the current H.264 level
     pub fn level(&self) -> Option<super::h264_level::H264Level> {
         self.current_level
@@ -925,6 +971,11 @@ impl Avc444Encoder {
 
     pub fn color_matrix(&self) -> ColorMatrix {
         ColorMatrix::BT709
+    }
+
+    pub fn color_space(&self) -> &ColorSpaceConfig {
+        // Return a static reference for the stub
+        &ColorSpaceConfig::BT709_FULL
     }
 
     pub fn level(&self) -> Option<super::h264_level::H264Level> {

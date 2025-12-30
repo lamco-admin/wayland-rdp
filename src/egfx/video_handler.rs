@@ -167,6 +167,7 @@ impl EgfxVideoHandler {
             enable_skip_frame: config.enable_frame_skip,
             width: Some(initial_width as u16),
             height: Some(initial_height as u16),
+            color_space: None, // Auto-select based on resolution
         };
 
         let encoder = Avc420Encoder::new(encoder_config)?;
