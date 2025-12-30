@@ -99,6 +99,22 @@ impl EncoderConfig {
         }
     }
 
+    /// Create config for high performance mode (60fps)
+    ///
+    /// Optimized for powerful systems with hardware encoding:
+    /// - 60 FPS for smooth motion
+    /// - Higher bitrate to maintain quality at higher framerate
+    /// - Requires VAAPI/NVENC for best results
+    pub fn high_performance() -> Self {
+        Self {
+            bitrate_kbps: 8000,
+            max_fps: 60.0,
+            enable_skip_frame: true,
+            width: None,
+            height: None,
+        }
+    }
+
     /// Create config for low bandwidth
     pub fn low_bandwidth() -> Self {
         Self {

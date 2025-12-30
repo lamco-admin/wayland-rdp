@@ -77,6 +77,7 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::damage::{DamageConfig, DamageDetector, DamageRegion};
+use crate::services::{ServiceId, ServiceLevel, ServiceRegistry};
 use crate::egfx::{Avc420Encoder, Avc444Encoder, EncoderConfig};
 use crate::performance::{AdaptiveFpsController, LatencyGovernor, LatencyMode, EncodingDecision};
 use crate::pipewire::{PipeWireThreadCommand, PipeWireThreadManager, VideoFrame};
@@ -244,6 +245,9 @@ pub struct WrdDisplayHandler {
 
     /// Server configuration (for feature flags and settings)
     config: Arc<crate::config::Config>,
+
+    /// Service registry for compositor-aware feature decisions
+    service_registry: Arc<ServiceRegistry>,
 }
 
 impl WrdDisplayHandler {
@@ -258,6 +262,8 @@ impl WrdDisplayHandler {
     /// * `graphics_tx` - Optional graphics queue sender for priority multiplexing
     /// * `gfx_server_handle` - Optional handle to GFX server for EGFX support
     /// * `gfx_handler_state` - Optional handler state for EGFX readiness checks
+    /// * `config` - Server configuration for feature flags
+    /// * `service_registry` - Compositor service registry for feature decisions
     ///
     /// # Returns
     ///
@@ -274,7 +280,8 @@ impl WrdDisplayHandler {
         graphics_tx: Option<mpsc::Sender<GraphicsFrame>>,
         gfx_server_handle: Option<Arc<RwLock<Option<GfxServerHandle>>>>,
         gfx_handler_state: Option<Arc<RwLock<Option<HandlerState>>>>,
-        config: Arc<crate::config::Config>,  // Add config parameter
+        config: Arc<crate::config::Config>,
+        service_registry: Arc<ServiceRegistry>,
     ) -> Result<Self> {
         let size = Arc::new(RwLock::new(DesktopSize {
             width: initial_width,
@@ -359,6 +366,7 @@ impl WrdDisplayHandler {
             gfx_handler_state,
             server_event_tx: Arc::new(RwLock::new(None)),
             config,  // Store config for feature flags
+            service_registry, // Service-aware feature decisions
         })
     }
 
@@ -455,6 +463,36 @@ impl WrdDisplayHandler {
         }
     }
 
+    /// Get a descriptive reason for why EGFX is not ready
+    ///
+    /// Returns a human-readable string explaining the current wait state.
+    /// Useful for debugging connection/negotiation issues.
+    pub async fn egfx_wait_reason(&self) -> &'static str {
+        // Check server event sender (indicates client connected)
+        if self.server_event_tx.read().await.is_none() {
+            return "waiting for client connection";
+        }
+
+        // Check GFX server handle (indicates EGFX channel started)
+        if self.gfx_server_handle.read().await.is_none() {
+            return "client connected, waiting for EGFX channel";
+        }
+
+        // Check handler state (indicates capabilities negotiated)
+        if let Some(state) = self.gfx_handler_state.read().await.as_ref() {
+            if !state.is_ready {
+                return "EGFX channel open, negotiating capabilities";
+            }
+            if !state.is_avc420_enabled {
+                return "EGFX ready, waiting for AVC420 codec confirmation";
+            }
+        } else {
+            return "EGFX channel open, initializing handler state";
+        }
+
+        "ready" // Should not reach here if is_egfx_ready() is false
+    }
+
     /// Update the desktop size
     ///
     /// Called when monitor configuration changes or client requests resize.
@@ -501,7 +539,14 @@ impl WrdDisplayHandler {
             // - Low activity (typing): 15 FPS
             // - Medium activity (scrolling): 20 FPS
             // - High activity (video): 30 FPS
-            let adaptive_fps_enabled = self.config.performance.adaptive_fps.enabled;
+            //
+            // SERVICE-AWARE: Only enable when damage tracking service is available
+            // (without it, adaptive FPS has no activity detection signal)
+            let service_supports_adaptive_fps = self.service_registry.should_enable_adaptive_fps();
+            let adaptive_fps_enabled = self.config.performance.adaptive_fps.enabled && service_supports_adaptive_fps;
+            if self.config.performance.adaptive_fps.enabled && !service_supports_adaptive_fps {
+                info!("⚠️ Adaptive FPS disabled: damage tracking service unavailable");
+            }
             let adaptive_fps_config = crate::performance::AdaptiveFpsConfig {
                 enabled: adaptive_fps_enabled,
                 min_fps: self.config.performance.adaptive_fps.min_fps,
@@ -518,6 +563,9 @@ impl WrdDisplayHandler {
             // - Interactive (<50ms): Gaming, CAD - encode immediately
             // - Balanced (<100ms): General desktop - smart batching
             // - Quality (<300ms): Photo/video editing - accumulate for quality
+            //
+            // SERVICE-AWARE: ExplicitSync service affects frame pacing accuracy
+            let explicit_sync_level = self.service_registry.service_level(ServiceId::ExplicitSync);
             let latency_mode = match self.config.performance.latency.mode.as_str() {
                 "interactive" => LatencyMode::Interactive,
                 "quality" => LatencyMode::Quality,
@@ -525,13 +573,22 @@ impl WrdDisplayHandler {
             };
             let mut latency_governor = LatencyGovernor::new(latency_mode);
 
+            // Log service-aware performance feature status
+            let damage_level = self.service_registry.service_level(ServiceId::DamageTracking);
+            let dmabuf_level = self.service_registry.service_level(ServiceId::DmaBufZeroCopy);
             info!(
                 "🎛️ Performance features: adaptive_fps={}, latency_mode={:?}",
                 adaptive_fps_enabled, latency_mode
             );
+            info!(
+                "   Services: damage_tracking={}, explicit_sync={}, dmabuf={}",
+                damage_level, explicit_sync_level, dmabuf_level
+            );
 
             // Legacy frame regulator (fallback when adaptive FPS disabled)
-            let mut frame_regulator = FrameRateRegulator::new(30);
+            // Uses configured max_fps (default: 30, can be 60 for high-performance mode)
+            let legacy_fps = self.config.performance.adaptive_fps.max_fps;
+            let mut frame_regulator = FrameRateRegulator::new(legacy_fps);
             let mut frames_sent = 0u64;
             let mut frames_dropped = 0u64;
             let mut egfx_frames_sent = 0u64;
@@ -642,7 +699,8 @@ impl WrdDisplayHandler {
                     // EGFX not ready yet - drop this frame and wait
                     frames_dropped += 1;
                     if frames_dropped % 30 == 0 {
-                        debug!("Waiting for EGFX channel (dropped {} frames)", frames_dropped);
+                        let reason = handler.egfx_wait_reason().await;
+                        debug!("⏳ {} (dropped {} frames)", reason, frames_dropped);
                     }
                     continue;
                 }
@@ -1198,6 +1256,7 @@ impl Clone for WrdDisplayHandler {
             gfx_handler_state: Arc::clone(&self.gfx_handler_state),
             server_event_tx: Arc::clone(&self.server_event_tx),
             config: Arc::clone(&self.config),  // Clone config Arc
+            service_registry: Arc::clone(&self.service_registry), // Clone service registry Arc
         }
     }
 }

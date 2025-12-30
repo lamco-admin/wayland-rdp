@@ -135,7 +135,23 @@ pub struct PerformanceConfig {
 /// - Static screen: 5 FPS (saves CPU/bandwidth)
 /// - Low activity: 15 FPS (typing, cursor)
 /// - Medium activity: 20 FPS (scrolling)
-/// - High activity: 30 FPS (video, dragging)
+/// - High activity: 30-60 FPS (video, dragging)
+///
+/// # High Performance Mode (60 FPS)
+///
+/// For systems with powerful GPUs and fast networks, enable 60fps in config.toml:
+///
+/// ```toml
+/// [performance.adaptive_fps]
+/// enabled = true
+/// max_fps = 60
+/// ```
+///
+/// **Requirements for 60fps:**
+/// - Hardware encoder (VAAPI/NVENC) strongly recommended
+/// - Fast network connection (>10Mbps recommended)
+/// - Modern client supporting H.264 High Profile
+/// - Sufficient GPU headroom for encoding
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdaptiveFpsConfig {
     /// Enable adaptive FPS (false = fixed FPS)
@@ -146,7 +162,7 @@ pub struct AdaptiveFpsConfig {
     #[serde(default = "default_min_fps")]
     pub min_fps: u32,
 
-    /// Maximum FPS for high activity
+    /// Maximum FPS for high activity (default: 30, set to 60 for high-performance mode)
     #[serde(default = "default_max_fps")]
     pub max_fps: u32,
 
@@ -572,12 +588,23 @@ pub struct EgfxConfig {
     #[serde(default = "default_avc444_aux_ratio")]
     pub avc444_aux_bitrate_ratio: f32,
 
-    /// Color matrix for YUV conversion: "auto", "bt709", "bt601"
-    /// - "auto": Use BT.709 for HD (≥1080p), BT.601 for SD
-    /// - "bt709": Force BT.709 (recommended for HD content)
-    /// - "bt601": Force BT.601 (legacy SD content compatibility)
+    /// Color matrix for YUV conversion: "auto", "openh264", "bt709", "bt601", "srgb"
+    /// - "auto": Use OpenH264-compatible for AVC444 consistency
+    /// - "openh264": Match OpenH264's internal conversion (BT.601 limited)
+    /// - "bt709": BT.709 for HD content
+    /// - "bt601": BT.601 for SD content
+    /// - "srgb": sRGB for computer graphics
+    /// Default: "auto" (OpenH264-compatible for AVC420/AVC444 consistency)
     #[serde(default = "default_color_matrix")]
     pub color_matrix: String,
+
+    /// Color range for YUV encoding: "auto", "limited", "full"
+    /// - "auto": Use matrix default (limited for broadcast compatibility)
+    /// - "limited": TV range (Y: 16-235, UV: 16-240) - recommended
+    /// - "full": PC range (Y: 0-255, UV: 0-255) - maximum dynamic range
+    /// Default: "auto" (limited range for compatibility)
+    #[serde(default = "default_color_range")]
+    pub color_range: String,
 
     /// Enable AVC444 when client supports it
     /// Set to false to disable AVC444 globally regardless of codec preference
@@ -639,6 +666,10 @@ fn default_color_matrix() -> String {
     "auto".to_string()
 }
 
+fn default_color_range() -> String {
+    "auto".to_string()
+}
+
 fn default_true() -> bool {
     true
 }
@@ -659,6 +690,7 @@ impl Default for EgfxConfig {
             // AVC444-specific defaults
             avc444_aux_bitrate_ratio: 0.5, // Aux gets 50% of main's bitrate
             color_matrix: "auto".to_string(), // Auto-detect based on resolution
+            color_range: "auto".to_string(),  // Use matrix default (limited for compatibility)
             avc444_enabled: true, // Enable AVC444 when client supports it
             // Phase 1: Aux omission defaults (NOW PRODUCTION DEFAULTS)
             avc444_enable_aux_omission: true,   // Enabled by default (production proven)

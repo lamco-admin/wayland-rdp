@@ -168,7 +168,7 @@ impl WrdServer {
 
         // === SERVICE ADVERTISEMENT ===
         // Translate compositor capabilities into advertised services
-        let service_registry = ServiceRegistry::from_compositor(capabilities.clone());
+        let service_registry = Arc::new(ServiceRegistry::from_compositor(capabilities.clone()));
         service_registry.log_summary();
 
         // Log service-aware premium feature decisions
@@ -296,6 +296,7 @@ impl WrdServer {
                 Some(gfx_server_handle), // EGFX server handle for H.264 frame sending
                 Some(gfx_handler_state), // EGFX handler state for readiness checks
                 Arc::clone(&config),  // Pass config for feature flags
+                Arc::clone(&service_registry), // Service registry for feature decisions
             )
             .await
             .context("Failed to create display handler")?,
