@@ -28,6 +28,8 @@ use thiserror::Error;
 #[cfg(feature = "h264")]
 use tracing::{debug, trace, warn};
 
+use super::color_space::ColorSpaceConfig;
+
 /// Errors that can occur during H.264 encoding
 #[derive(Debug, Error)]
 pub enum EncoderError {
@@ -64,6 +66,20 @@ pub struct EncoderConfig {
 
     /// Resolution for level calculation (optional, auto-detected on first frame)
     pub height: Option<u16>,
+
+    /// Color space configuration for VUI signaling and conversion matrix
+    ///
+    /// When set, the encoder will:
+    /// 1. Use the specified color matrix for RGB→YUV conversion
+    /// 2. Signal the color space via H.264 VUI (Video Usability Information)
+    ///
+    /// VUI ensures the decoder interprets colors correctly by embedding
+    /// color primaries, transfer characteristics, and matrix coefficients
+    /// in the SPS (Sequence Parameter Set).
+    ///
+    /// Default: None (uses OpenH264-compatible limited range for AVC420,
+    /// BT.709 for AVC444)
+    pub color_space: Option<ColorSpaceConfig>,
 }
 
 impl Default for EncoderConfig {
@@ -74,6 +90,7 @@ impl Default for EncoderConfig {
             enable_skip_frame: true,
             width: None,
             height: None,
+            color_space: None, // Encoder-specific default
         }
     }
 }
@@ -96,6 +113,7 @@ impl EncoderConfig {
             enable_skip_frame: false,
             width: None,
             height: None,
+            color_space: None,
         }
     }
 
@@ -112,6 +130,7 @@ impl EncoderConfig {
             enable_skip_frame: true,
             width: None,
             height: None,
+            color_space: None,
         }
     }
 
@@ -123,7 +142,17 @@ impl EncoderConfig {
             enable_skip_frame: true,
             width: None,
             height: None,
+            color_space: None,
         }
+    }
+
+    /// Set color space configuration
+    ///
+    /// This enables VUI signaling in the H.264 stream, ensuring
+    /// decoders correctly interpret the color space.
+    pub fn with_color_space(mut self, config: ColorSpaceConfig) -> Self {
+        self.color_space = Some(config);
+        self
     }
 }
 

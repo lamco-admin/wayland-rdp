@@ -51,10 +51,13 @@ use nvidia_video_codec_sdk::{
         NV_ENC_PRESET_P1_GUID, NV_ENC_PRESET_P2_GUID, NV_ENC_PRESET_P3_GUID,
         NV_ENC_PRESET_P4_GUID, NV_ENC_PRESET_P5_GUID, NV_ENC_PRESET_P6_GUID,
         NV_ENC_PRESET_P7_GUID, NV_ENC_TUNING_INFO, GUID,
+        NV_ENC_VUI_COLOR_PRIMARIES, NV_ENC_VUI_TRANSFER_CHARACTERISTIC,
+        NV_ENC_VUI_MATRIX_COEFFS,
     },
 };
 
 use crate::config::HardwareEncodingConfig;
+use crate::egfx::color_space::{ColorRange, ColorSpaceConfig, ColourPrimaries, MatrixCoefficients, TransferCharacteristics};
 
 use super::{
     error::NvencError, EncodeTimer, H264Frame, HardwareEncoder, HardwareEncoderError,
@@ -199,9 +202,45 @@ pub struct NvencEncoder {
     /// Encoder statistics
     stats: HardwareEncoderStats,
 
+    /// Color space configuration for VUI signaling
+    color_space: ColorSpaceConfig,
+
     /// NVENC session (owns the encoder) - Boxed to prevent move-invalidation.
     /// MUST BE LAST for drop order safety - buffers reference the encoder.
     session: Box<Session>,
+}
+
+/// Map ColorSpaceConfig colour primaries to NVENC VUI enum
+fn map_colour_primaries(primaries: ColourPrimaries) -> NV_ENC_VUI_COLOR_PRIMARIES {
+    match primaries {
+        ColourPrimaries::BT709 => NV_ENC_VUI_COLOR_PRIMARIES::NV_ENC_VUI_COLOR_PRIMARIES_BT709,
+        ColourPrimaries::Unspecified => NV_ENC_VUI_COLOR_PRIMARIES::NV_ENC_VUI_COLOR_PRIMARIES_UNSPECIFIED,
+        ColourPrimaries::BT601NTSC => NV_ENC_VUI_COLOR_PRIMARIES::NV_ENC_VUI_COLOR_PRIMARIES_SMPTE170M,
+        ColourPrimaries::BT601PAL => NV_ENC_VUI_COLOR_PRIMARIES::NV_ENC_VUI_COLOR_PRIMARIES_BT470BG,
+        ColourPrimaries::BT2020 => NV_ENC_VUI_COLOR_PRIMARIES::NV_ENC_VUI_COLOR_PRIMARIES_BT2020,
+    }
+}
+
+/// Map ColorSpaceConfig transfer characteristics to NVENC VUI enum
+fn map_transfer_characteristics(transfer: TransferCharacteristics) -> NV_ENC_VUI_TRANSFER_CHARACTERISTIC {
+    match transfer {
+        TransferCharacteristics::BT709 => NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_BT709,
+        TransferCharacteristics::Unspecified => NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_UNSPECIFIED,
+        TransferCharacteristics::BT601 => NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_SMPTE170M,
+        TransferCharacteristics::SRGB => NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_SRGB,
+        TransferCharacteristics::BT2020_10 => NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_BT2020_10,
+        TransferCharacteristics::BT2020_12 => NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_BT2020_12,
+    }
+}
+
+/// Map ColorSpaceConfig matrix coefficients to NVENC VUI enum
+fn map_matrix_coefficients(matrix: MatrixCoefficients) -> NV_ENC_VUI_MATRIX_COEFFS {
+    match matrix {
+        MatrixCoefficients::BT709 => NV_ENC_VUI_MATRIX_COEFFS::NV_ENC_VUI_MATRIX_COEFFS_BT709,
+        MatrixCoefficients::Unspecified => NV_ENC_VUI_MATRIX_COEFFS::NV_ENC_VUI_MATRIX_COEFFS_UNSPECIFIED,
+        MatrixCoefficients::BT601 => NV_ENC_VUI_MATRIX_COEFFS::NV_ENC_VUI_MATRIX_COEFFS_SMPTE170M,
+        MatrixCoefficients::BT2020NCL => NV_ENC_VUI_MATRIX_COEFFS::NV_ENC_VUI_MATRIX_COEFFS_BT2020_NCL,
+    }
 }
 
 // SAFETY: NVENC handles are safe to send between threads.
@@ -366,6 +405,33 @@ impl NvencEncoder {
         // Set H.264 profile to High
         encode_config.profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
 
+        // Auto-select color space based on resolution
+        let color_space = ColorSpaceConfig::from_resolution(width, height);
+
+        // Configure H.264 VUI parameters for proper color signaling
+        // SAFETY: encodeCodecConfig is a union, we access h264Config for H.264 encoding
+        unsafe {
+            let h264_config = &mut encode_config.encodeCodecConfig.h264Config;
+            let vui = &mut h264_config.h264VUIParameters;
+
+            // Enable video signal type and color description
+            vui.videoSignalTypePresentFlag = 1;
+            vui.colourDescriptionPresentFlag = 1;
+
+            // Set color range (full or limited)
+            vui.videoFullRangeFlag = if color_space.range == ColorRange::Full { 1 } else { 0 };
+
+            // Set color primaries, transfer characteristics, and matrix coefficients
+            vui.colourPrimaries = map_colour_primaries(color_space.primaries);
+            vui.transferCharacteristics = map_transfer_characteristics(color_space.transfer);
+            vui.colourMatrix = map_matrix_coefficients(color_space.matrix_coeff);
+        }
+
+        info!(
+            "🎨 NVENC VUI configured: primaries={:?}, transfer={:?}, matrix={:?}, range={:?}",
+            color_space.primaries, color_space.transfer, color_space.matrix_coeff, color_space.range
+        );
+
         // Initialize encoder params
         let mut init_params = EncoderInitParams::new(NV_ENC_CODEC_H264_GUID, width, height);
         init_params
@@ -440,6 +506,7 @@ impl NvencEncoder {
             force_idr: true, // First frame is always IDR
             gop_size,
             stats,
+            color_space,
             session, // MUST BE LAST for drop order safety
         })
     }
