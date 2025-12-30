@@ -13,6 +13,7 @@ Cargo.lock
 # Test and temporary files
 *.log
 logs/
+archive/logs-*/
 *.tmp
 
 # Build outputs
