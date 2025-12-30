@@ -4,7 +4,7 @@
 //! reducing CPU and bandwidth for static content while maintaining
 //! smooth video for active content.
 //!
-//! # Activity Levels
+//! # Activity Levels (default max_fps=30)
 //!
 //! | Level | Damage % | FPS | Use Case |
 //! |-------|----------|-----|----------|
@@ -12,6 +12,17 @@
 //! | Low | 1-10% | 15 | Typing, cursor movement |
 //! | Medium | 10-30% | 20 | Scrolling, menus |
 //! | High | >30% | 30 | Video, window dragging |
+//!
+//! # High Performance Mode (60 FPS)
+//!
+//! For powerful systems with hardware encoding, set `max_fps = 60`:
+//!
+//! ```toml
+//! [performance.adaptive_fps]
+//! max_fps = 60
+//! ```
+//!
+//! **Requirements:** VAAPI/NVENC encoder, fast network (>10Mbps)
 //!
 //! # Algorithm
 //!

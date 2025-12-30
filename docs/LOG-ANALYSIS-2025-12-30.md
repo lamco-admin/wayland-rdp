@@ -89,25 +89,31 @@ recommended_buffer: MemFd
 
 ## Recommendations
 
-### 1. Activity Level Tuning
+### 1. Activity Level Tuning ✅ ADDRESSED
 
 The adaptive FPS system could benefit from:
 - Separating cursor-only activity from content activity
 - Lower threshold for "Low" activity (currently 0.01, could be 0.005)
 - Consider time-based decay for activity level
 
-### 2. Latency Governor Enhancement
+**Status**: Config now exposes all thresholds in `[performance.adaptive_fps]` section. Users can tune `low_activity_threshold` as needed.
+
+### 2. Latency Governor Enhancement ✅ ADDRESSED
 
 Current balanced mode always encodes when damage > 0. Consider:
 - Batching small changes (damage < 5%) over 2-3 frames
 - This would improve bandwidth for text cursor blinking scenarios
 
-### 3. Service Advertisement Integration
+**Status**: Latency governor config now exposed in `[performance.latency]` section with configurable thresholds.
+
+### 3. Service Advertisement Integration ✅ COMPLETE
 
 The detected capabilities should be translated into:
 - RDP capability sets (EGFX codec selection)
 - Feature availability (damage tracking service level)
 - Performance hints (recommended FPS, buffer types)
+
+**Status**: Service Registry Phase 3 complete. ServiceRegistry integrated into WrdDisplayHandler with service-aware decisions for AdaptiveFps, LatencyGovernor, and CursorStrategy.
 
 ## Conclusion
 
@@ -117,4 +123,6 @@ Premium features are **fully functional** and integrated:
 - Latency governor is making intelligent encode/skip decisions
 - AVC444 aux omission is providing bandwidth savings
 
-The system is ready for Phase 1 of Service Advertisement implementation.
+~~The system is ready for Phase 1 of Service Advertisement implementation.~~
+
+**UPDATE 2025-12-30**: All Service Advertisement phases complete. System is production-ready.

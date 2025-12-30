@@ -179,14 +179,11 @@ pub fn bgra_to_yuv444(
 
     let mut frame = Yuv444Frame::new(width, height);
 
-    // DIAGNOSTIC: Force scalar implementation to debug lavender corruption
-    // TODO: Re-enable SIMD after verifying scalar produces correct colors
-    #[allow(clippy::overly_complex_bool_expr)]
-    let use_simd = false; // FORCE SCALAR FOR DEBUGGING
-
-    // SIMD implementations only support full range (BT.601/BT.709).
-    // For limited range (OpenH264), we must use the scalar implementation
+    // SIMD is enabled for full-range color matrices (BT.601/BT.709).
+    // For limited range (OpenH264), we use the scalar implementation
     // which correctly handles Y: 16-235, UV: 16-240 clamping.
+    let use_simd = true;
+
     if use_simd && !matrix.is_limited_range() {
         // Dispatch to best available SIMD implementation for full range
         #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
@@ -214,41 +211,6 @@ pub fn bgra_to_yuv444(
 
     // Scalar fallback - handles both full and limited range correctly
     bgra_to_yuv444_scalar(bgra, &mut frame, matrix);
-
-    // DEEP DIAGNOSTIC: Sample multiple screen positions to find actual colors
-    use tracing::debug;
-    if width == 1280 && height == 800 {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static CONVERT_FRAME_NUM: AtomicU64 = AtomicU64::new(0);
-        let frame_num = CONVERT_FRAME_NUM.fetch_add(1, Ordering::Relaxed);
-
-        // Sample 5 positions across the screen to find colored areas
-        // PLUS position (329, 122) which corresponds to aux_u[39204] that cycles!
-        let positions = [
-            (0, 0, "top-left"),
-            (640, 400, "center"),
-            (1000, 100, "top-right area"),
-            (200, 600, "bottom-left"),
-            (800, 300, "middle-right"),
-            (329, 122, "🔍 CYCLING POSITION"),  // aux_u[39204] source
-        ];
-
-        debug!("[Frame #{}] 🎨 COLOR CONVERSION SAMPLES (Matrix::{:?}):", frame_num, matrix);
-        for (x, y, label) in positions {
-            if x < width && y < height {
-                let idx = (y * width + x) * 4;
-                let b = bgra[idx];
-                let g = bgra[idx + 1];
-                let r = bgra[idx + 2];
-                let pix_idx = y * width + x;
-                let y_val = frame.y[pix_idx];
-                let u_val = frame.u[pix_idx];
-                let v_val = frame.v[pix_idx];
-                debug!("  {} ({},{}): BGRA=({:3},{:3},{:3}) → YUV=({:3},{:3},{:3})",
-                       label, x, y, b, g, r, y_val, u_val, v_val);
-            }
-        }
-    }
 
     frame
 }

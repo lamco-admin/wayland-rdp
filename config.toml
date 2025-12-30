@@ -64,6 +64,59 @@ network_threads = 0
 buffer_pool_size = 16
 zero_copy = true
 
+# ============================================================================
+# Adaptive FPS - Dynamic Frame Rate Based on Screen Activity
+# ============================================================================
+[performance.adaptive_fps]
+# Enable adaptive FPS (dynamically adjusts based on screen activity)
+# false = fixed FPS (uses max_fps as constant rate)
+enabled = true
+
+# Minimum FPS even for completely static content
+# Keeps connection alive and responsive
+min_fps = 5
+
+# Maximum FPS for high activity content (video, window dragging)
+# Default: 30 (balanced for most systems)
+# Set to 60 for high-performance mode (requires hardware encoder)
+#
+# HIGH PERFORMANCE MODE:
+#   max_fps = 60
+#   Requirements:
+#   - VAAPI or NVENC hardware encoder
+#   - Fast network (>10 Mbps recommended)
+#   - Modern client supporting H.264 High Profile
+max_fps = 30
+
+# Activity thresholds (damage ratio 0.0-1.0)
+# These control when FPS increases based on screen changes
+high_activity_threshold = 0.30   # >30% change = max FPS (video playback)
+medium_activity_threshold = 0.10 # 10-30% change = 2/3 max FPS (scrolling)
+low_activity_threshold = 0.01    # 1-10% change = 1/2 max FPS (typing)
+                                  # <1% change = min FPS (static desktop)
+
+# ============================================================================
+# Latency Governor - Quality vs Responsiveness Trade-off
+# ============================================================================
+[performance.latency]
+# Latency mode: "interactive", "balanced", "quality"
+# interactive = <50ms  (gaming, CAD, real-time apps)
+# balanced    = <100ms (general desktop, recommended)
+# quality     = <300ms (photo/video editing, color-critical work)
+mode = "balanced"
+
+# Maximum frame delay per mode (milliseconds)
+# Lower = more responsive, may drop frames under load
+# Higher = smoother playback, more latency
+interactive_max_delay_ms = 16  # ~60fps equivalent
+balanced_max_delay_ms = 33     # ~30fps equivalent
+quality_max_delay_ms = 100     # accumulate for quality
+
+# Damage thresholds for mode-specific behavior
+# Controls when to prioritize latency vs quality
+balanced_damage_threshold = 0.15
+quality_damage_threshold = 0.05
+
 [logging]
 level = "info"
 metrics = true

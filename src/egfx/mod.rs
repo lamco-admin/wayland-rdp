@@ -70,7 +70,7 @@ pub use color_convert::{bgra_to_yuv444, subsample_chroma_420, ColorMatrix, Yuv44
 
 // Re-export comprehensive color space configuration
 pub use color_space::{
-    ColorPrimaries, ColorRange, ColorSpaceConfig, ColorSpacePreset, MatrixCoefficients,
+    ColourPrimaries, ColorRange, ColorSpaceConfig, MatrixCoefficients,
     TransferCharacteristics,
 };
 
