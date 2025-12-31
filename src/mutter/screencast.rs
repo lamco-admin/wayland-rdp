@@ -185,12 +185,15 @@ impl<'a> MutterScreenCastStream<'a> {
         Ok(Self { proxy })
     }
 
-    /// Get the PipeWire node ID for this stream
-    pub async fn pipewire_node_id(&self) -> Result<u32> {
+    /// Get the PipeWire node ID for this stream by subscribing to PipeWireStreamAdded signal
+    ///
+    /// The node ID is emitted via the PipeWireStreamAdded signal when the stream starts,
+    /// not as a property. We must subscribe before the signal is emitted.
+    pub async fn subscribe_for_node_id(&self) -> Result<impl futures_util::Stream<Item = zbus::Message>> {
         self.proxy
-            .get_property::<u32>("PipeWireNodeId")
+            .receive_signal("PipeWireStreamAdded")
             .await
-            .context("Failed to get PipeWireNodeId property")
+            .context("Failed to subscribe to PipeWireStreamAdded signal")
     }
 
     /// Get stream parameters (resolution, position, etc.)
