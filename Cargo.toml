@@ -37,7 +37,8 @@ path = "src/lib.rs"
 # must compile against the same patched version to avoid trait conflicts.
 lamco-wayland = "0.2.2"
 lamco-rdp = "0.4.0"
-lamco-portal = { version = "0.2.2", features = ["dbus-clipboard"] }
+# Local path required - includes restore token support (not yet published)
+lamco-portal = { path = "../lamco-wayland/crates/lamco-portal", features = ["dbus-clipboard"] }
 # Local fork with fix for zero-size buffer passthrough bug
 # See docs/QUALITY-ISSUE-ANALYSIS-2025-12-27.md for details
 # TODO: Publish fix to crates.io and revert to version dependency
@@ -158,6 +159,22 @@ libc = "0.2"
 chrono = "0.4"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 sysinfo = "0.30"
+hostname = "0.4"
+dirs = "5.0"
+
+# -----------------------------------------------------------------------------
+# Cryptography (for session token encryption)
+# -----------------------------------------------------------------------------
+aes-gcm = "0.10"
+
+# -----------------------------------------------------------------------------
+# Credential Storage Backends
+# -----------------------------------------------------------------------------
+# Secret Service API for GNOME Keyring, KWallet, KeePassXC
+# Using v5.x with tokio async runtime and pure Rust crypto
+secret-service = { version = "5.1", features = ["rt-tokio-crypto-rust"] }
+# zeroize for secure memory handling of tokens
+zeroize = "1.7"
 
 # -----------------------------------------------------------------------------
 # Memory management
@@ -291,6 +308,8 @@ cast_possible_wrap = "allow"
 
 [patch.crates-io]
 # Lamco crates with local fixes (not yet published)
+# lamco-portal: Restore token support (session persistence)
+lamco-portal = { path = "../lamco-wayland/crates/lamco-portal" }
 # lamco-pipewire: Zero-size buffer validation fix (see docs/QUALITY-ISSUE-ANALYSIS-2025-12-27.md)
 lamco-pipewire = { path = "../lamco-rdp-workspace/crates/lamco-pipewire" }
 

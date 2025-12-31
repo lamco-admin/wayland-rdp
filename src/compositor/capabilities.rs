@@ -154,6 +154,8 @@ impl Default for CaptureBackend {
 /// - Portal features
 /// - Available Wayland protocols
 /// - Recommended profile with settings and quirks
+/// - Deployment context (affects available strategies)
+/// - Session persistence capabilities
 #[derive(Debug, Clone)]
 pub struct CompositorCapabilities {
     /// Detected compositor type
@@ -167,6 +169,29 @@ pub struct CompositorCapabilities {
 
     /// Generated profile with recommended settings
     pub profile: CompositorProfile,
+
+    // === Phase 2: Session Persistence ===
+
+    /// Deployment context (Flatpak, systemd, initd, etc.)
+    /// Affects which session strategies are available
+    pub deployment: crate::session::DeploymentContext,
+
+    /// D-Bus session bus accessible
+    /// Required for portal and most compositor APIs
+    pub has_session_dbus: bool,
+
+    /// Direct Secret Service access available
+    /// False in Flatpak (must use portal), true in native
+    pub has_secret_service_access: bool,
+
+    /// Detected credential storage method
+    pub credential_storage_method: crate::session::CredentialStorageMethod,
+
+    /// Credential storage is accessible (unlocked)
+    pub credential_storage_accessible: bool,
+
+    /// Encryption type for credential storage
+    pub credential_encryption: crate::session::EncryptionType,
 }
 
 impl CompositorCapabilities {
@@ -179,11 +204,31 @@ impl CompositorCapabilities {
         // Generate profile based on detected compositor
         let profile = CompositorProfile::for_compositor(&compositor);
 
+        // Default session persistence fields (will be set by probing)
+        let deployment = crate::session::detect_deployment_context();
+        let has_session_dbus = true; // If we got this far, D-Bus works
+        let has_secret_service_access = !matches!(
+            deployment,
+            crate::session::DeploymentContext::Flatpak
+        );
+
+        // Default credential storage (will be set by async probing)
+        use crate::session::{CredentialStorageMethod, EncryptionType};
+        let credential_storage_method = CredentialStorageMethod::EncryptedFile;
+        let credential_storage_accessible = true;
+        let credential_encryption = EncryptionType::Aes256Gcm;
+
         Self {
             compositor,
             portal,
             wayland_globals,
             profile,
+            deployment,
+            has_session_dbus,
+            has_secret_service_access,
+            credential_storage_method,
+            credential_storage_accessible,
+            credential_encryption,
         }
     }
 
@@ -207,6 +252,14 @@ impl CompositorCapabilities {
     /// Check if fractional scaling is supported
     pub fn has_fractional_scale(&self) -> bool {
         self.has_protocol("wp_fractional_scale_manager_v1", 1)
+    }
+
+    /// Get protocol version if available
+    pub fn get_protocol_version(&self, interface: &str) -> Option<u32> {
+        self.wayland_globals
+            .iter()
+            .find(|g| g.interface == interface)
+            .map(|g| g.version)
     }
 
     /// Log a summary of detected capabilities
@@ -291,6 +344,12 @@ mod tests {
                 name: 1,
             }],
             profile: CompositorProfile::default(),
+            deployment: crate::session::DeploymentContext::Native,
+            has_session_dbus: true,
+            has_secret_service_access: true,
+            credential_storage_method: crate::session::CredentialStorageMethod::EncryptedFile,
+            credential_storage_accessible: true,
+            credential_encryption: crate::session::EncryptionType::Aes256Gcm,
         };
 
         assert!(caps.has_protocol("wl_compositor", 1));

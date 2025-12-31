@@ -41,6 +41,29 @@ pub enum ServiceId {
 
     /// PipeWire video capture
     VideoCapture,
+
+    // === Session Persistence Services ===
+    // Added in Phase 2 for unattended operation support
+
+    /// Session persistence capability (portal restore tokens)
+    /// Indicates whether permission dialogs can be avoided on reconnect
+    SessionPersistence,
+
+    /// Direct compositor API availability (bypasses portal)
+    /// Currently only available on GNOME via Mutter D-Bus interfaces
+    DirectCompositorAPI,
+
+    /// Secure credential storage capability
+    /// Varies by environment: Secret Service, TPM 2.0, or encrypted file
+    CredentialStorage,
+
+    /// Unattended access readiness (aggregate capability)
+    /// Indicates if server can start without user interaction
+    UnattendedAccess,
+
+    /// wlr-screencopy protocol availability (wlroots bypass)
+    /// Enables portal-free capture on Sway, Hyprland, Labwc
+    WlrScreencopy,
 }
 
 impl ServiceId {
@@ -58,12 +81,19 @@ impl ServiceId {
             Self::Clipboard => "Clipboard",
             Self::RemoteInput => "Remote Input",
             Self::VideoCapture => "Video Capture",
+            // Session persistence services
+            Self::SessionPersistence => "Session Persistence",
+            Self::DirectCompositorAPI => "Direct Compositor API",
+            Self::CredentialStorage => "Credential Storage",
+            Self::UnattendedAccess => "Unattended Access",
+            Self::WlrScreencopy => "wlr-screencopy",
         }
     }
 
     /// Get all known service IDs
     pub fn all() -> &'static [ServiceId] {
         &[
+            // Video and display services
             Self::DamageTracking,
             Self::DmaBufZeroCopy,
             Self::ExplicitSync,
@@ -72,9 +102,16 @@ impl ServiceId {
             Self::MultiMonitor,
             Self::WindowCapture,
             Self::HdrColorSpace,
+            // I/O services
             Self::Clipboard,
             Self::RemoteInput,
             Self::VideoCapture,
+            // Session persistence services
+            Self::SessionPersistence,
+            Self::DirectCompositorAPI,
+            Self::CredentialStorage,
+            Self::UnattendedAccess,
+            Self::WlrScreencopy,
         ]
     }
 }

@@ -233,22 +233,10 @@ pub fn pack_main_view(yuv444: &Yuv444Frame) -> Yuv420Frame {
     let mut u = subsample_chroma_420(&yuv444.u, width, height);
 
     // V plane: 2×2 box filter subsample
-    let mut v = subsample_chroma_420(&yuv444.v, width, height);
+    let v = subsample_chroma_420(&yuv444.v, width, height);
 
-    // CRITICAL: Pad main view chroma to 8×8 macroblock boundaries for temporal stability
-    // Same issue as auxiliary: encoder needs deterministic padding for P-frames
-    let chroma_width = width / 2;
-    let chroma_height = height / 2;
-    let padded_chroma_width = ((chroma_width + 7) / 8) * 8;
-    let padded_chroma_height = ((chroma_height + 7) / 8) * 8;
-    let actual_size = chroma_width * chroma_height;
-    let padded_size = padded_chroma_width * padded_chroma_height;
-
-    if padded_size > actual_size {
-        // Resize to padded size, filling extra with neutral chroma (128)
-        u.resize(padded_size, 128);
-        v.resize(padded_size, 128);
-    }
+    // NOTE: We don't pad chroma planes here because openh264 does its own
+    // macroblock alignment internally. Padding breaks openh264-rs buffer validation.
 
     // DEEP DIAGNOSTIC: Sample multiple screen positions to capture colorful areas
     use tracing::{trace, debug};
@@ -811,7 +799,8 @@ mod tests {
         assert_eq!(main.width, 1920);
         assert_eq!(main.height, 1080);
 
-        // U/V planes: half resolution in each dimension
+        // U/V planes: half resolution in each dimension (no padding for main view)
+        // openh264 handles macroblock alignment internally
         assert_eq!(main.u.len(), 960 * 540);
         assert_eq!(main.v.len(), 960 * 540);
     }
@@ -841,22 +830,32 @@ mod tests {
     }
 
     #[test]
-    fn test_auxiliary_odd_positions_have_u_values() {
-        let yuv444 = create_test_yuv444(4, 4);
+    fn test_auxiliary_view_row_macroblock_structure() {
+        // Spec-compliant auxiliary view uses row-level macroblock structure,
+        // not pixel-level packing. This test verifies the row structure.
+        let yuv444 = create_test_yuv444(64, 64);
         let aux = pack_auxiliary_view(&yuv444);
 
-        // Odd positions should have U444 values
-        // Position (1, 0) is odd
-        let idx_10 = 0 * 4 + 1;
-        assert_eq!(aux.y[idx_10], yuv444.u[idx_10]);
+        // Auxiliary Y contains:
+        // - Rows 0-7 of macroblock: U444 odd rows (1, 3, 5, 7, ...)
+        // - Rows 8-15 of macroblock: V444 odd rows (1, 3, 5, 7, ...)
 
-        // Position (0, 1) is odd
-        let idx_01 = 1 * 4 + 0;
-        assert_eq!(aux.y[idx_01], yuv444.u[idx_01]);
+        // Verify first macroblock structure (64x64 has 4 macroblocks vertically)
+        // Row 0 of aux should be row 1 of U444
+        for x in 0..64 {
+            let aux_idx = 0 * 64 + x;  // Row 0
+            let u444_idx = 1 * 64 + x;  // Row 1 of U444 (odd row)
+            assert_eq!(aux.y[aux_idx], yuv444.u[u444_idx],
+                "Auxiliary Y row 0 should be U444 row 1");
+        }
 
-        // Position (1, 1) is odd
-        let idx_11 = 1 * 4 + 1;
-        assert_eq!(aux.y[idx_11], yuv444.u[idx_11]);
+        // Row 8 of aux should be row 1 of V444
+        for x in 0..64 {
+            let aux_idx = 8 * 64 + x;  // Row 8
+            let v444_idx = 1 * 64 + x;  // Row 1 of V444 (odd row)
+            assert_eq!(aux.y[aux_idx], yuv444.v[v444_idx],
+                "Auxiliary Y row 8 should be V444 row 1");
+        }
     }
 
     #[test]
@@ -1052,6 +1051,8 @@ mod tests {
         assert_eq!(main.width, 1920);
         assert_eq!(main.height, 1080);
         assert_eq!(main.y.len(), 1920 * 1080);
+
+        // Chroma planes: half resolution (no padding - openh264 handles alignment)
         assert_eq!(main.u.len(), 960 * 540);
         assert_eq!(main.v.len(), 960 * 540);
 
@@ -1092,12 +1093,23 @@ mod tests {
     }
 
     #[test]
-    fn test_pack_auxiliary_view_neutral_v_plane() {
+    fn test_pack_auxiliary_view_has_chroma_data() {
         let yuv444 = create_test_yuv444(64, 64);
         let aux = pack_auxiliary_view(&yuv444);
 
-        // V plane should be neutral (128) for encoder stability
-        assert!(aux.v.iter().all(|&v| v == 128), "V plane should be neutral");
+        // Spec-compliant auxiliary view includes sampled V444 data in aux.v
+        // (not neutral 128 - that's only the "minimal" variant)
+        // The V plane contains samples from (odd_col, even_row) positions of V444
+
+        // Check that aux_v has non-neutral values (not all 128)
+        let has_non_neutral = aux.v.iter().any(|&v| v != 128);
+        assert!(has_non_neutral, "Auxiliary V plane should contain sampled V444 data, not all neutral");
+
+        // Verify aux_v contains values from yuv444.v gradient
+        // create_test_yuv444 creates V gradient, so aux should have some of those values
+        let min = aux.v.iter().min().copied().unwrap_or(128);
+        let max = aux.v.iter().max().copied().unwrap_or(128);
+        assert!(max > min, "Auxiliary V plane should have variation from V444 gradient");
     }
 
     // =================================================================
@@ -1131,11 +1143,17 @@ mod tests {
         // Main Y should be 128
         assert!(main.y.iter().all(|&v| v == 128));
 
-        // Main U should be 100 (subsampled but uniform)
-        assert!(main.u.iter().all(|&v| v == 100));
+        // Main U/V should be uniform (no padding in main view)
+        // For 8x8 input: chroma is 4x4=16 elements
+        assert!(
+            main.u.iter().all(|&v| v == 100),
+            "Chroma U should be 100 (uniform input)"
+        );
 
-        // Main V should be 150
-        assert!(main.v.iter().all(|&v| v == 150));
+        assert!(
+            main.v.iter().all(|&v| v == 150),
+            "Chroma V should be 150 (uniform input)"
+        );
     }
 
     // =================================================================

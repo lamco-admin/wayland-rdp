@@ -50,6 +50,23 @@ pub fn translate_capabilities(caps: &CompositorCapabilities) -> Vec<AdvertisedSe
     // Video Capture (PipeWire)
     services.push(translate_video_capture(caps));
 
+    // === Phase 2: Session Persistence Services ===
+
+    // Session Persistence (portal restore tokens)
+    services.push(translate_session_persistence(caps));
+
+    // Direct Compositor API (GNOME Mutter)
+    services.push(translate_direct_compositor_api(caps));
+
+    // Credential Storage
+    services.push(translate_credential_storage(caps));
+
+    // wlr-screencopy (wlroots bypass)
+    services.push(translate_wlr_screencopy(caps));
+
+    // Unattended Access (aggregate capability)
+    services.push(translate_unattended_access(caps));
+
     services
 }
 
@@ -332,6 +349,335 @@ fn translate_video_capture(caps: &CompositorCapabilities) -> AdvertisedService {
         AdvertisedService::unavailable(ServiceId::VideoCapture)
     }
 }
+
+// ============================================================================
+// PHASE 2: Session Persistence Translation Functions
+// ============================================================================
+
+fn translate_session_persistence(caps: &CompositorCapabilities) -> AdvertisedService {
+    use crate::session::CredentialStorageMethod;
+    use crate::services::wayland_features::TokenStorageMethod;
+
+    let portal = &caps.portal;
+
+    // Use cached credential storage from caps (detected during probing)
+    let cred_method = caps.credential_storage_method;
+    let accessible = caps.credential_storage_accessible;
+
+    let token_storage = match cred_method {
+        CredentialStorageMethod::Tpm2 => TokenStorageMethod::Tpm2SystemdCreds,
+        CredentialStorageMethod::GnomeKeyring
+        | CredentialStorageMethod::KWallet
+        | CredentialStorageMethod::KeePassXC => TokenStorageMethod::SecretService,
+        CredentialStorageMethod::FlatpakSecretPortal => TokenStorageMethod::FlatpakSecretPortal,
+        CredentialStorageMethod::EncryptedFile => TokenStorageMethod::EncryptedFile,
+        CredentialStorageMethod::None => TokenStorageMethod::None,
+    };
+
+    let feature = WaylandFeature::SessionPersistence {
+        restore_token_supported: portal.supports_restore_tokens,
+        max_persist_mode: portal.max_persist_mode,
+        token_storage,
+        portal_version: portal.version,
+    };
+
+    // Determine service level based on token support + storage
+    let level = match (portal.supports_restore_tokens, accessible, token_storage) {
+        // Portal v4+ with working storage
+        (true, true, TokenStorageMethod::Tpm2SystemdCreds) => ServiceLevel::Guaranteed,
+        (true, true, TokenStorageMethod::SecretService) => ServiceLevel::Guaranteed,
+        (true, true, TokenStorageMethod::FlatpakSecretPortal) => ServiceLevel::Guaranteed,
+        (true, true, TokenStorageMethod::EncryptedFile) => ServiceLevel::BestEffort,
+        // Portal supports tokens but storage issues
+        (true, false, _) => ServiceLevel::Degraded,
+        (true, true, TokenStorageMethod::None) => ServiceLevel::Degraded,
+        // Portal doesn't support tokens
+        (false, _, _) => ServiceLevel::Unavailable,
+    };
+
+    // Create service with appropriate constructor
+    let service = match level {
+        ServiceLevel::Guaranteed => AdvertisedService::guaranteed(ServiceId::SessionPersistence, feature),
+        ServiceLevel::BestEffort => AdvertisedService::best_effort(ServiceId::SessionPersistence, feature),
+        ServiceLevel::Degraded => {
+            let note = if !portal.supports_restore_tokens {
+                format!("Portal v{} does not support restore tokens (requires v4+)", portal.version)
+            } else if !accessible {
+                "Credential storage exists but is not accessible (locked?)".to_string()
+            } else {
+                "Degraded session persistence".to_string()
+            };
+            AdvertisedService::degraded(ServiceId::SessionPersistence, feature, &note)
+        }
+        ServiceLevel::Unavailable => {
+            return AdvertisedService::unavailable(ServiceId::SessionPersistence)
+                .with_note(&format!("Portal v{} does not support restore tokens", portal.version));
+        }
+    };
+
+    service
+}
+
+fn translate_direct_compositor_api(caps: &CompositorCapabilities) -> AdvertisedService {
+    use crate::session::DeploymentContext;
+
+    // Only available on GNOME, and only in non-Flatpak deployments
+    if matches!(caps.deployment, DeploymentContext::Flatpak) {
+        return AdvertisedService::unavailable(ServiceId::DirectCompositorAPI)
+            .with_note("Direct API blocked by Flatpak sandbox");
+    }
+
+    match &caps.compositor {
+        CompositorType::Gnome { version } => {
+            // Check for Mutter D-Bus interfaces availability
+            let has_screencast = check_dbus_interface_sync("org.gnome.Mutter.ScreenCast");
+            let has_remote_desktop = check_dbus_interface_sync("org.gnome.Mutter.RemoteDesktop");
+
+            if has_screencast && has_remote_desktop {
+                let feature = WaylandFeature::MutterDirectAPI {
+                    version: version.clone(),
+                    has_screencast,
+                    has_remote_desktop,
+                };
+
+                // Determine stability based on GNOME version
+                let level = match version.as_ref().and_then(|v| parse_gnome_version(v)) {
+                    Some(v) if v >= 45.0 => ServiceLevel::Guaranteed,
+                    Some(v) if v >= 42.0 => ServiceLevel::BestEffort,
+                    Some(_) => ServiceLevel::Degraded,
+                    None => ServiceLevel::Degraded,
+                };
+
+                let note = "Mutter D-Bus API bypasses portal permission dialog";
+                match level {
+                    ServiceLevel::Guaranteed => {
+                        AdvertisedService::guaranteed(ServiceId::DirectCompositorAPI, feature)
+                            .with_note(note)
+                    }
+                    ServiceLevel::BestEffort => {
+                        AdvertisedService::best_effort(ServiceId::DirectCompositorAPI, feature)
+                            .with_note(note)
+                    }
+                    ServiceLevel::Degraded => {
+                        AdvertisedService::degraded(ServiceId::DirectCompositorAPI, feature, note)
+                    }
+                    ServiceLevel::Unavailable => {
+                        AdvertisedService::unavailable(ServiceId::DirectCompositorAPI)
+                    }
+                }
+            } else {
+                AdvertisedService::unavailable(ServiceId::DirectCompositorAPI)
+                    .with_note("Mutter D-Bus interfaces not detected")
+            }
+        }
+        _ => AdvertisedService::unavailable(ServiceId::DirectCompositorAPI)
+            .with_note("Only available on GNOME compositor"),
+    }
+}
+
+fn translate_credential_storage(caps: &CompositorCapabilities) -> AdvertisedService {
+    let deployment = &caps.deployment;
+
+    // Use cached credential storage from caps (detected during probing)
+    let method = caps.credential_storage_method;
+    let encryption = caps.credential_encryption;
+    let accessible = caps.credential_storage_accessible;
+
+    let feature = WaylandFeature::CredentialStorage {
+        method,
+        is_accessible: accessible,
+        encryption,
+    };
+
+    use crate::session::CredentialStorageMethod;
+
+    let level = match (method, accessible) {
+        (CredentialStorageMethod::Tpm2, true) => ServiceLevel::Guaranteed,
+        (CredentialStorageMethod::GnomeKeyring, true) => ServiceLevel::Guaranteed,
+        (CredentialStorageMethod::KWallet, true) => ServiceLevel::Guaranteed,
+        (CredentialStorageMethod::KeePassXC, true) => ServiceLevel::Guaranteed,
+        (CredentialStorageMethod::FlatpakSecretPortal, true) => ServiceLevel::Guaranteed,
+        (CredentialStorageMethod::EncryptedFile, true) => ServiceLevel::BestEffort,
+        (_, false) => ServiceLevel::Degraded, // Storage exists but locked
+        (CredentialStorageMethod::None, _) => ServiceLevel::Unavailable,
+    };
+
+    let note = match (deployment, method) {
+        (crate::session::DeploymentContext::Flatpak, CredentialStorageMethod::FlatpakSecretPortal) => {
+            Some("Using Flatpak Secret Portal (host keyring via sandbox)".to_string())
+        }
+        (crate::session::DeploymentContext::Flatpak, _) => {
+            Some("Using encrypted file (Secret Portal unavailable)".to_string())
+        }
+        _ => None,
+    };
+
+    // Create service with appropriate constructor
+    let service = match level {
+        ServiceLevel::Guaranteed => {
+            let mut s = AdvertisedService::guaranteed(ServiceId::CredentialStorage, feature);
+            if let Some(n) = note {
+                s = s.with_note(&n);
+            }
+            s
+        }
+        ServiceLevel::BestEffort => {
+            let mut s = AdvertisedService::best_effort(ServiceId::CredentialStorage, feature);
+            if let Some(n) = note {
+                s = s.with_note(&n);
+            }
+            s
+        }
+        ServiceLevel::Degraded => {
+            AdvertisedService::degraded(
+                ServiceId::CredentialStorage,
+                feature,
+                note.as_deref().unwrap_or("Credential storage degraded")
+            )
+        }
+        ServiceLevel::Unavailable => {
+            AdvertisedService::unavailable(ServiceId::CredentialStorage)
+        }
+    };
+
+    service
+}
+
+fn translate_wlr_screencopy(caps: &CompositorCapabilities) -> AdvertisedService {
+    use crate::session::DeploymentContext;
+
+    // Not available in Flatpak (no direct Wayland socket access)
+    if matches!(caps.deployment, DeploymentContext::Flatpak) {
+        return AdvertisedService::unavailable(ServiceId::WlrScreencopy)
+            .with_note("wlr-screencopy blocked by Flatpak sandbox");
+    }
+
+    if !caps.compositor.is_wlroots_based() {
+        return AdvertisedService::unavailable(ServiceId::WlrScreencopy)
+            .with_note("Only available on wlroots-based compositors");
+    }
+
+    // Check for wlr-screencopy-unstable-v1 protocol
+    if let Some(version) = caps.get_protocol_version("zwlr_screencopy_manager_v1") {
+        let feature = WaylandFeature::WlrScreencopy {
+            version,
+            dmabuf_supported: caps.has_protocol("linux_dmabuf_v1", 1),
+            damage_supported: version >= 3, // Damage tracking added in v3
+        };
+
+        AdvertisedService::guaranteed(ServiceId::WlrScreencopy, feature)
+            .with_note("Direct capture without portal permission dialog")
+    } else {
+        AdvertisedService::unavailable(ServiceId::WlrScreencopy)
+            .with_note("wlr-screencopy protocol not found")
+    }
+}
+
+fn translate_unattended_access(caps: &CompositorCapabilities) -> AdvertisedService {
+    // Get dependent service levels
+    let session_persist_level = translate_session_persistence(caps).level;
+    let direct_api_level = translate_direct_compositor_api(caps).level;
+    let wlr_screencopy_level = translate_wlr_screencopy(caps).level;
+    let cred_storage_level = translate_credential_storage(caps).level;
+
+    // Can we avoid dialog?
+    let can_avoid_dialog = session_persist_level >= ServiceLevel::BestEffort
+        || direct_api_level >= ServiceLevel::BestEffort
+        || wlr_screencopy_level >= ServiceLevel::Guaranteed;
+
+    // Can we store credentials?
+    let can_store_credentials = cred_storage_level >= ServiceLevel::BestEffort;
+
+    let feature = WaylandFeature::UnattendedAccess {
+        can_avoid_dialog,
+        can_store_credentials,
+    };
+
+    // Determine overall level
+    let (level, note) = match (can_avoid_dialog, can_store_credentials) {
+        (true, true) => (
+            ServiceLevel::Guaranteed,
+            "Full unattended operation available"
+        ),
+        (true, false) => (
+            ServiceLevel::BestEffort,
+            "Dialog avoidance available, credential storage limited"
+        ),
+        (false, true) => (
+            ServiceLevel::Degraded,
+            "Credential storage available, but dialog required each session"
+        ),
+        (false, false) => (
+            ServiceLevel::Unavailable,
+            "Manual intervention required for each session"
+        ),
+    };
+
+    // Create service with appropriate constructor
+    match level {
+        ServiceLevel::Guaranteed => {
+            AdvertisedService::guaranteed(ServiceId::UnattendedAccess, feature)
+                .with_note(note)
+        }
+        ServiceLevel::BestEffort => {
+            AdvertisedService::best_effort(ServiceId::UnattendedAccess, feature)
+                .with_note(note)
+        }
+        ServiceLevel::Degraded => {
+            AdvertisedService::degraded(ServiceId::UnattendedAccess, feature, note)
+        }
+        ServiceLevel::Unavailable => {
+            AdvertisedService::unavailable(ServiceId::UnattendedAccess)
+                .with_note(note)
+        }
+    }
+}
+
+// Helper functions for translation
+
+fn check_dbus_interface_sync(interface: &str) -> bool {
+    // Check if D-Bus interface exists (requires tokio runtime)
+    // If no runtime available (e.g., in tests), return false
+
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.block_on(async {
+                match zbus::Connection::session().await {
+                    Ok(conn) => {
+                        match zbus::fdo::DBusProxy::new(&conn).await {
+                            Ok(proxy) => {
+                                match proxy.list_names().await {
+                                    Ok(names) => names.iter().any(|n| n.as_str().contains(interface)),
+                                    Err(_) => false,
+                                }
+                            }
+                            Err(_) => false,
+                        }
+                    }
+                    Err(_) => false,
+                }
+            })
+        }
+        Err(_) => {
+            // No tokio runtime available (e.g., in tests)
+            // Return false - Mutter API will be unavailable
+            false
+        }
+    }
+}
+
+fn parse_gnome_version(version_str: &str) -> Option<f32> {
+    // Parse "46.0" or "46.2" to 46.0, 46.2
+    version_str
+        .split('.')
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(".")
+        .parse::<f32>()
+        .ok()
+}
+
+// ============================================================================
 
 #[cfg(test)]
 mod tests {

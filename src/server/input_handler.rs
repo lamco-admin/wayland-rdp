@@ -83,7 +83,6 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::input::{CoordinateTransformer, InputError, KeyboardHandler, MonitorInfo, MouseButton, MouseHandler};
-use crate::portal::RemoteDesktopManager;
 
 /// WRD Input Handler
 ///
@@ -107,8 +106,8 @@ pub enum InputEvent {
 /// Receives keyboard and mouse events from RDP clients and injects them
 /// into the Wayland compositor via the Portal RemoteDesktop API.
 pub struct WrdInputHandler {
-    /// Portal RemoteDesktop manager for input injection
-    portal: Arc<RemoteDesktopManager>,
+    /// Session handle for input injection (abstraction over Portal/Mutter)
+    session_handle: Arc<dyn crate::session::SessionHandle>,
 
     /// Keyboard event handler (pub for multiplexer access)
     pub keyboard_handler: Arc<Mutex<KeyboardHandler>>,
@@ -118,16 +117,6 @@ pub struct WrdInputHandler {
 
     /// Coordinate transformer for multi-monitor support (pub for multiplexer access)
     pub coordinate_transformer: Arc<Mutex<CoordinateTransformer>>,
-
-    /// Portal session (kept alive for the connection lifetime)
-    session: Arc<
-        Mutex<
-            ashpd::desktop::Session<
-                'static,
-                ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
-            >,
-        >,
-    >,
 
     /// Primary stream node ID for input injection (PipeWire node ID)
     primary_stream_id: u32,
@@ -153,15 +142,7 @@ impl WrdInputHandler {
     ///
     /// Returns error if coordinate transformer initialization fails
     pub fn new(
-        portal: Arc<RemoteDesktopManager>,
-        session: Arc<
-            Mutex<
-                ashpd::desktop::Session<
-                    'static,
-                    ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
-                >,
-            >,
-        >,
+        session_handle: Arc<dyn crate::session::SessionHandle>,
         monitors: Vec<MonitorInfo>,
         primary_stream_id: u32,
         input_tx: mpsc::Sender<InputEvent>,
@@ -180,11 +161,10 @@ impl WrdInputHandler {
 
         // Start input batching task (10ms windows for responsive typing)
         // Receives from multiplexer input queue, batches, and sends to Portal
-        let portal_clone = Arc::clone(&portal);
+        let session_handle_clone = Arc::clone(&session_handle);
         let keyboard_clone = Arc::clone(&keyboard_handler);
         let mouse_clone = Arc::clone(&mouse_handler);
         let coord_clone = Arc::clone(&coordinate_transformer);
-        let session_clone = Arc::clone(&session);
 
         tokio::spawn(async move {
             let mut keyboard_batch = Vec::with_capacity(16);
@@ -214,9 +194,8 @@ impl WrdInputHandler {
                         }
                         for kbd_event in keyboard_batch.drain(..) {
                             if let Err(e) = Self::handle_keyboard_event_impl(
-                                &portal_clone,
+                                &session_handle_clone,
                                 &keyboard_clone,
-                                &session_clone,
                                 kbd_event
                             ).await {
                                 error!("Failed to handle batched keyboard event: {}", e);
@@ -229,10 +208,9 @@ impl WrdInputHandler {
                         }
                         for mouse_event in mouse_batch.drain(..) {
                             if let Err(e) = Self::handle_mouse_event_impl(
-                                &portal_clone,
+                                &session_handle_clone,
                                 &mouse_clone,
                                 &coord_clone,
-                                &session_clone,
                                 mouse_event,
                                 primary_stream_id
                             ).await {
@@ -249,11 +227,10 @@ impl WrdInputHandler {
         info!("Input batching task started (REAL task, 10ms flush interval)");
 
         Ok(Self {
-            portal,
+            session_handle,
             keyboard_handler,
             mouse_handler,
             coordinate_transformer,
-            session,
             primary_stream_id,
             input_tx,
         })
@@ -272,20 +249,11 @@ impl WrdInputHandler {
 
     /// Handle keyboard event implementation (static for batching task)
     async fn handle_keyboard_event_impl(
-        portal: &Arc<RemoteDesktopManager>,
+        session_handle: &Arc<dyn crate::session::SessionHandle>,
         keyboard_handler: &Arc<Mutex<KeyboardHandler>>,
-        session: &Arc<
-            Mutex<
-                ashpd::desktop::Session<
-                    'static,
-                    ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
-                >,
-            >,
-        >,
         event: IronKeyboardEvent,
     ) -> Result<(), InputError> {
         let mut keyboard = keyboard_handler.lock().await;
-        let session = session.lock().await;
 
         match event {
             IronKeyboardEvent::Pressed { code, extended } => {
@@ -332,9 +300,9 @@ impl WrdInputHandler {
                     );
                 }
 
-                // Inject key press via portal
-                portal
-                    .notify_keyboard_keycode(&session, keycode as i32, true)
+                // Inject key press via session (Portal or Mutter)
+                session_handle
+                    .notify_keyboard_keycode(keycode as i32, true)
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject key press: {}", e))
@@ -374,9 +342,9 @@ impl WrdInputHandler {
                     );
                 }
 
-                // Inject key release via portal
-                portal
-                    .notify_keyboard_keycode(&session, keycode as i32, false)
+                // Inject key release via session (Portal or Mutter)
+                session_handle
+                    .notify_keyboard_keycode(keycode as i32, false)
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject key release: {}", e))
@@ -416,23 +384,14 @@ impl WrdInputHandler {
     /// Handle mouse event with full error handling and logging
     /// Handle mouse event implementation (static for batching task)
     async fn handle_mouse_event_impl(
-        portal: &Arc<RemoteDesktopManager>,
+        session_handle: &Arc<dyn crate::session::SessionHandle>,
         mouse_handler: &Arc<Mutex<MouseHandler>>,
         coordinate_transformer: &Arc<Mutex<CoordinateTransformer>>,
-        session: &Arc<
-            Mutex<
-                ashpd::desktop::Session<
-                    'static,
-                    ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
-                >,
-            >,
-        >,
         event: IronMouseEvent,
         stream_id: u32,
     ) -> Result<(), InputError> {
         let mut mouse = mouse_handler.lock().await;
         let mut transformer = coordinate_transformer.lock().await;
-        let session = session.lock().await;
 
         match event {
             IronMouseEvent::Move { x, y } => {
@@ -452,10 +411,10 @@ impl WrdInputHandler {
                     }
                 };
 
-                // Inject mouse movement via portal (absolute positioning)
-                // Portal API uses PipeWire node ID (not index) for stream identification
-                portal
-                    .notify_pointer_motion_absolute(&session, stream_id, stream_x, stream_y)
+                // Inject mouse movement via session (Portal or Mutter)
+                // Uses PipeWire node ID for stream identification
+                session_handle
+                    .notify_pointer_motion_absolute(stream_id, stream_x, stream_y)
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject mouse move: {}", e))
@@ -478,9 +437,9 @@ impl WrdInputHandler {
                     }
                 };
 
-                // Inject via portal absolute API (we converted relative to absolute already)
-                portal
-                    .notify_pointer_motion_absolute(&session, stream_id, stream_x, stream_y)
+                // Inject via session absolute API (we converted relative to absolute already)
+                session_handle
+                    .notify_pointer_motion_absolute(stream_id, stream_x, stream_y)
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject relative move: {}", e))
@@ -490,8 +449,8 @@ impl WrdInputHandler {
             IronMouseEvent::LeftPressed => {
                 debug!("Left mouse button pressed");
                 mouse.handle_button_down(MouseButton::Left)?;
-                portal
-                    .notify_pointer_button(&session, 272, true) // BTN_LEFT = 0x110 = 272 (evdev code)
+                session_handle
+                    .notify_pointer_button(272, true) // BTN_LEFT = 0x110 = 272 (evdev code)
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject left press: {}", e))
@@ -501,8 +460,8 @@ impl WrdInputHandler {
             IronMouseEvent::LeftReleased => {
                 debug!("Left mouse button released");
                 mouse.handle_button_up(MouseButton::Left)?;
-                portal
-                    .notify_pointer_button(&session, 272, false) // BTN_LEFT = 0x110 = 272
+                session_handle
+                    .notify_pointer_button(272, false) // BTN_LEFT = 0x110 = 272
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject left release: {}", e))
@@ -512,8 +471,8 @@ impl WrdInputHandler {
             IronMouseEvent::RightPressed => {
                 debug!("Right mouse button pressed");
                 mouse.handle_button_down(MouseButton::Right)?;
-                portal
-                    .notify_pointer_button(&session, 273, true) // BTN_RIGHT = 0x111 = 273
+                session_handle
+                    .notify_pointer_button(273, true) // BTN_RIGHT = 0x111 = 273
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject right press: {}", e))
@@ -523,8 +482,8 @@ impl WrdInputHandler {
             IronMouseEvent::RightReleased => {
                 debug!("Right mouse button released");
                 mouse.handle_button_up(MouseButton::Right)?;
-                portal
-                    .notify_pointer_button(&session, 273, false) // BTN_RIGHT = 0x111 = 273
+                session_handle
+                    .notify_pointer_button(273, false) // BTN_RIGHT = 0x111 = 273
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject right release: {}", e))
@@ -534,8 +493,8 @@ impl WrdInputHandler {
             IronMouseEvent::MiddlePressed => {
                 debug!("Middle mouse button pressed");
                 mouse.handle_button_down(MouseButton::Middle)?;
-                portal
-                    .notify_pointer_button(&session, 274, true) // BTN_MIDDLE = 0x112 = 274
+                session_handle
+                    .notify_pointer_button(274, true) // BTN_MIDDLE = 0x112 = 274
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject middle press: {}", e))
@@ -545,8 +504,8 @@ impl WrdInputHandler {
             IronMouseEvent::MiddleReleased => {
                 debug!("Middle mouse button released");
                 mouse.handle_button_up(MouseButton::Middle)?;
-                portal
-                    .notify_pointer_button(&session, 274, false) // BTN_MIDDLE = 0x112 = 274
+                session_handle
+                    .notify_pointer_button(274, false) // BTN_MIDDLE = 0x112 = 274
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject middle release: {}", e))
@@ -556,8 +515,8 @@ impl WrdInputHandler {
             IronMouseEvent::Button4Pressed => {
                 debug!("Mouse button 4 pressed");
                 mouse.handle_button_down(MouseButton::Extra1)?;
-                portal
-                    .notify_pointer_button(&session, 275, true) // BTN_SIDE = 8
+                session_handle
+                    .notify_pointer_button(275, true) // BTN_SIDE = 8
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject button4 press: {}", e))
@@ -567,8 +526,8 @@ impl WrdInputHandler {
             IronMouseEvent::Button4Released => {
                 debug!("Mouse button 4 released");
                 mouse.handle_button_up(MouseButton::Extra1)?;
-                portal
-                    .notify_pointer_button(&session, 275, false)
+                session_handle
+                    .notify_pointer_button(275, false)
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject button4 release: {}", e))
@@ -578,8 +537,8 @@ impl WrdInputHandler {
             IronMouseEvent::Button5Pressed => {
                 debug!("Mouse button 5 pressed");
                 mouse.handle_button_down(MouseButton::Extra2)?;
-                portal
-                    .notify_pointer_button(&session, 276, true) // BTN_EXTRA = 9
+                session_handle
+                    .notify_pointer_button(276, true) // BTN_EXTRA = 9
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject button5 press: {}", e))
@@ -589,8 +548,8 @@ impl WrdInputHandler {
             IronMouseEvent::Button5Released => {
                 debug!("Mouse button 5 released");
                 mouse.handle_button_up(MouseButton::Extra2)?;
-                portal
-                    .notify_pointer_button(&session, 276, false)
+                session_handle
+                    .notify_pointer_button(276, false)
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject button5 release: {}", e))
@@ -602,10 +561,10 @@ impl WrdInputHandler {
                 // RDP scroll units are in 120ths
                 mouse.handle_scroll(0, value as i32)?;
 
-                // Portal scroll API takes continuous values
+                // Session scroll API takes continuous values
                 let delta_y = (value as f64 / 120.0) * 15.0; // 15 pixels per scroll unit
-                portal
-                    .notify_pointer_axis(&session, 0.0, delta_y)
+                session_handle
+                    .notify_pointer_axis(0.0, delta_y)
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject vertical scroll: {}", e))
@@ -619,8 +578,8 @@ impl WrdInputHandler {
                 // Normalize scroll values
                 let delta_x = (x as f64 / 120.0) * 15.0;
                 let delta_y = (y as f64 / 120.0) * 15.0;
-                portal
-                    .notify_pointer_axis(&session, delta_x, delta_y)
+                session_handle
+                    .notify_pointer_axis(delta_x, delta_y)
                     .await
                     .map_err(|e| {
                         InputError::PortalError(format!("Failed to inject scroll: {}", e))
@@ -662,11 +621,10 @@ impl RdpServerInputHandler for WrdInputHandler {
 impl Clone for WrdInputHandler {
     fn clone(&self) -> Self {
         Self {
-            portal: Arc::clone(&self.portal),
+            session_handle: Arc::clone(&self.session_handle),
             keyboard_handler: Arc::clone(&self.keyboard_handler),
             mouse_handler: Arc::clone(&self.mouse_handler),
             coordinate_transformer: Arc::clone(&self.coordinate_transformer),
-            session: Arc::clone(&self.session),
             primary_stream_id: self.primary_stream_id,
             input_tx: self.input_tx.clone(),
         }

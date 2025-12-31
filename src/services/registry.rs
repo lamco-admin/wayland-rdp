@@ -225,6 +225,70 @@ impl ServiceRegistry {
         // but network latency makes raw position updates feel laggy
         self.service_level(ServiceId::MetadataCursor) >= ServiceLevel::BestEffort
     }
+
+    // ========================================================================
+    // PHASE 2: Session Persistence Query Methods
+    // ========================================================================
+
+    /// Check if session persistence is available (portal restore tokens)
+    ///
+    /// Returns true if portal v4+ and credential storage is available
+    pub fn supports_session_persistence(&self) -> bool {
+        self.service_level(ServiceId::SessionPersistence) >= ServiceLevel::BestEffort
+    }
+
+    /// Check if unattended operation is possible
+    ///
+    /// Returns true if we can start without user interaction (tokens or direct API)
+    pub fn supports_unattended_access(&self) -> bool {
+        self.service_level(ServiceId::UnattendedAccess) >= ServiceLevel::BestEffort
+    }
+
+    /// Check if Mutter Direct API is available (GNOME bypass)
+    ///
+    /// Returns true if GNOME compositor with Mutter D-Bus interfaces detected
+    pub fn has_mutter_direct_api(&self) -> bool {
+        self.service_level(ServiceId::DirectCompositorAPI) >= ServiceLevel::BestEffort
+    }
+
+    /// Check if wlr-screencopy is available (wlroots bypass)
+    ///
+    /// Returns true if wlroots compositor with screencopy protocol detected
+    pub fn has_wlr_screencopy(&self) -> bool {
+        self.service_level(ServiceId::WlrScreencopy) >= ServiceLevel::Guaranteed
+    }
+
+    /// Get credential storage service level
+    pub fn credential_storage_level(&self) -> ServiceLevel {
+        self.service_level(ServiceId::CredentialStorage)
+    }
+
+    /// Check if server can avoid permission dialog (via any method)
+    ///
+    /// Returns true if one of these is available:
+    /// - Portal restore tokens
+    /// - Mutter Direct API
+    /// - wlr-screencopy
+    pub fn can_avoid_permission_dialog(&self) -> bool {
+        self.supports_session_persistence()
+            || self.has_mutter_direct_api()
+            || self.has_wlr_screencopy()
+    }
+
+    /// Get the best available session strategy
+    ///
+    /// Returns a string describing the recommended session persistence strategy
+    pub fn recommended_session_strategy(&self) -> &'static str {
+        if self.has_wlr_screencopy() {
+            "wlr-screencopy (no dialog)"
+        } else if self.has_mutter_direct_api() {
+            "Mutter Direct API (no dialog)"
+        } else if self.supports_session_persistence() {
+            "Portal + Restore Token (one-time dialog)"
+        } else {
+            "Basic Portal (dialog each time)"
+        }
+    }
 }
 
 /// Service counts by level
