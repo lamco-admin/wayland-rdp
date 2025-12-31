@@ -1,0 +1,698 @@
+diff --git a/quick-deploy.sh b/quick-deploy.sh
+index a63fc76..aa45153 100755
+--- a/quick-deploy.sh
++++ b/quick-deploy.sh
+@@ -21,4 +21,4 @@ echo "========================================="
+ echo ""
+ 
+ # SSH and run
+-ssh -t greg@${KDE_VM} "cd lamco-rdp-server-test && ./run-server.sh"
++ssh -t greg@${KDE_VM} "./run-server.sh"
+diff --git a/scripts/test-kde.sh b/scripts/test-kde.sh
+index 0ae5f5d..8128c77 100755
+--- a/scripts/test-kde.sh
++++ b/scripts/test-kde.sh
+@@ -6,7 +6,7 @@ set -e
+ 
+ KDE_VM="192.168.10.205"
+ REMOTE_USER="greg"
+-REMOTE_DIR="/home/greg/lamco-rdp-server-test"
++REMOTE_DIR="/home/greg"
+ LOG_FILE="kde-test-$(date +%Y%m%d-%H%M%S).log"
+ 
+ case "${1:-run}" in
+@@ -58,9 +58,8 @@ case "${1:-run}" in
+         echo ""
+         echo "Deployed successfully!"
+         echo ""
+-        echo "To run on KDE VM:"
++        echo "To run on GNOME test server:"
+         echo "  ssh ${REMOTE_USER}@${KDE_VM}"
+-        echo "  cd ${REMOTE_DIR}"
+         echo "  ./run-server.sh"
+         ;;
+ 
+diff --git a/src/mutter/remote_desktop.rs b/src/mutter/remote_desktop.rs
+index a0e38c6..6760bda 100644
+--- a/src/mutter/remote_desktop.rs
++++ b/src/mutter/remote_desktop.rs
+@@ -13,12 +13,14 @@ use zbus::Connection;
+ /// Service: org.gnome.Mutter.RemoteDesktop
+ /// Path: /org/gnome/Mutter/RemoteDesktop
+ #[derive(Debug)]
+-pub struct MutterRemoteDesktop<'a> {
+-    connection: Connection,
+-    proxy: zbus::Proxy<'a>,
++pub struct MutterRemoteDesktop {
++    /// D-Bus connection (public for advanced usage)
++    pub connection: Connection,
++    /// D-Bus proxy (public for direct method calls)
++    pub proxy: zbus::Proxy<'static>,
+ }
+ 
+-impl<'a> MutterRemoteDesktop<'a> {
++impl MutterRemoteDesktop {
+     /// Create a new RemoteDesktop proxy
+     pub async fn new(connection: &Connection) -> Result<Self> {
+         let proxy = zbus::ProxyBuilder::new(connection)
+@@ -37,19 +39,12 @@ impl<'a> MutterRemoteDesktop<'a> {
+ 
+     /// Create a new remote desktop session
+     ///
+-    /// # Arguments
+-    ///
+-    /// * `properties` - Session properties (can be empty)
+-    ///
+     /// # Returns
+     ///
+     /// Object path to the created session
+-    pub async fn create_session(
+-        &self,
+-        properties: HashMap<String, Value<'_>>,
+-    ) -> Result<OwnedObjectPath> {
++    pub async fn create_session(&self) -> Result<OwnedObjectPath> {
+         let response = self.proxy
+-            .call_method("CreateSession", &(properties,))
++            .call_method("CreateSession", &())
+             .await
+             .context("Failed to call CreateSession")?;
+ 
+@@ -65,12 +60,12 @@ impl<'a> MutterRemoteDesktop<'a> {
+ ///
+ /// Interface: org.gnome.Mutter.RemoteDesktop.Session
+ /// Path: /org/gnome/Mutter/RemoteDesktop/Session/*
+-#[derive(Debug)]
+-pub struct MutterRemoteDesktopSession<'a> {
+-    proxy: zbus::Proxy<'a>,
++#[derive(Debug, Clone)]
++pub struct MutterRemoteDesktopSession {
++    proxy: zbus::Proxy<'static>,
+ }
+ 
+-impl<'a> MutterRemoteDesktopSession<'a> {
++impl MutterRemoteDesktopSession {
+     /// Create a session proxy for an existing session
+     pub async fn new(connection: &Connection, session_path: OwnedObjectPath) -> Result<Self> {
+         let proxy = zbus::ProxyBuilder::new(connection)
+@@ -84,8 +79,36 @@ impl<'a> MutterRemoteDesktopSession<'a> {
+         Ok(Self { proxy })
+     }
+ 
++    /// Connect to EIS (Emulated Input Service) if needed
++    ///
++    /// GNOME 46+ may require ConnectToEIS before input injection works
++    pub async fn connect_to_eis(&self) -> Result<()> {
++        use std::collections::HashMap;
++        use zbus::zvariant::Value;
++
++        let options: HashMap<String, Value> = HashMap::new();
++
++        // ConnectToEIS returns a file descriptor, but we don't need it for basic input
++        // We just need to call it to enable input injection
++        match self.proxy.call_method("ConnectToEIS", &(options,)).await {
++            Ok(_) => {
++                tracing::info!("Connected to EIS (Emulated Input Service)");
++                Ok(())
++            }
++            Err(e) => {
++                // ConnectToEIS might not be available on older GNOME versions
++                tracing::debug!("ConnectToEIS not available or failed: {}", e);
++                tracing::debug!("Proceeding without EIS (may work on older GNOME)");
++                Ok(())
++            }
++        }
++    }
++
+     /// Start the remote desktop session
+     pub async fn start(&self) -> Result<()> {
++        // Try to connect to EIS first (required on GNOME 46+)
++        self.connect_to_eis().await?;
++
+         self.proxy
+             .call_method("Start", &())
+             .await
+@@ -111,11 +134,16 @@ impl<'a> MutterRemoteDesktopSession<'a> {
+     /// * `keycode` - Linux keycode (evdev)
+     /// * `pressed` - true for press, false for release
+     pub async fn notify_keyboard_keycode(&self, keycode: i32, pressed: bool) -> Result<()> {
+-        let state = if pressed { 1u32 } else { 0u32 };
++        // Mutter expects (u, b) = (uint32, bool), not (int32, uint32)
++        let keycode_u32 = keycode as u32;
+ 
+         self.proxy
+-            .call_method("NotifyKeyboardKeycode", &(keycode, state))
++            .call_method("NotifyKeyboardKeycode", &(keycode_u32, pressed))
+             .await
++            .map_err(|e| {
++                tracing::error!("D-Bus NotifyKeyboardKeycode failed: keycode={}, pressed={}, error={:#}", keycode, pressed, e);
++                e
++            })
+             .context("Failed to inject keyboard keycode")?;
+ 
+         Ok(())
+@@ -128,10 +156,9 @@ impl<'a> MutterRemoteDesktopSession<'a> {
+     /// * `keysym` - X11 keysym
+     /// * `pressed` - true for press, false for release
+     pub async fn notify_keyboard_keysym(&self, keysym: u32, pressed: bool) -> Result<()> {
+-        let state = if pressed { 1u32 } else { 0u32 };
+-
++        // Mutter expects (u, b) = (uint32, bool)
+         self.proxy
+-            .call_method("NotifyKeyboardKeysym", &(keysym, state))
++            .call_method("NotifyKeyboardKeysym", &(keysym, pressed))
+             .await
+             .context("Failed to inject keyboard keysym")?;
+ 
+@@ -151,9 +178,16 @@ impl<'a> MutterRemoteDesktopSession<'a> {
+         x: f64,
+         y: f64,
+     ) -> Result<()> {
++        // Mutter expects stream as a STRING, not ObjectPath
++        let stream_str = stream.as_str();
++
+         self.proxy
+-            .call_method("NotifyPointerMotionAbsolute", &(stream, x, y))
++            .call_method("NotifyPointerMotionAbsolute", &(stream_str, x, y))
+             .await
++            .map_err(|e| {
++                tracing::error!("D-Bus NotifyPointerMotionAbsolute failed: stream={}, x={}, y={}, error={:#}", stream, x, y, e);
++                e
++            })
+             .context("Failed to inject pointer motion")?;
+ 
+         Ok(())
+@@ -167,7 +201,7 @@ impl<'a> MutterRemoteDesktopSession<'a> {
+     /// * `dy` - Relative Y movement
+     pub async fn notify_pointer_motion(&self, dx: f64, dy: f64) -> Result<()> {
+         self.proxy
+-            .call_method("NotifyPointerMotion", &(dx, dy))
++            .call_method("NotifyPointerMotionRelative", &(dx, dy))
+             .await
+             .context("Failed to inject pointer motion")?;
+ 
+@@ -181,10 +215,9 @@ impl<'a> MutterRemoteDesktopSession<'a> {
+     /// * `button` - Button number (1=left, 2=middle, 3=right)
+     /// * `pressed` - true for press, false for release
+     pub async fn notify_pointer_button(&self, button: i32, pressed: bool) -> Result<()> {
+-        let state = if pressed { 1u32 } else { 0u32 };
+-
++        // Mutter expects (i, b) = (int32, bool)
+         self.proxy
+-            .call_method("NotifyPointerButton", &(button, state))
++            .call_method("NotifyPointerButton", &(button, pressed))
+             .await
+             .context("Failed to inject pointer button")?;
+ 
+diff --git a/src/mutter/screencast.rs b/src/mutter/screencast.rs
+index 9daccb6..12002fa 100644
+--- a/src/mutter/screencast.rs
++++ b/src/mutter/screencast.rs
+@@ -36,19 +36,24 @@ impl<'a> MutterScreenCast<'a> {
+         })
+     }
+ 
+-    /// Create a new screen cast session
++    /// Create a new screen cast session with a session ID
+     ///
+     /// # Arguments
+     ///
++    /// * `session_id` - Session ID to use (for linking with RemoteDesktop)
+     /// * `properties` - Session properties (can be empty)
+     ///
+     /// # Returns
+     ///
+-    /// Object path to the created session
++    /// Tuple of (object path, session ID used)
+     pub async fn create_session(
+         &self,
+-        properties: HashMap<String, Value<'_>>,
+-    ) -> Result<OwnedObjectPath> {
++        session_id: &str,
++        mut properties: HashMap<String, Value<'_>>,
++    ) -> Result<(OwnedObjectPath, String)> {
++        // Add session-id to properties if provided
++        properties.insert("session-id".to_string(), Value::new(session_id));
++
+         let response = self.proxy
+             .call_method("CreateSession", &(properties,))
+             .await
+@@ -58,7 +63,7 @@ impl<'a> MutterScreenCast<'a> {
+         let path: OwnedObjectPath = body.deserialize()
+             .context("Failed to deserialize CreateSession response")?;
+ 
+-        Ok(path)
++        Ok((path, session_id.to_string()))
+     }
+ }
+ 
+@@ -168,7 +173,8 @@ impl<'a> MutterScreenCastSession<'a> {
+ /// Path: /org/gnome/Mutter/ScreenCast/Stream/*
+ #[derive(Debug)]
+ pub struct MutterScreenCastStream<'a> {
+-    proxy: zbus::Proxy<'a>,
++    /// D-Bus proxy (public for signal subscription)
++    pub proxy: zbus::Proxy<'a>,
+ }
+ 
+ impl<'a> MutterScreenCastStream<'a> {
+@@ -185,14 +191,6 @@ impl<'a> MutterScreenCastStream<'a> {
+         Ok(Self { proxy })
+     }
+ 
+-    /// Get the PipeWire node ID for this stream
+-    pub async fn pipewire_node_id(&self) -> Result<u32> {
+-        self.proxy
+-            .get_property::<u32>("PipeWireNodeId")
+-            .await
+-            .context("Failed to get PipeWireNodeId property")
+-    }
+-
+     /// Get stream parameters (resolution, position, etc.)
+     pub async fn parameters(&self) -> Result<StreamParameters> {
+         let params: HashMap<String, OwnedValue> = self
+diff --git a/src/mutter/session_manager.rs b/src/mutter/session_manager.rs
+index 612a799..80bb636 100644
+--- a/src/mutter/session_manager.rs
++++ b/src/mutter/session_manager.rs
+@@ -35,6 +35,8 @@ pub struct MutterSessionHandle {
+     pub screencast_session: OwnedObjectPath,
+     /// RemoteDesktop session
+     pub remote_desktop_session: OwnedObjectPath,
++    /// RemoteDesktop session proxy (for input injection)
++    pub remote_desktop_session_proxy: Option<std::sync::Arc<tokio::sync::Mutex<MutterRemoteDesktopSession>>>,
+     /// Stream object paths
+     pub streams: Vec<OwnedObjectPath>,
+     /// Stream information
+@@ -93,16 +95,20 @@ impl MutterSessionManager {
+     ) -> Result<MutterSessionHandle> {
+         info!("Creating Mutter session (ScreenCast + RemoteDesktop)");
+ 
+-        // Create ScreenCast session
++        // Generate a session ID to link ScreenCast and RemoteDesktop sessions
++        let session_id = uuid::Uuid::new_v4().to_string();
++        info!("Generated session ID for linking: {}", session_id);
++
++        // Create ScreenCast session with session ID
+         let screencast_proxy = MutterScreenCast::new(&self.connection).await?;
+ 
+         let sc_properties = HashMap::new();
+-        let screencast_session_path = screencast_proxy
+-            .create_session(sc_properties)
++        let (screencast_session_path, _) = screencast_proxy
++            .create_session(&session_id, sc_properties)
+             .await
+             .context("Failed to create Mutter ScreenCast session")?;
+ 
+-        info!("Mutter ScreenCast session created: {:?}", screencast_session_path);
++        info!("Mutter ScreenCast session created: {:?} (session-id: {})", screencast_session_path, session_id);
+ 
+         // Create session proxy
+         let session_proxy =
+@@ -137,7 +143,44 @@ impl MutterSessionManager {
+ 
+         info!("Stream created: {:?}", stream_path);
+ 
+-        // Start the ScreenCast session
++        // Get stream proxy BEFORE starting (need to subscribe to signal first)
++        let stream_proxy =
++            MutterScreenCastStream::new(&self.connection, stream_path.clone()).await?;
++
++        // We need to subscribe to PipeWireStreamAdded signal BEFORE calling Start()
++        // The signal is emitted when Start() is called, so we must be listening first
++
++        // Spawn signal listener in background
++        let stream_proxy_clone = stream_proxy.proxy.clone();
++        let signal_task = tokio::spawn(async move {
++            use futures_util::stream::StreamExt;
++
++            let mut signal_stream = stream_proxy_clone
++                .receive_signal("PipeWireStreamAdded")
++                .await
++                .context("Failed to subscribe to PipeWireStreamAdded signal")?;
++
++            // Wait for signal with timeout
++            match tokio::time::timeout(
++                tokio::time::Duration::from_secs(5),
++                signal_stream.next()
++            ).await {
++                Ok(Some(signal)) => {
++                    let body = signal.body();
++                    let node_id: u32 = body
++                        .deserialize()
++                        .context("Failed to deserialize PipeWireStreamAdded")?;
++                    Ok(node_id)
++                }
++                Ok(None) => Err(anyhow::anyhow!("Signal stream ended")),
++                Err(_) => Err(anyhow::anyhow!("Timeout waiting for PipeWireStreamAdded (5s)")),
++            }
++        });
++
++        // Small delay to ensure signal subscription is active
++        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
++
++        // Start the ScreenCast session (this triggers PipeWireStreamAdded signal)
+         session_proxy
+             .start()
+             .await
+@@ -145,14 +188,11 @@ impl MutterSessionManager {
+ 
+         info!("Mutter ScreenCast session started successfully");
+ 
+-        // Get stream information
+-        let stream_proxy =
+-            MutterScreenCastStream::new(&self.connection, stream_path.clone()).await?;
+-
+-        let node_id = stream_proxy
+-            .pipewire_node_id()
++        // Wait for the signal task to receive node_id
++        let node_id = signal_task
+             .await
+-            .context("Failed to get PipeWire node ID")?;
++            .context("Signal task panicked or was cancelled")?
++            .context("Failed to get PipeWire node ID from signal")?;
+ 
+         let params = stream_proxy
+             .parameters()
+@@ -185,11 +225,14 @@ impl MutterSessionManager {
+         // Create RemoteDesktop session for input injection
+         let rd_proxy = MutterRemoteDesktop::new(&self.connection).await?;
+ 
+-        let rd_properties = HashMap::new();
+-        let rd_session_path = rd_proxy
+-            .create_session(rd_properties)
++        // Create RemoteDesktop session (no arguments on this GNOME version)
++        let response = rd_proxy.proxy
++            .call_method("CreateSession", &())
+             .await
+-            .context("Failed to create Mutter RemoteDesktop session")?;
++            .context("Failed to call RemoteDesktop CreateSession")?;
++
++        let rd_session_path: OwnedObjectPath = response.body().deserialize()
++            .context("Failed to deserialize RemoteDesktop CreateSession response")?;
+ 
+         info!("Mutter RemoteDesktop session created: {:?}", rd_session_path);
+ 
+@@ -204,10 +247,11 @@ impl MutterSessionManager {
+ 
+         info!("Mutter RemoteDesktop session started successfully");
+ 
+-        // Create session handle
++        // Create session handle with RemoteDesktop proxy stored for input injection
+         let handle = MutterSessionHandle {
+             screencast_session: screencast_session_path,
+-            remote_desktop_session: rd_session_path,
++            remote_desktop_session: rd_session_path.clone(),
++            remote_desktop_session_proxy: Some(std::sync::Arc::new(tokio::sync::Mutex::new(rd_session_proxy))),
+             streams: vec![stream_path],
+             stream_info: vec![stream_info],
+             connection: self.connection.clone(),
+@@ -233,7 +277,7 @@ impl MutterSessionHandle {
+     }
+ 
+     /// Get RemoteDesktop session for input injection
+-    pub async fn remote_desktop_session(&self) -> Result<MutterRemoteDesktopSession<'_>> {
++    pub async fn remote_desktop_session(&self) -> Result<MutterRemoteDesktopSession> {
+         MutterRemoteDesktopSession::new(&self.connection, self.remote_desktop_session.clone()).await
+     }
+ 
+diff --git a/src/server/mod.rs b/src/server/mod.rs
+index c1c4e9e..b42626b 100644
+--- a/src/server/mod.rs
++++ b/src/server/mod.rs
+@@ -107,6 +107,10 @@ pub struct WrdServer {
+     /// Display handler (kept for lifecycle management)
+     #[allow(dead_code)]
+     display_handler: Arc<WrdDisplayHandler>,
++
++    /// Session handle (kept alive for Mutter sessions - prevents D-Bus object cleanup)
++    #[allow(dead_code)]
++    session_handle: Arc<dyn crate::session::SessionHandle>,
+ }
+ 
+ impl WrdServer {
+@@ -309,8 +313,14 @@ impl WrdServer {
+             // Mutter strategy: Need separate Portal session for clipboard (one dialog)
+             info!("Strategy doesn't provide clipboard, creating separate Portal session");
+ 
++            // Create Portal config WITHOUT persistence for clipboard session
++            // Some portals reject persistence for RemoteDesktop sessions
++            let mut clipboard_portal_config = config.to_portal_config();
++            clipboard_portal_config.persist_mode = ashpd::desktop::PersistMode::DoNot;
++            clipboard_portal_config.restore_token = None;
++
+             let portal_manager = Arc::new(
+-                PortalManager::new(config.to_portal_config())
++                PortalManager::new(clipboard_portal_config)
+                     .await
+                     .context("Failed to create Portal manager for clipboard")?,
+             );
+@@ -327,7 +337,7 @@ impl WrdServer {
+                     .context("Failed to create Portal clipboard manager")?,
+             );
+ 
+-            info!("Separate Portal session created for clipboard");
++            info!("Separate Portal session created for clipboard (non-persistent)");
+ 
+             (Some(clipboard_mgr), Arc::new(Mutex::new(clipboard_handle.session)))
+         };
+@@ -545,6 +555,7 @@ impl WrdServer {
+             rdp_server,
+             portal_manager,
+             display_handler,
++            session_handle,
+         })
+     }
+ 
+diff --git a/src/services/translation.rs b/src/services/translation.rs
+index 8644f7f..6186126 100644
+--- a/src/services/translation.rs
++++ b/src/services/translation.rs
+@@ -636,34 +636,26 @@ fn translate_unattended_access(caps: &CompositorCapabilities) -> AdvertisedServi
+ // Helper functions for translation
+ 
+ fn check_dbus_interface_sync(interface: &str) -> bool {
+-    // Check if D-Bus interface exists (requires tokio runtime)
+-    // If no runtime available (e.g., in tests), return false
+-
+-    match tokio::runtime::Handle::try_current() {
+-        Ok(handle) => {
+-            handle.block_on(async {
+-                match zbus::Connection::session().await {
+-                    Ok(conn) => {
+-                        match zbus::fdo::DBusProxy::new(&conn).await {
+-                            Ok(proxy) => {
+-                                match proxy.list_names().await {
+-                                    Ok(names) => names.iter().any(|n| n.as_str().contains(interface)),
+-                                    Err(_) => false,
+-                                }
+-                            }
+-                            Err(_) => false,
+-                        }
+-                    }
+-                    Err(_) => false,
+-                }
++    // Check if D-Bus interface exists synchronously
++    // Uses blocking to avoid nested runtime issues when called from async context
++
++    // Use std::thread to avoid tokio runtime nesting issues
++    let interface = interface.to_string();
++
++    std::thread::scope(|s| {
++        let handle = s.spawn(move || {
++            // Create a new tokio runtime for this thread
++            let rt = tokio::runtime::Runtime::new().ok()?;
++            rt.block_on(async {
++                let conn = zbus::Connection::session().await.ok()?;
++                let proxy = zbus::fdo::DBusProxy::new(&conn).await.ok()?;
++                let names = proxy.list_names().await.ok()?;
++                Some(names.iter().any(|n| n.as_str().contains(&interface)))
+             })
+-        }
+-        Err(_) => {
+-            // No tokio runtime available (e.g., in tests)
+-            // Return false - Mutter API will be unavailable
+-            false
+-        }
+-    }
++        });
++
++        handle.join().ok().flatten().unwrap_or(false)
++    })
+ }
+ 
+ fn parse_gnome_version(version_str: &str) -> Option<f32> {
+diff --git a/src/session/strategies/mutter_direct.rs b/src/session/strategies/mutter_direct.rs
+index 23105bf..b9e296b 100644
+--- a/src/session/strategies/mutter_direct.rs
++++ b/src/session/strategies/mutter_direct.rs
+@@ -19,6 +19,8 @@ use crate::session::strategy::{
+ pub struct MutterSessionHandleImpl {
+     /// Underlying Mutter session
+     mutter_handle: MutterSessionHandle,
++    /// Track last mouse position per stream (for relative motion workaround)
++    last_positions: tokio::sync::Mutex<std::collections::HashMap<u32, (f64, f64)>>,
+ }
+ 
+ #[async_trait]
+@@ -47,13 +49,12 @@ impl SessionHandle for MutterSessionHandleImpl {
+     }
+ 
+     async fn notify_keyboard_keycode(&self, keycode: i32, pressed: bool) -> Result<()> {
+-        // Create RemoteDesktop session proxy for input injection
+-        let rd_session = crate::mutter::MutterRemoteDesktopSession::new(
+-            &self.mutter_handle.connection,
+-            self.mutter_handle.remote_desktop_session.clone(),
+-        )
+-        .await
+-        .context("Failed to create Mutter RemoteDesktop session proxy")?;
++        // Use stored RemoteDesktop session proxy (already started and EIS-connected)
++        let rd_proxy = self.mutter_handle.remote_desktop_session_proxy
++            .as_ref()
++            .ok_or_else(|| anyhow!("RemoteDesktop session proxy not available"))?;
++
++        let rd_session = rd_proxy.lock().await;
+ 
+         rd_session
+             .notify_keyboard_keycode(keycode, pressed)
+@@ -62,36 +63,65 @@ impl SessionHandle for MutterSessionHandleImpl {
+     }
+ 
+     async fn notify_pointer_motion_absolute(&self, stream_id: u32, x: f64, y: f64) -> Result<()> {
+-        // Create RemoteDesktop session proxy
+-        let rd_session = crate::mutter::MutterRemoteDesktopSession::new(
+-            &self.mutter_handle.connection,
+-            self.mutter_handle.remote_desktop_session.clone(),
+-        )
+-        .await
+-        .context("Failed to create Mutter RemoteDesktop session proxy")?;
+-
+-        // Mutter needs the stream object path, not just the node ID
+-        // Find the stream path that corresponds to this node ID
+-        let stream_path = self
+-            .mutter_handle
+-            .streams
+-            .first()
+-            .ok_or_else(|| anyhow!("No streams available"))?;
++        // Use stored RemoteDesktop session proxy (already started and EIS-connected)
++        let rd_proxy = self.mutter_handle.remote_desktop_session_proxy
++            .as_ref()
++            .ok_or_else(|| anyhow!("RemoteDesktop session proxy not available"))?;
++
++        let rd_session = rd_proxy.lock().await;
++
++        // WORKAROUND: NotifyPointerMotionAbsolute with stream doesn't work ("No screen cast active")
++        // This may be because sessions aren't linked properly on this GNOME version
++        // Fall back to NotifyPointerMotionRelative which doesn't need stream linkage
++
++        // Track last position per stream to calculate delta (supports multi-monitor)
++        let mut positions = self.last_positions.lock().await;
++
++        let (dx, dy, is_first) = match positions.get(&stream_id) {
++            Some(&(last_x, last_y)) => {
++                let dx = x - last_x;
++                let dy = y - last_y;
++                positions.insert(stream_id, (x, y));
++                (dx, dy, false)
++            }
++            None => {
++                // First event for this stream - initialize position
++                positions.insert(stream_id, (x, y));
++                (0.0, 0.0, true)
++            }
++        };
++
++        // Drop lock before await
++        drop(positions);
++
++        if is_first {
++            tracing::info!("Mutter: Initialized cursor position for stream {} to ({}, {})", stream_id, x, y);
++            return Ok(());
++        }
++
++        // Use relative motion
++        tracing::debug!("Mutter: Injecting relative motion dx={:.2}, dy={:.2} for stream {}", dx, dy, stream_id);
+ 
+         rd_session
+-            .notify_pointer_motion_absolute(stream_path, x, y)
++            .notify_pointer_motion(dx, dy)
+             .await
+             .context("Failed to inject pointer motion via Mutter")
++            .map_err(|e| {
++                tracing::error!("notify_pointer_motion failed: dx={}, dy={}, error={:#}", dx, dy, e);
++                e
++            })?;
++
++        tracing::debug!("Mutter: Relative motion injected successfully");
++        Ok(())
+     }
+ 
+     async fn notify_pointer_button(&self, button: i32, pressed: bool) -> Result<()> {
+-        // Create RemoteDesktop session proxy
+-        let rd_session = crate::mutter::MutterRemoteDesktopSession::new(
+-            &self.mutter_handle.connection,
+-            self.mutter_handle.remote_desktop_session.clone(),
+-        )
+-        .await
+-        .context("Failed to create Mutter RemoteDesktop session proxy")?;
++        // Use stored RemoteDesktop session proxy (already started and EIS-connected)
++        let rd_proxy = self.mutter_handle.remote_desktop_session_proxy
++            .as_ref()
++            .ok_or_else(|| anyhow!("RemoteDesktop session proxy not available"))?;
++
++        let rd_session = rd_proxy.lock().await;
+ 
+         rd_session
+             .notify_pointer_button(button, pressed)
+@@ -100,13 +130,12 @@ impl SessionHandle for MutterSessionHandleImpl {
+     }
+ 
+     async fn notify_pointer_axis(&self, dx: f64, dy: f64) -> Result<()> {
+-        // Create RemoteDesktop session proxy
+-        let rd_session = crate::mutter::MutterRemoteDesktopSession::new(
+-            &self.mutter_handle.connection,
+-            self.mutter_handle.remote_desktop_session.clone(),
+-        )
+-        .await
+-        .context("Failed to create Mutter RemoteDesktop session proxy")?;
++        // Use stored RemoteDesktop session proxy (already started and EIS-connected)
++        let rd_proxy = self.mutter_handle.remote_desktop_session_proxy
++            .as_ref()
++            .ok_or_else(|| anyhow!("RemoteDesktop session proxy not available"))?;
++
++        let rd_session = rd_proxy.lock().await;
+ 
+         rd_session
+             .notify_pointer_axis(dx, dy)
+@@ -199,7 +228,10 @@ impl SessionStrategy for MutterDirectStrategy {
+         }
+ 
+         // Wrap in our handle type
+-        let handle = MutterSessionHandleImpl { mutter_handle };
++        let handle = MutterSessionHandleImpl {
++            mutter_handle,
++            last_positions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
++        };
+ 
+         Ok(Arc::new(handle))
+     }
+diff --git a/src/utils/errors.rs b/src/utils/errors.rs
+index 6613d50..7189d91 100644
+--- a/src/utils/errors.rs
++++ b/src/utils/errors.rs
+@@ -69,13 +69,13 @@ pub fn format_user_error(error: &anyhow::Error) -> String {
+     writeln!(&mut output, "Need Help?").ok();
+     writeln!(
+         &mut output,
+-        "  - Run with --verbose for detailed logs: wrd-server -vvv"
++        "  - Run with --verbose for detailed logs: lamco-rdp-server -vvv"
+     )
+     .ok();
+-    writeln!(&mut output, "  - Check logs in: /var/log/wrd-server/").ok();
++    writeln!(&mut output, "  - Logs are written to timestamped files in current directory").ok();
+     writeln!(
+         &mut output,
+-        "  - Report issues: https://github.com/lamco-admin/wayland-rdp/issues"
++        "  - Report issues: https://github.com/lamco-admin/lamco-rdp-server/issues"
+     )
+     .ok();
+     writeln!(
