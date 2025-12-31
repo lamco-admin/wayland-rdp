@@ -76,7 +76,7 @@ pub mod strategies {
     pub mod mutter_direct;
     pub mod selector;
 
-    pub use portal_token::PortalTokenStrategy;
+    pub use portal_token::{PortalTokenStrategy, PortalSessionHandleImpl};
     pub use mutter_direct::MutterDirectStrategy;
     pub use selector::SessionStrategySelector;
 }

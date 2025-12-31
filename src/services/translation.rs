@@ -440,29 +440,38 @@ fn translate_direct_compositor_api(caps: &CompositorCapabilities) -> AdvertisedS
                     has_remote_desktop,
                 };
 
-                // Determine stability based on GNOME version
-                let level = match version.as_ref().and_then(|v| parse_gnome_version(v)) {
-                    Some(v) if v >= 45.0 => ServiceLevel::Guaranteed,
-                    Some(v) if v >= 42.0 => ServiceLevel::BestEffort,
-                    Some(_) => ServiceLevel::Degraded,
-                    None => ServiceLevel::Degraded,
-                };
+                // Determine Mutter API functionality based on GNOME version
+                // This is based on actual testing and known API incompleteness
+                let gnome_ver = version.as_ref().and_then(|v| parse_gnome_version(v));
 
-                let note = "Mutter D-Bus API bypasses portal permission dialog";
-                match level {
-                    ServiceLevel::Guaranteed => {
-                        AdvertisedService::guaranteed(ServiceId::DirectCompositorAPI, feature)
-                            .with_note(note)
-                    }
-                    ServiceLevel::BestEffort => {
-                        AdvertisedService::best_effort(ServiceId::DirectCompositorAPI, feature)
-                            .with_note(note)
-                    }
-                    ServiceLevel::Degraded => {
-                        AdvertisedService::degraded(ServiceId::DirectCompositorAPI, feature, note)
-                    }
-                    ServiceLevel::Unavailable => {
+                match gnome_ver {
+                    // GNOME 46+: Known broken - session linkage incomplete
+                    // Issues: RemoteDesktop/ScreenCast can't link, input fails, PipeWire streams don't work
+                    // Portal works perfectly on 46+, so use that instead
+                    Some(v) if v >= 46.0 => {
                         AdvertisedService::unavailable(ServiceId::DirectCompositorAPI)
+                            .with_note("Mutter API incomplete on GNOME 46+ (session linkage broken)")
+                    }
+
+                    // GNOME 40-45: Should work (critical for RHEL 9, Ubuntu 22.04 LTS)
+                    // Portal v3 on these systems doesn't support tokens
+                    // Mutter bypasses portal entirely - zero dialogs
+                    // Needs testing on actual RHEL 9/Ubuntu 22.04
+                    Some(v) if v >= 40.0 => {
+                        AdvertisedService::best_effort(ServiceId::DirectCompositorAPI, feature)
+                            .with_note("Mutter D-Bus API (critical for Portal v3 systems)")
+                    }
+
+                    // GNOME < 40: Untested, probably doesn't have full API
+                    Some(_) => {
+                        AdvertisedService::degraded(ServiceId::DirectCompositorAPI, feature,
+                            "Mutter API available but untested on GNOME < 40")
+                    }
+
+                    // Version unknown: Conservative - mark as degraded
+                    None => {
+                        AdvertisedService::degraded(ServiceId::DirectCompositorAPI, feature,
+                            "Mutter API available but GNOME version unknown")
                     }
                 }
             } else {
@@ -636,34 +645,26 @@ fn translate_unattended_access(caps: &CompositorCapabilities) -> AdvertisedServi
 // Helper functions for translation
 
 fn check_dbus_interface_sync(interface: &str) -> bool {
-    // Check if D-Bus interface exists (requires tokio runtime)
-    // If no runtime available (e.g., in tests), return false
+    // Check if D-Bus interface exists synchronously
+    // Uses blocking to avoid nested runtime issues when called from async context
 
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            handle.block_on(async {
-                match zbus::Connection::session().await {
-                    Ok(conn) => {
-                        match zbus::fdo::DBusProxy::new(&conn).await {
-                            Ok(proxy) => {
-                                match proxy.list_names().await {
-                                    Ok(names) => names.iter().any(|n| n.as_str().contains(interface)),
-                                    Err(_) => false,
-                                }
-                            }
-                            Err(_) => false,
-                        }
-                    }
-                    Err(_) => false,
-                }
+    // Use std::thread to avoid tokio runtime nesting issues
+    let interface = interface.to_string();
+
+    std::thread::scope(|s| {
+        let handle = s.spawn(move || {
+            // Create a new tokio runtime for this thread
+            let rt = tokio::runtime::Runtime::new().ok()?;
+            rt.block_on(async {
+                let conn = zbus::Connection::session().await.ok()?;
+                let proxy = zbus::fdo::DBusProxy::new(&conn).await.ok()?;
+                let names = proxy.list_names().await.ok()?;
+                Some(names.iter().any(|n| n.as_str().contains(&interface)))
             })
-        }
-        Err(_) => {
-            // No tokio runtime available (e.g., in tests)
-            // Return false - Mutter API will be unavailable
-            false
-        }
-    }
+        });
+
+        handle.join().ok().flatten().unwrap_or(false)
+    })
 }
 
 fn parse_gnome_version(version_str: &str) -> Option<f32> {

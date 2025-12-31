@@ -137,7 +137,17 @@ impl MutterSessionManager {
 
         info!("Stream created: {:?}", stream_path);
 
-        // Start the ScreenCast session
+        // Get stream proxy BEFORE starting (need to subscribe to signal first)
+        let stream_proxy =
+            MutterScreenCastStream::new(&self.connection, stream_path.clone()).await?;
+
+        // Subscribe to PipeWireStreamAdded signal BEFORE calling Start()
+        let mut signal_stream = stream_proxy
+            .subscribe_for_node_id()
+            .await
+            .context("Failed to subscribe to PipeWireStreamAdded signal")?;
+
+        // Start the ScreenCast session (this triggers PipeWireStreamAdded signal)
         session_proxy
             .start()
             .await
@@ -145,14 +155,22 @@ impl MutterSessionManager {
 
         info!("Mutter ScreenCast session started successfully");
 
-        // Get stream information
-        let stream_proxy =
-            MutterScreenCastStream::new(&self.connection, stream_path.clone()).await?;
-
-        let node_id = stream_proxy
-            .pipewire_node_id()
-            .await
-            .context("Failed to get PipeWire node ID")?;
+        // Wait for PipeWireStreamAdded signal with timeout
+        use futures_util::stream::StreamExt;
+        let node_id = match tokio::time::timeout(
+            tokio::time::Duration::from_secs(5),
+            signal_stream.next()
+        ).await {
+            Ok(Some(signal)) => {
+                let body = signal.body();
+                let node_id: u32 = body.deserialize()
+                    .context("Failed to deserialize PipeWireStreamAdded signal")?;
+                tracing::info!("Received PipeWire node ID {} from signal", node_id);
+                node_id
+            }
+            Ok(None) => return Err(anyhow::anyhow!("PipeWireStreamAdded signal stream ended")),
+            Err(_) => return Err(anyhow::anyhow!("Timeout waiting for PipeWireStreamAdded signal (5s)")),
+        };
 
         let params = stream_proxy
             .parameters()
@@ -185,9 +203,9 @@ impl MutterSessionManager {
         // Create RemoteDesktop session for input injection
         let rd_proxy = MutterRemoteDesktop::new(&self.connection).await?;
 
-        let rd_properties = HashMap::new();
+        // RemoteDesktop CreateSession takes NO arguments on this GNOME version
         let rd_session_path = rd_proxy
-            .create_session(rd_properties)
+            .create_session()
             .await
             .context("Failed to create Mutter RemoteDesktop session")?;
 

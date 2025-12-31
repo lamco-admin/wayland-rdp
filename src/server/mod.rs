@@ -300,26 +300,42 @@ impl WrdServer {
             }
         };
 
+        // Create Portal manager for input+clipboard (needed for both strategies)
+        let mut portal_config = config.to_portal_config();
+        portal_config.persist_mode = ashpd::desktop::PersistMode::DoNot;  // Don't persist (causes errors)
+        portal_config.restore_token = None;
+
+        let portal_manager = Arc::new(
+            PortalManager::new(portal_config)
+                .await
+                .context("Failed to create Portal manager for input+clipboard")?,
+        );
+
         // Get clipboard components from session handle, or create fallback Portal session
-        let (portal_clipboard_manager, portal_clipboard_session) = if let Some(clipboard) = session_handle.portal_clipboard() {
+        // HYBRID STRATEGY: For Mutter, we also use Portal session for input (Mutter input broken on GNOME 46)
+        let (portal_clipboard_manager, portal_clipboard_session, portal_input_handle) = if let Some(clipboard) = session_handle.portal_clipboard() {
             // Portal strategy: Clipboard shares the same session (zero extra dialogs)
             info!("Using Portal clipboard from strategy (shared session)");
-            (Some(clipboard.manager), clipboard.session)
-        } else {
-            // Mutter strategy: Need separate Portal session for clipboard (one dialog)
-            info!("Strategy doesn't provide clipboard, creating separate Portal session");
 
-            let portal_manager = Arc::new(
-                PortalManager::new(config.to_portal_config())
-                    .await
-                    .context("Failed to create Portal manager for clipboard")?,
+            // Create a PortalSessionHandleImpl for input (same session)
+            let input_handle = crate::session::strategies::PortalSessionHandleImpl::from_portal_session(
+                clipboard.session.clone(),
+                portal_manager.remote_desktop().clone(),
+                clipboard.manager.clone(),
             );
 
-            let clipboard_session_id = format!("lamco-rdp-clipboard-{}", uuid::Uuid::new_v4());
-            let (clipboard_handle, _) = portal_manager
-                .create_session(clipboard_session_id, None)
+            (Some(clipboard.manager), clipboard.session, Arc::new(input_handle) as Arc<dyn crate::session::SessionHandle>)
+        } else {
+            // Mutter strategy: Need separate Portal session for input AND clipboard (one dialog)
+            // HYBRID: Mutter provides video (zero dialogs), Portal provides input+clipboard (one dialog)
+            info!("Strategy doesn't provide clipboard, creating separate Portal session for input+clipboard");
+            info!("HYBRID MODE: Mutter for video (zero dialogs), Portal for input+clipboard (one dialog)");
+
+            let session_id = format!("lamco-rdp-input-clipboard-{}", uuid::Uuid::new_v4());
+            let (portal_handle, _) = portal_manager
+                .create_session(session_id, None)
                 .await
-                .context("Failed to create Portal session for clipboard")?;
+                .context("Failed to create Portal session for input+clipboard")?;
 
             let clipboard_mgr = Arc::new(
                 lamco_portal::ClipboardManager::new()
@@ -327,18 +343,19 @@ impl WrdServer {
                     .context("Failed to create Portal clipboard manager")?,
             );
 
-            info!("Separate Portal session created for clipboard");
+            info!("Separate Portal session created for input+clipboard (non-persistent)");
 
-            (Some(clipboard_mgr), Arc::new(Mutex::new(clipboard_handle.session)))
+            let session = Arc::new(Mutex::new(portal_handle.session));
+
+            // Create PortalSessionHandleImpl for input using the same Portal session
+            let input_handle = crate::session::strategies::PortalSessionHandleImpl::from_portal_session(
+                session.clone(),
+                portal_manager.remote_desktop().clone(),
+                clipboard_mgr.clone(),
+            );
+
+            (Some(clipboard_mgr), session, Arc::new(input_handle) as Arc<dyn crate::session::SessionHandle>)
         };
-
-        // Keep minimal portal_manager for multiplexer (only used for remote_desktop reference)
-        // This is a bit awkward but the multiplexer still needs portal reference
-        let portal_manager = Arc::new(
-            PortalManager::new(config.to_portal_config())
-                .await
-                .context("Failed to create Portal manager reference")?,
-        );
 
         info!(
             "Session started with {} streams, PipeWire FD: {}",
@@ -437,9 +454,10 @@ impl WrdServer {
             primary_stream_id
         );
 
-        // Create input handler using session handle (Portal or Mutter)
+        // Create input handler using Portal session handle (works correctly)
+        // HYBRID: For Mutter strategy, uses Portal for input while Mutter handles video
         let input_handler = WrdInputHandler::new(
-            session_handle.clone(), // Use strategy's session for input injection
+            portal_input_handle, // Use Portal session for input (works on all DEs)
             monitors.clone(),
             primary_stream_id,
             input_tx.clone(), // Multiplexer input queue sender (for handler callbacks)
@@ -447,7 +465,7 @@ impl WrdServer {
         )
         .context("Failed to create input handler")?;
 
-        info!("Input handler created successfully - mouse/keyboard enabled via {}", session_handle.session_type());
+        info!("Input handler created successfully - mouse/keyboard enabled via Portal");
 
         // Start full multiplexer drain loop
         // Note: Input queue is handled by input_handler's batching task

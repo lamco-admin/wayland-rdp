@@ -37,19 +37,12 @@ impl<'a> MutterRemoteDesktop<'a> {
 
     /// Create a new remote desktop session
     ///
-    /// # Arguments
-    ///
-    /// * `properties` - Session properties (can be empty)
-    ///
     /// # Returns
     ///
     /// Object path to the created session
-    pub async fn create_session(
-        &self,
-        properties: HashMap<String, Value<'_>>,
-    ) -> Result<OwnedObjectPath> {
+    pub async fn create_session(&self) -> Result<OwnedObjectPath> {
         let response = self.proxy
-            .call_method("CreateSession", &(properties,))
+            .call_method("CreateSession", &())
             .await
             .context("Failed to call CreateSession")?;
 
@@ -84,8 +77,34 @@ impl<'a> MutterRemoteDesktopSession<'a> {
         Ok(Self { proxy })
     }
 
+    /// Connect to EIS (Emulated Input Service) if needed
+    ///
+    /// GNOME 46+ requires ConnectToEIS before input injection works
+    pub async fn connect_to_eis(&self) -> Result<()> {
+        use std::collections::HashMap;
+        use zbus::zvariant::Value;
+
+        let options: HashMap<String, Value> = HashMap::new();
+
+        // ConnectToEIS returns a file descriptor, but we don't need it for basic input
+        match self.proxy.call_method("ConnectToEIS", &(options,)).await {
+            Ok(_) => {
+                tracing::info!("Connected to EIS (Emulated Input Service)");
+                Ok(())
+            }
+            Err(e) => {
+                // ConnectToEIS might not be available on older GNOME versions
+                tracing::debug!("ConnectToEIS not available: {}", e);
+                Ok(())
+            }
+        }
+    }
+
     /// Start the remote desktop session
     pub async fn start(&self) -> Result<()> {
+        // Connect to EIS first (required on GNOME 46+)
+        self.connect_to_eis().await?;
+
         self.proxy
             .call_method("Start", &())
             .await
