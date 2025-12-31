@@ -75,6 +75,14 @@ pub struct PortalCapabilities {
 
     /// Portal backend name (gnome, kde, wlr, etc.)
     pub backend: Option<String>,
+
+    // === Phase 2: Session Persistence ===
+
+    /// Portal version supports restore tokens (v4+)
+    pub supports_restore_tokens: bool,
+
+    /// Maximum persist mode available (0=none, 1=transient, 2=permanent)
+    pub max_persist_mode: u8,
 }
 
 impl Default for PortalCapabilities {
@@ -87,6 +95,8 @@ impl Default for PortalCapabilities {
             available_cursor_modes: vec![],
             available_source_types: vec![],
             backend: None,
+            supports_restore_tokens: false,
+            max_persist_mode: 0,
         }
     }
 }
@@ -116,6 +126,9 @@ impl PortalCapabilities {
 
         // Detect portal backend
         caps.detect_backend(&connection).await;
+
+        // Probe restore token support (Phase 2)
+        caps.probe_persistence_support();
 
         debug!("Portal probing complete: {:?}", caps);
         Ok(caps)
@@ -284,6 +297,31 @@ impl PortalCapabilities {
     /// Check if window capture is available
     pub fn supports_window_capture(&self) -> bool {
         self.available_source_types.contains(&SourceType::Window)
+    }
+
+    /// Probe restore token support (Phase 2)
+    ///
+    /// Portal v4+ supports restore tokens for session persistence.
+    /// This method sets the supports_restore_tokens and max_persist_mode fields.
+    fn probe_persistence_support(&mut self) {
+        // Check portal version
+        if self.version >= 4 {
+            self.supports_restore_tokens = true;
+            self.max_persist_mode = 2; // ExplicitlyRevoked mode available
+            debug!(
+                "Portal v{} supports restore tokens (max persist mode: 2)",
+                self.version
+            );
+        } else if self.version > 0 {
+            self.supports_restore_tokens = false;
+            self.max_persist_mode = 0;
+            debug!("Portal v{} does not support restore tokens", self.version);
+        } else {
+            // Version unknown or portal unavailable
+            self.supports_restore_tokens = false;
+            self.max_persist_mode = 0;
+            debug!("Portal version unknown, assuming no restore token support");
+        }
     }
 }
 

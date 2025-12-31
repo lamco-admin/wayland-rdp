@@ -153,6 +153,43 @@ pub mod cursor;
 /// ```
 pub mod services;
 
+/// Session Persistence & Unattended Access
+///
+/// This module implements multi-strategy session persistence to enable unattended
+/// operation across different desktop environments, deployment methods, and init systems.
+///
+/// Key features:
+/// - **Portal Restore Tokens**: Avoid permission dialogs on reconnect (portal v4+)
+/// - **Deployment Detection**: Automatic detection of Flatpak, systemd, initd contexts
+/// - **Credential Storage**: Secure token storage via Secret Service, TPM 2.0, or encrypted files
+/// - **Multi-Strategy**: Adapts to available capabilities (Mutter API, wlr-screencopy, portal)
+///
+/// This enables server-style operation where the system can restart without manual intervention,
+/// critical for systemd services and headless operation.
+///
+/// See: docs/architecture/SESSION-PERSISTENCE-ARCHITECTURE.md
+pub mod session;
+
+/// Mutter Direct D-Bus API (GNOME Only - Phase 3)
+///
+/// Direct integration with org.gnome.Mutter.ScreenCast and org.gnome.Mutter.RemoteDesktop
+/// D-Bus interfaces. This bypasses the XDG Portal entirely, eliminating permission dialogs
+/// on GNOME desktops.
+///
+/// Key features:
+/// - **Zero permission dialogs**: No user interaction required
+/// - **Direct PipeWire access**: Via Mutter's native session API
+/// - **Input injection**: Keyboard and mouse without portal mediation
+/// - **Virtual monitor support**: Headless operation with RecordVirtual
+///
+/// Only available on:
+/// - GNOME 42+ compositors
+/// - Non-sandboxed applications (NOT Flatpak)
+/// - Native packages and systemd user services
+///
+/// See: docs/architecture/SESSION-PERSISTENCE-ARCHITECTURE.md (Phase 3)
+pub mod mutter;
+
 // =============================================================================
 // Re-exports from published lamco crates (for convenience)
 // =============================================================================

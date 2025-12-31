@@ -166,6 +166,74 @@ pub enum WaylandFeature {
         /// Preferred buffer type
         buffer_type: String,
     },
+
+    // === Session Persistence Features ===
+    // Added in Phase 2
+
+    /// Session persistence via portal restore tokens
+    SessionPersistence {
+        /// Portal supports restore tokens (v4+)
+        restore_token_supported: bool,
+        /// Maximum persist mode (0=none, 1=transient, 2=permanent)
+        max_persist_mode: u8,
+        /// How tokens are stored
+        token_storage: TokenStorageMethod,
+        /// Portal version detected
+        portal_version: u32,
+    },
+
+    /// Mutter direct D-Bus API (GNOME only)
+    MutterDirectAPI {
+        /// GNOME Shell version
+        version: Option<String>,
+        /// org.gnome.Mutter.ScreenCast available
+        has_screencast: bool,
+        /// org.gnome.Mutter.RemoteDesktop available
+        has_remote_desktop: bool,
+    },
+
+    /// Credential storage capability
+    CredentialStorage {
+        /// Primary storage method available
+        method: crate::session::CredentialStorageMethod,
+        /// Is storage unlocked/accessible?
+        is_accessible: bool,
+        /// Encryption algorithm used
+        encryption: crate::session::EncryptionType,
+    },
+
+    /// Unattended access capability (aggregate)
+    UnattendedAccess {
+        /// Can avoid permission dialog
+        can_avoid_dialog: bool,
+        /// Can store credentials securely
+        can_store_credentials: bool,
+    },
+
+    /// wlr-screencopy protocol
+    WlrScreencopy {
+        /// Protocol version
+        version: u32,
+        /// Supports DMA-BUF output
+        dmabuf_supported: bool,
+        /// Supports damage tracking
+        damage_supported: bool,
+    },
+}
+
+/// Token storage method for session persistence
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TokenStorageMethod {
+    /// No token storage available
+    None,
+    /// Tokens stored in encrypted file
+    EncryptedFile,
+    /// Tokens stored via Secret Service API
+    SecretService,
+    /// Tokens stored via Flatpak Secret Portal
+    FlatpakSecretPortal,
+    /// Tokens stored via TPM 2.0 + systemd-creds
+    Tpm2SystemdCreds,
 }
 
 impl WaylandFeature {
@@ -183,6 +251,12 @@ impl WaylandFeature {
             Self::Clipboard { .. } => "clipboard",
             Self::RemoteInput { .. } => "remote-input",
             Self::PipeWireStream { .. } => "pipewire",
+            // Session persistence
+            Self::SessionPersistence { .. } => "session-persist",
+            Self::MutterDirectAPI { .. } => "mutter-api",
+            Self::CredentialStorage { .. } => "cred-storage",
+            Self::UnattendedAccess { .. } => "unattended",
+            Self::WlrScreencopy { .. } => "wlr-screencopy",
         }
     }
 }
@@ -218,6 +292,60 @@ impl std::fmt::Display for WaylandFeature {
             }
             Self::PipeWireStream { buffer_type, .. } => {
                 write!(f, "PipeWire({})", buffer_type)
+            }
+            // Session persistence
+            Self::SessionPersistence {
+                restore_token_supported,
+                max_persist_mode,
+                portal_version,
+                ..
+            } => {
+                write!(
+                    f,
+                    "SessionPersist(portal v{}, tokens={}, mode={})",
+                    portal_version, restore_token_supported, max_persist_mode
+                )
+            }
+            Self::MutterDirectAPI {
+                version,
+                has_screencast,
+                has_remote_desktop,
+            } => {
+                write!(
+                    f,
+                    "MutterAPI(v{}, sc={}, rd={})",
+                    version.as_deref().unwrap_or("unknown"),
+                    has_screencast,
+                    has_remote_desktop
+                )
+            }
+            Self::CredentialStorage {
+                method,
+                is_accessible,
+                encryption,
+            } => {
+                write!(f, "CredStorage({}, {}, accessible={})", method, encryption, is_accessible)
+            }
+            Self::UnattendedAccess {
+                can_avoid_dialog,
+                can_store_credentials,
+            } => {
+                write!(
+                    f,
+                    "Unattended(no_dialog={}, creds={})",
+                    can_avoid_dialog, can_store_credentials
+                )
+            }
+            Self::WlrScreencopy {
+                version,
+                dmabuf_supported,
+                damage_supported,
+            } => {
+                write!(
+                    f,
+                    "wlr-screencopy(v{}, dmabuf={}, damage={})",
+                    version, dmabuf_supported, damage_supported
+                )
             }
         }
     }

@@ -86,6 +86,7 @@ use crate::input::MonitorInfo as InputMonitorInfo;
 use crate::portal::PortalManager;
 use crate::security::TlsConfig;
 use crate::services::{ServiceId, ServiceLevel, ServiceRegistry};
+use crate::session::{PipeWireAccess, SessionStrategySelector, SessionType};
 
 /// WRD Server
 ///
@@ -166,6 +167,39 @@ impl WrdServer {
             capabilities.profile.recommended_buffer_type
         );
 
+        // === SESSION PERSISTENCE SETUP ===
+        // Detect deployment context and credential storage
+        info!("Detecting deployment context and credential storage...");
+
+        let deployment = crate::session::detect_deployment_context();
+        info!("📦 Deployment: {}", deployment);
+
+        let (storage_method, encryption, accessible) =
+            crate::session::detect_credential_storage(&deployment).await;
+        info!(
+            "🔐 Credential Storage: {} (encryption: {}, accessible: {})",
+            storage_method, encryption, accessible
+        );
+
+        // Create TokenManager for session persistence
+        let token_manager = crate::session::TokenManager::new(storage_method)
+            .await
+            .context("Failed to create TokenManager")?;
+
+        // Try to load existing restore token
+        let restore_token = token_manager
+            .load_token("default")
+            .await
+            .context("Failed to load restore token")?;
+
+        if let Some(ref token) = restore_token {
+            info!("🎫 Loaded existing restore token ({} chars)", token.len());
+            info!("   Will attempt to restore session without permission dialog");
+        } else {
+            info!("🎫 No existing restore token found");
+            info!("   Permission dialog will appear (one-time grant)");
+        }
+
         // === SERVICE ADVERTISEMENT ===
         // Translate compositor capabilities into advertised services
         let service_registry = Arc::new(ServiceRegistry::from_compositor(capabilities.clone()));
@@ -195,59 +229,119 @@ impl WrdServer {
             info!("   ⚠️ DMA-BUF: {} - using memory copy path", dmabuf_level);
         }
 
-        // Initialize Portal manager with config mapped from server settings
-        info!("Setting up Portal connection");
-        let portal_config = config.to_portal_config();
-        tracing::debug!("Portal config: cursor_mode={:?}, allow_multiple={}",
-            portal_config.cursor_mode, portal_config.allow_multiple);
-        let portal_manager = Arc::new(
-            PortalManager::new(portal_config)
-                .await
-                .context("Failed to initialize Portal manager")?,
+        // === SESSION STRATEGY SELECTION ===
+        // Select best strategy based on detected capabilities
+        info!("Selecting session strategy based on detected capabilities");
+
+        let strategy_selector = SessionStrategySelector::new(
+            service_registry.clone(),
+            Arc::new(token_manager),
         );
 
-        // Create Portal Clipboard BEFORE creating session (if enabled)
-        let portal_clipboard = if config.clipboard.enabled {
-            match crate::portal::PortalClipboardManager::new().await {
-                Ok(clipboard_mgr) => {
-                    info!("Portal Clipboard manager created");
-                    Some(Arc::new(clipboard_mgr))
-                }
-                Err(e) => {
-                    warn!("Failed to create Portal Clipboard: {:#}", e);
-                    warn!("Clipboard will not be available");
-                    None
-                }
+        let strategy = strategy_selector
+            .select_strategy()
+            .await
+            .context("Failed to select session strategy")?;
+
+        info!("🎯 Selected strategy: {}", strategy.name());
+
+
+        // Create session via selected strategy
+        info!("Creating session via selected strategy");
+        let session_handle = strategy
+            .create_session()
+            .await
+            .context("Failed to create session via strategy")?;
+
+        info!("✅ Session created successfully via {}", strategy.name());
+
+        // Extract session details and handle different PipeWire access methods
+        let (pipewire_fd, stream_info) = match session_handle.pipewire_access() {
+            PipeWireAccess::FileDescriptor(fd) => {
+                // Portal path: FD directly provided
+                info!("Using Portal-provided PipeWire file descriptor: {}", fd);
+
+                // Convert strategy StreamInfo to portal StreamInfo format
+                let strategy_streams = session_handle.streams();
+                let portal_streams: Vec<crate::portal::StreamInfo> = strategy_streams
+                    .iter()
+                    .map(|s| crate::portal::StreamInfo {
+                        node_id: s.node_id,
+                        position: (s.position_x, s.position_y),
+                        size: (s.width, s.height),
+                        source_type: crate::portal::SourceType::Monitor,
+                    })
+                    .collect();
+
+                (fd, portal_streams)
             }
-        } else {
-            info!("Clipboard disabled in configuration");
-            None
+            PipeWireAccess::NodeId(node_id) => {
+                // Mutter path: Node ID provided, need to connect to PipeWire daemon
+                info!("Using Mutter-provided PipeWire node ID: {}", node_id);
+
+                let fd = crate::mutter::get_pipewire_fd_for_mutter()
+                    .context("Failed to connect to PipeWire daemon for Mutter")?;
+
+                info!("Connected to PipeWire daemon, FD: {}", fd);
+
+                // Convert strategy StreamInfo to portal StreamInfo format
+                let strategy_streams = session_handle.streams();
+                let portal_streams: Vec<crate::portal::StreamInfo> = strategy_streams
+                    .iter()
+                    .map(|s| crate::portal::StreamInfo {
+                        node_id: s.node_id,
+                        position: (s.position_x, s.position_y),
+                        size: (s.width, s.height),
+                        source_type: crate::portal::SourceType::Monitor,
+                    })
+                    .collect();
+
+                (fd, portal_streams)
+            }
         };
 
-        // Set clipboard in portal manager so create_session() can use it
-        if let Some(ref _clipboard) = portal_clipboard {
-            // Need mutable access to portal_manager
-            // Actually PortalManager doesn't have &mut method
-            // Clipboard request needs to happen in create_session()
-            // Let me check if we can do it there instead
-        }
+        // Get clipboard components from session handle, or create fallback Portal session
+        let (portal_clipboard_manager, portal_clipboard_session) = if let Some(clipboard) = session_handle.portal_clipboard() {
+            // Portal strategy: Clipboard shares the same session (zero extra dialogs)
+            info!("Using Portal clipboard from strategy (shared session)");
+            (Some(clipboard.manager), clipboard.session)
+        } else {
+            // Mutter strategy: Need separate Portal session for clipboard (one dialog)
+            info!("Strategy doesn't provide clipboard, creating separate Portal session");
 
-        // Create combined portal session (pass clipboard to be enabled at correct time)
-        info!("Creating combined portal session");
-        let session_id = format!("lamco-rdp-{}", uuid::Uuid::new_v4());
-        let session_handle = portal_manager
-            .create_session(session_id, portal_clipboard.as_ref().map(|c| c.as_ref()))
-            .await
-            .context("Failed to create portal session")?;
+            let portal_manager = Arc::new(
+                PortalManager::new(config.to_portal_config())
+                    .await
+                    .context("Failed to create Portal manager for clipboard")?,
+            );
 
-        info!("Portal session created successfully (clipboard enabled if available)");
+            let clipboard_session_id = format!("lamco-rdp-clipboard-{}", uuid::Uuid::new_v4());
+            let (clipboard_handle, _) = portal_manager
+                .create_session(clipboard_session_id, None)
+                .await
+                .context("Failed to create Portal session for clipboard")?;
 
-        // Extract session details
-        let pipewire_fd = session_handle.pipewire_fd();
-        let stream_info = session_handle.streams();
+            let clipboard_mgr = Arc::new(
+                lamco_portal::ClipboardManager::new()
+                    .await
+                    .context("Failed to create Portal clipboard manager")?,
+            );
+
+            info!("Separate Portal session created for clipboard");
+
+            (Some(clipboard_mgr), Arc::new(Mutex::new(clipboard_handle.session)))
+        };
+
+        // Keep minimal portal_manager for multiplexer (only used for remote_desktop reference)
+        // This is a bit awkward but the multiplexer still needs portal reference
+        let portal_manager = Arc::new(
+            PortalManager::new(config.to_portal_config())
+                .await
+                .context("Failed to create Portal manager reference")?,
+        );
 
         info!(
-            "Portal session started with {} streams, PipeWire FD: {}",
+            "Session started with {} streams, PipeWire FD: {}",
             stream_info.len(),
             pipewire_fd
         );
@@ -343,12 +437,9 @@ impl WrdServer {
             primary_stream_id
         );
 
-        // Wrap session in Arc<Mutex> for sharing between input and clipboard
-        let shared_session = Arc::new(Mutex::new(session_handle.session));
-
+        // Create input handler using session handle (Portal or Mutter)
         let input_handler = WrdInputHandler::new(
-            portal_manager.remote_desktop().clone(),
-            Arc::clone(&shared_session), // Share session with input handler
+            session_handle.clone(), // Use strategy's session for input injection
             monitors.clone(),
             primary_stream_id,
             input_tx.clone(), // Multiplexer input queue sender (for handler callbacks)
@@ -356,7 +447,7 @@ impl WrdServer {
         )
         .context("Failed to create input handler")?;
 
-        info!("Input handler created successfully - mouse/keyboard enabled");
+        info!("Input handler created successfully - mouse/keyboard enabled via {}", session_handle.session_type());
 
         // Start full multiplexer drain loop
         // Note: Input queue is handled by input_handler's batching task
@@ -365,7 +456,7 @@ impl WrdServer {
         let keyboard_handler = input_handler.keyboard_handler.clone();
         let mouse_handler = input_handler.mouse_handler.clone();
         let coord_transformer = input_handler.coordinate_transformer.clone();
-        let session_for_mux = Arc::clone(&shared_session);
+        let session_for_mux = Arc::clone(&portal_clipboard_session);
 
         tokio::spawn(multiplexer_loop::run_multiplexer_drain_loop(
             control_rx,
@@ -400,15 +491,17 @@ impl WrdServer {
             .await
             .context("Failed to create clipboard manager")?;
 
-        // Set Portal clipboard reference if available (async operation)
-        if let Some(portal_clip) = portal_clipboard {
+        // Set Portal clipboard reference if available (from session or fallback)
+        if let Some(clipboard_mgr_arc) = portal_clipboard_manager {
             clipboard_mgr
                 .set_portal_clipboard(
-                    portal_clip,
-                    Arc::clone(&shared_session), // Share session with clipboard
+                    clipboard_mgr_arc,
+                    Arc::clone(&portal_clipboard_session),
                 )
                 .await;
             // Note: Success message logged inside set_portal_clipboard
+        } else {
+            info!("Clipboard disabled - no Portal clipboard manager available");
         }
 
         let clipboard_manager = Arc::new(Mutex::new(clipboard_mgr));
@@ -428,11 +521,12 @@ impl WrdServer {
             .parse()
             .context("Invalid listen address")?;
 
+        // Build RDP server
         let rdp_server = RdpServer::builder()
             .with_addr(listen_addr)
             .with_tls(tls_acceptor)
             .with_input_handler(input_handler)
-            .with_display_handler((*display_handler).clone()) // Clone the handler for IronRDP
+            .with_display_handler((*display_handler).clone())
             .with_bitmap_codecs(codecs)
             .with_cliprdr_factory(Some(Box::new(clipboard_factory)))
             .with_gfx_factory(Some(Box::new(gfx_factory)))

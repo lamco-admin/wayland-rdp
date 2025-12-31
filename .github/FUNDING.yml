@@ -1,0 +1,15 @@
+# Funding options for lamco-rdp-server
+# This enables the "Sponsor" button on GitHub
+
+# Primary: Lemon Squeezy storefront
+custom:
+  - https://lamco.ai/pricing
+  - https://lamco.lemonsqueezy.com
+
+# GitHub Sponsors (enable when you set up your profile)
+# github: [your-github-username]
+
+# Alternative platforms (uncomment if used)
+# ko_fi: lamco
+# patreon: lamco
+# open_collective: lamco

@@ -50,8 +50,19 @@ pub async fn probe_capabilities() -> Result<CompositorCapabilities> {
     let wayland_globals = enumerate_wayland_globals().unwrap_or_default();
     debug!("Found {} Wayland globals", wayland_globals.len());
 
-    // Step 4: Create capability structure (includes profile generation)
-    let capabilities = CompositorCapabilities::new(compositor, portal, wayland_globals);
+    // Step 4: Create capability structure (includes profile generation and deployment detection)
+    let mut capabilities = CompositorCapabilities::new(compositor, portal, wayland_globals);
+
+    // Step 5: Detect credential storage (Phase 2)
+    let (storage_method, encryption, accessible) = crate::session::detect_credential_storage(&capabilities.deployment).await;
+    capabilities.credential_storage_method = storage_method;
+    capabilities.credential_encryption = encryption;
+    capabilities.credential_storage_accessible = accessible;
+
+    debug!(
+        "Credential storage detected: {} (encryption: {}, accessible: {})",
+        storage_method, encryption, accessible
+    );
 
     // Log summary
     capabilities.log_summary();

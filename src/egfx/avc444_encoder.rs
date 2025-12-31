@@ -450,6 +450,11 @@ impl Avc444Encoder {
         // Step 3: Encode both views using direct YUV input
         // OPTIMIZATION: Use YUVSlices for zero-copy encoding instead of
         // converting YUV420→BGRA→YUV420 (saves ~10-20ms per frame!)
+        //
+        // NOTE: We use logical dimensions (width x height) not actual buffer dimensions.
+        // The YUV420 frames may have padded chroma planes for macroblock alignment,
+        // but openh264 expects logical dimensions and will do its own padding internally.
+        // We pass the full buffers (including padding) but declare the logical size.
         let dims = (width as usize, height as usize);
         let strides = main_yuv420.strides();
 
