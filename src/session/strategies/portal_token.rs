@@ -187,12 +187,12 @@ impl SessionStrategy for PortalTokenStrategy {
         let session_id = format!("lamco-rdp-{}", uuid::Uuid::new_v4());
 
         // Try to create session - if persistence is rejected, retry without it
-        // We need to track if we used a pre-created clipboard manager (for retry case)
-        let (portal_handle, new_token, pre_created_clipboard_mgr) = match portal_manager
+        // Track which manager was actually used (for accessing remote_desktop later)
+        let (portal_handle, new_token, pre_created_clipboard_mgr, active_manager) = match portal_manager
             .create_session(session_id.clone(), None)
             .await
         {
-            Ok(result) => (result.0, result.1, None),
+            Ok(result) => (result.0, result.1, None, portal_manager.clone()),
             Err(e) => {
                 let error_msg = format!("{:#}", e);
 
@@ -225,7 +225,7 @@ impl SessionStrategy for PortalTokenStrategy {
                         .await
                         .context("Failed to create portal session (non-persistent)")?;
 
-                    (result.0, result.1, Some(clipboard_mgr))
+                    (result.0, result.1, Some(clipboard_mgr), no_persist_manager)
                 } else {
                     // Different error, propagate it
                     return Err(e).context("Failed to create portal session");
@@ -283,7 +283,7 @@ impl SessionStrategy for PortalTokenStrategy {
         let handle = PortalSessionHandleImpl {
             pipewire_fd,
             streams,
-            remote_desktop: portal_manager.remote_desktop().clone(),
+            remote_desktop: active_manager.remote_desktop().clone(),
             session: Arc::new(tokio::sync::Mutex::new(session)),
             clipboard_manager,
             session_type: SessionType::Portal,
