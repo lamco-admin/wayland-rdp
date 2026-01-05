@@ -318,9 +318,19 @@ impl WrdServer {
             info!("Portal strategy: using session_handle directly");
 
             let clipboard_mgr = session_handle.portal_clipboard().map(|c| c.manager);
-            let dummy_session = Arc::new(Mutex::new(unsafe { std::mem::zeroed() }));
 
-            (clipboard_mgr, dummy_session, session_handle)
+            // Portal strategy has a session in session_handle.portal_clipboard()
+            // Extract it for multiplexer compatibility
+            let session = if let Some(ref clipboard) = session_handle.portal_clipboard() {
+                clipboard.session.clone()
+            } else {
+                // Shouldn't happen for Portal, but create minimal session as fallback
+                let rd = ashpd::desktop::remote_desktop::RemoteDesktop::new().await?;
+                let session = ashpd::desktop::Session::new(rd).await?;
+                Arc::new(Mutex::new(session))
+            };
+
+            (clipboard_mgr, session, session_handle)
         } else {
             // Mutter strategy: Need separate Portal session for input AND clipboard (one dialog)
             // HYBRID: Mutter provides video (zero dialogs), Portal provides input+clipboard (one dialog)
