@@ -419,68 +419,32 @@ fn translate_session_persistence(caps: &CompositorCapabilities) -> AdvertisedSer
 }
 
 fn translate_direct_compositor_api(caps: &CompositorCapabilities) -> AdvertisedService {
-    use crate::session::DeploymentContext;
-
-    // Only available on GNOME, and only in non-Flatpak deployments
-    if matches!(caps.deployment, DeploymentContext::Flatpak) {
-        return AdvertisedService::unavailable(ServiceId::DirectCompositorAPI)
-            .with_note("Direct API blocked by Flatpak sandbox");
-    }
+    // Mutter Direct API: DORMANT - Tested and found broken on GNOME 40 and 46
+    //
+    // Test Results:
+    //   GNOME 40.10 (RHEL 9):     ScreenCast works, RemoteDesktop fails (1,137 input errors)
+    //   GNOME 46.0 (Ubuntu 24.04): ScreenCast broken, RemoteDesktop fails
+    //
+    // Root Cause: RemoteDesktop and ScreenCast sessions cannot be linked
+    //   - RemoteDesktop.CreateSession() takes no arguments (can't pass session-id)
+    //   - ScreenCast doesn't expose SessionId property
+    //   - Input injection fails: "No screen cast active" or silent failures
+    //
+    // Portal Strategy works universally on all tested GNOME versions.
+    //
+    // Code preserved in src/mutter/ (not deleted) in case GNOME fixes session linkage.
+    // To re-enable: Change Unavailable → BestEffort and test thoroughly.
 
     match &caps.compositor {
         CompositorType::Gnome { version } => {
-            // Check for Mutter D-Bus interfaces availability
-            let has_screencast = check_dbus_interface_sync("org.gnome.Mutter.ScreenCast");
-            let has_remote_desktop = check_dbus_interface_sync("org.gnome.Mutter.RemoteDesktop");
-
-            if has_screencast && has_remote_desktop {
-                let feature = WaylandFeature::MutterDirectAPI {
-                    version: version.clone(),
-                    has_screencast,
-                    has_remote_desktop,
-                };
-
-                // Determine Mutter API functionality based on GNOME version
-                // This is based on actual testing and known API incompleteness
-                let gnome_ver = version.as_ref().and_then(|v| parse_gnome_version(v));
-
-                match gnome_ver {
-                    // GNOME 46+: Known broken - session linkage incomplete
-                    // Issues: RemoteDesktop/ScreenCast can't link, input fails, PipeWire streams don't work
-                    // Portal works perfectly on 46+, so use that instead
-                    Some(v) if v >= 46.0 => {
-                        AdvertisedService::unavailable(ServiceId::DirectCompositorAPI)
-                            .with_note("Mutter API incomplete on GNOME 46+ (session linkage broken)")
-                    }
-
-                    // GNOME 40-45: Should work (critical for RHEL 9, Ubuntu 22.04 LTS)
-                    // Portal v3 on these systems doesn't support tokens
-                    // Mutter bypasses portal entirely - zero dialogs
-                    // Needs testing on actual RHEL 9/Ubuntu 22.04
-                    Some(v) if v >= 40.0 => {
-                        AdvertisedService::best_effort(ServiceId::DirectCompositorAPI, feature)
-                            .with_note("Mutter D-Bus API (critical for Portal v3 systems)")
-                    }
-
-                    // GNOME < 40: Untested, probably doesn't have full API
-                    Some(_) => {
-                        AdvertisedService::degraded(ServiceId::DirectCompositorAPI, feature,
-                            "Mutter API available but untested on GNOME < 40")
-                    }
-
-                    // Version unknown: Conservative - mark as degraded
-                    None => {
-                        AdvertisedService::degraded(ServiceId::DirectCompositorAPI, feature,
-                            "Mutter API available but GNOME version unknown")
-                    }
-                }
-            } else {
-                AdvertisedService::unavailable(ServiceId::DirectCompositorAPI)
-                    .with_note("Mutter D-Bus interfaces not detected")
-            }
+            AdvertisedService::unavailable(ServiceId::DirectCompositorAPI)
+                .with_note(&format!(
+                    "Mutter API non-functional (tested on GNOME 40, 46 - session linkage broken). GNOME {}",
+                    version.as_deref().unwrap_or("unknown")
+                ))
         }
         _ => AdvertisedService::unavailable(ServiceId::DirectCompositorAPI)
-            .with_note("Only available on GNOME compositor"),
+            .with_note("Only implemented for GNOME compositor"),
     }
 }
 
