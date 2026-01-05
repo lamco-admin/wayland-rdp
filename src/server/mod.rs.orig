@@ -313,14 +313,18 @@ impl WrdServer {
 
         // Get clipboard components from session handle, or create fallback Portal session
         // HYBRID STRATEGY: For Mutter, we also use Portal session for input (Mutter input broken on GNOME 46)
-        let (portal_clipboard_manager, portal_clipboard_session, portal_input_handle) = if session_handle.session_type() == SessionType::Portal {
-            // Portal strategy: use session_handle directly (no duplicate sessions)
-            info!("Portal strategy: using session_handle directly");
+        let (portal_clipboard_manager, portal_clipboard_session, portal_input_handle) = if let Some(clipboard) = session_handle.portal_clipboard() {
+            // Portal strategy: Clipboard shares the same session (zero extra dialogs)
+            info!("Using Portal clipboard from strategy (shared session)");
 
-            let clipboard_mgr = session_handle.portal_clipboard().map(|c| c.manager);
-            let dummy_session = Arc::new(Mutex::new(unsafe { std::mem::zeroed() }));
+            // Create a PortalSessionHandleImpl for input (same session)
+            let input_handle = crate::session::strategies::PortalSessionHandleImpl::from_portal_session(
+                clipboard.session.clone(),
+                portal_manager.remote_desktop().clone(),
+                Some(clipboard.manager.clone()),
+            );
 
-            (clipboard_mgr, dummy_session, session_handle)
+            (Some(clipboard.manager), clipboard.session, Arc::new(input_handle) as Arc<dyn crate::session::SessionHandle>)
         } else {
             // Mutter strategy: Need separate Portal session for input AND clipboard (one dialog)
             // HYBRID: Mutter provides video (zero dialogs), Portal provides input+clipboard (one dialog)
