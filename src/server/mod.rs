@@ -300,46 +300,36 @@ impl WrdServer {
             }
         };
 
+        // Create Portal manager for input+clipboard (needed for both strategies)
+        let mut portal_config = config.to_portal_config();
+        portal_config.persist_mode = ashpd::desktop::PersistMode::DoNot;  // Don't persist (causes errors)
+        portal_config.restore_token = None;
+
+        let portal_manager = Arc::new(
+            PortalManager::new(portal_config)
+                .await
+                .context("Failed to create Portal manager for input+clipboard")?,
+        );
+
         // Get clipboard components from session handle, or create fallback Portal session
         // HYBRID STRATEGY: For Mutter, we also use Portal session for input (Mutter input broken on GNOME 46)
-        let (portal_clipboard_manager, portal_clipboard_session, portal_input_handle, portal_manager) = if let Some(clipboard) = session_handle.portal_clipboard() {
+        let (portal_clipboard_manager, portal_clipboard_session, portal_input_handle) = if let Some(clipboard) = session_handle.portal_clipboard() {
             // Portal strategy: Clipboard shares the same session (zero extra dialogs)
             info!("Using Portal clipboard from strategy (shared session)");
-
-            // NOTE: We need a RemoteDesktopManager to create the input handle, but we don't
-            // have access to the original one from the strategy. Creating a minimal manager
-            // just to get remote_desktop() is a known limitation of the current API.
-            // The RemoteDesktopManager is just a D-Bus proxy factory and works with any session.
-            let portal_manager = Arc::new(
-                PortalManager::new(config.to_portal_config())
-                    .await
-                    .context("Failed to create Portal manager for remote_desktop accessor")?,
-            );
 
             // Create a PortalSessionHandleImpl for input (same session)
             let input_handle = crate::session::strategies::PortalSessionHandleImpl::from_portal_session(
                 clipboard.session.clone(),
                 portal_manager.remote_desktop().clone(),
-                clipboard.manager.clone(),
+                Some(clipboard.manager.clone()),
             );
 
-            (Some(clipboard.manager), clipboard.session, Arc::new(input_handle) as Arc<dyn crate::session::SessionHandle>, portal_manager)
+            (Some(clipboard.manager), clipboard.session, Arc::new(input_handle) as Arc<dyn crate::session::SessionHandle>)
         } else {
             // Mutter strategy: Need separate Portal session for input AND clipboard (one dialog)
             // HYBRID: Mutter provides video (zero dialogs), Portal provides input+clipboard (one dialog)
             info!("Strategy doesn't provide clipboard, creating separate Portal session for input+clipboard");
             info!("HYBRID MODE: Mutter for video (zero dialogs), Portal for input+clipboard (one dialog)");
-
-            // Create Portal manager for hybrid mode
-            let mut portal_config = config.to_portal_config();
-            portal_config.persist_mode = ashpd::desktop::PersistMode::DoNot;  // Don't persist (causes errors)
-            portal_config.restore_token = None;
-
-            let portal_manager = Arc::new(
-                PortalManager::new(portal_config)
-                    .await
-                    .context("Failed to create Portal manager for input+clipboard")?,
-            );
 
             let session_id = format!("lamco-rdp-input-clipboard-{}", uuid::Uuid::new_v4());
             let (portal_handle, _) = portal_manager
@@ -347,24 +337,32 @@ impl WrdServer {
                 .await
                 .context("Failed to create Portal session for input+clipboard")?;
 
-            let clipboard_mgr = Arc::new(
-                lamco_portal::ClipboardManager::new()
-                    .await
-                    .context("Failed to create Portal clipboard manager")?,
-            );
+            // Only create clipboard if Portal supports it (v2+)
+            let clipboard_mgr = if capabilities.portal.supports_clipboard {
+                Some(Arc::new(
+                    lamco_portal::ClipboardManager::new()
+                        .await
+                        .context("Failed to create Portal clipboard manager")?,
+                ))
+            } else {
+                info!("Skipping clipboard creation - Portal v{} doesn't support clipboard", capabilities.portal.version);
+                None
+            };
 
             info!("Separate Portal session created for input+clipboard (non-persistent)");
 
             let session = Arc::new(Mutex::new(portal_handle.session));
 
-            // Create PortalSessionHandleImpl for input using the same Portal session
+            // Create PortalSessionHandleImpl for input
+            // If no clipboard (Portal v1), just use Mutter session_handle for input instead
+            // Create Portal input handle regardless of clipboard availability
             let input_handle = crate::session::strategies::PortalSessionHandleImpl::from_portal_session(
                 session.clone(),
                 portal_manager.remote_desktop().clone(),
-                clipboard_mgr.clone(),
+                clipboard_mgr.clone(), // Pass Option directly
             );
 
-            (Some(clipboard_mgr), session, Arc::new(input_handle) as Arc<dyn crate::session::SessionHandle>, portal_manager)
+            (clipboard_mgr, session, Arc::new(input_handle) as Arc<dyn crate::session::SessionHandle>)
         };
 
         info!(

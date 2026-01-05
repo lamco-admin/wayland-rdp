@@ -25,8 +25,8 @@ pub struct PortalSessionHandleImpl {
     remote_desktop: Arc<lamco_portal::RemoteDesktopManager>,
     /// Session for input injection and clipboard
     session: Arc<tokio::sync::Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
-    /// Clipboard manager (for clipboard operations)
-    clipboard_manager: Arc<lamco_portal::ClipboardManager>,
+    /// Clipboard manager (for clipboard operations) - None on Portal v1
+    clipboard_manager: Option<Arc<lamco_portal::ClipboardManager>>,
     /// Session type
     session_type: SessionType,
 }
@@ -36,7 +36,7 @@ impl PortalSessionHandleImpl {
     pub fn from_portal_session(
         session: Arc<tokio::sync::Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
         remote_desktop: Arc<lamco_portal::RemoteDesktopManager>,
-        clipboard_manager: Arc<lamco_portal::ClipboardManager>,
+        clipboard_manager: Option<Arc<lamco_portal::ClipboardManager>>,
     ) -> Self {
         // Input-only handle - doesn't provide video/clipboard
         Self {
@@ -97,10 +97,13 @@ impl SessionHandle for PortalSessionHandleImpl {
     }
 
     fn portal_clipboard(&self) -> Option<crate::session::strategy::ClipboardComponents> {
-        // Portal strategy shares its session with clipboard
-        Some(crate::session::strategy::ClipboardComponents {
-            manager: Arc::clone(&self.clipboard_manager),
-            session: Arc::clone(&self.session),
+        // Portal strategy shares its session with clipboard (if clipboard exists)
+        // On Portal v1, clipboard_manager may be None - return None
+        self.clipboard_manager.as_ref().map(|mgr| {
+            crate::session::strategy::ClipboardComponents {
+                manager: Arc::clone(mgr),
+                session: Arc::clone(&self.session),
+            }
         })
     }
 }
@@ -212,20 +215,25 @@ impl SessionStrategy for PortalTokenStrategy {
                             .context("Failed to create Portal manager without persistence")?,
                     );
 
-                    // CRITICAL: Create clipboard manager and KEEP it
-                    // This manager gets enabled in the session and must be the one we use
-                    let clipboard_mgr = Arc::new(
-                        lamco_portal::ClipboardManager::new()
-                            .await
-                            .context("Failed to create clipboard manager for non-persistent session")?,
-                    );
+                    // Create clipboard manager only if supported (Portal RemoteDesktop v2+)
+                    // On Portal v1 (RHEL 9), clipboard isn't available - skip it
+                    let clipboard_mgr = match lamco_portal::ClipboardManager::new().await {
+                        Ok(mgr) => {
+                            info!("Clipboard manager created for non-persistent session");
+                            Some(Arc::new(mgr))
+                        }
+                        Err(e) => {
+                            warn!("Clipboard not available (Portal v1?): {}", e);
+                            None
+                        }
+                    };
 
                     let result = no_persist_manager
-                        .create_session(session_id.clone(), Some(clipboard_mgr.as_ref()))
+                        .create_session(session_id.clone(), clipboard_mgr.as_ref().map(|c| c.as_ref()))
                         .await
                         .context("Failed to create portal session (non-persistent)")?;
 
-                    (result.0, result.1, Some(clipboard_mgr), no_persist_manager)
+                    (result.0, result.1, clipboard_mgr, no_persist_manager)
                 } else {
                     // Different error, propagate it
                     return Err(e).context("Failed to create portal session");
@@ -265,18 +273,22 @@ impl SessionStrategy for PortalTokenStrategy {
         let session = portal_handle.session;
 
         // Use the clipboard manager from non-persistent retry if it exists,
-        // otherwise create a new one for normal sessions
+        // otherwise try to create one (may fail on Portal v1)
         let clipboard_manager = if let Some(clipboard_mgr) = pre_created_clipboard_mgr {
             info!("Using clipboard manager from non-persistent session retry");
-            clipboard_mgr
+            Some(clipboard_mgr)
         } else {
-            let mgr = Arc::new(
-                lamco_portal::ClipboardManager::new()
-                    .await
-                    .context("Failed to create Portal clipboard manager")?,
-            );
-            info!("Portal clipboard manager created for session");
-            mgr
+            // Try to create clipboard manager - will fail on Portal v1 (no clipboard support)
+            match lamco_portal::ClipboardManager::new().await {
+                Ok(mgr) => {
+                    info!("Portal clipboard manager created for session");
+                    Some(Arc::new(mgr))
+                }
+                Err(e) => {
+                    warn!("Clipboard not available on this Portal version: {}", e);
+                    None
+                }
+            }
         };
 
         // Wrap in our handle type with input injection and clipboard support
