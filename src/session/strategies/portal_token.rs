@@ -24,7 +24,7 @@ pub struct PortalSessionHandleImpl {
     /// Remote desktop manager (for input injection)
     remote_desktop: Arc<lamco_portal::RemoteDesktopManager>,
     /// Session for input injection and clipboard
-    session: Arc<tokio::sync::Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
+    pub(crate) session: Arc<tokio::sync::Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
     /// Clipboard manager (for clipboard operations) - None on Portal v1
     clipboard_manager: Option<Arc<lamco_portal::ClipboardManager>>,
     /// Session type
@@ -97,13 +97,11 @@ impl SessionHandle for PortalSessionHandleImpl {
     }
 
     fn portal_clipboard(&self) -> Option<crate::session::strategy::ClipboardComponents> {
-        // Portal strategy shares its session with clipboard (if clipboard exists)
-        // On Portal v1, clipboard_manager may be None - return None
-        self.clipboard_manager.as_ref().map(|mgr| {
-            crate::session::strategy::ClipboardComponents {
-                manager: Arc::clone(mgr),
-                session: Arc::clone(&self.session),
-            }
+        // Always return Some for Portal strategy - session is always available
+        // Manager may be None on Portal v1 (no clipboard support)
+        Some(crate::session::strategy::ClipboardComponents {
+            manager: self.clipboard_manager.clone(),
+            session: Arc::clone(&self.session),
         })
     }
 }

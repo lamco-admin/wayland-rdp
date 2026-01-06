@@ -168,6 +168,7 @@ impl EgfxVideoHandler {
             width: Some(initial_width as u16),
             height: Some(initial_height as u16),
             color_space: None, // Auto-select based on resolution
+            ..Default::default()  // QP defaults
         };
 
         let encoder = Avc420Encoder::new(encoder_config)?;

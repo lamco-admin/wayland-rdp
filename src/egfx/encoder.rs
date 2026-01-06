@@ -80,6 +80,14 @@ pub struct EncoderConfig {
     /// Default: None (uses OpenH264-compatible limited range for AVC420,
     /// BT.709 for AVC444)
     pub color_space: Option<ColorSpaceConfig>,
+
+    /// Minimum QP value (default: 0, range 0-51)
+    /// Lower = better quality, larger frames
+    pub qp_min: u8,
+
+    /// Maximum QP value (default: 51, range 0-51)
+    /// Higher = worse quality, smaller frames
+    pub qp_max: u8,
 }
 
 impl Default for EncoderConfig {
@@ -91,6 +99,8 @@ impl Default for EncoderConfig {
             width: None,
             height: None,
             color_space: None, // Encoder-specific default
+            qp_min: 0,   // OpenH264 default
+            qp_max: 51,  // OpenH264 default
         }
     }
 }
@@ -111,9 +121,9 @@ impl EncoderConfig {
             bitrate_kbps: 10000,
             max_fps: 30.0,
             enable_skip_frame: false,
-            width: None,
-            height: None,
-            color_space: None,
+            qp_min: 10,  // Better quality range
+            qp_max: 25,
+            ..Default::default()
         }
     }
 
@@ -128,9 +138,7 @@ impl EncoderConfig {
             bitrate_kbps: 8000,
             max_fps: 60.0,
             enable_skip_frame: true,
-            width: None,
-            height: None,
-            color_space: None,
+            ..Default::default()
         }
     }
 
@@ -140,9 +148,9 @@ impl EncoderConfig {
             bitrate_kbps: 1000,
             max_fps: 15.0,
             enable_skip_frame: true,
-            width: None,
-            height: None,
-            color_space: None,
+            qp_min: 20,  // Allow more compression
+            qp_max: 45,
+            ..Default::default()
         }
     }
 

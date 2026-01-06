@@ -317,18 +317,13 @@ impl WrdServer {
             // Portal strategy: use session_handle directly (no duplicate sessions)
             info!("Portal strategy: using session_handle directly");
 
-            let clipboard_mgr = session_handle.portal_clipboard().map(|c| c.manager);
+            // Portal strategy always provides ClipboardComponents
+            // manager may be None on Portal v1, but session is always present
+            let clipboard_components = session_handle.portal_clipboard()
+                .expect("Portal strategy always provides ClipboardComponents");
 
-            // Portal strategy has a session in session_handle.portal_clipboard()
-            // Extract it for multiplexer compatibility
-            let session = if let Some(ref clipboard) = session_handle.portal_clipboard() {
-                clipboard.session.clone()
-            } else {
-                // Shouldn't happen for Portal, but create minimal session as fallback
-                let rd = ashpd::desktop::remote_desktop::RemoteDesktop::new().await?;
-                let session = ashpd::desktop::Session::new(rd).await?;
-                Arc::new(Mutex::new(session))
-            };
+            let clipboard_mgr = clipboard_components.manager;  // Option<Arc<...>>
+            let session = clipboard_components.session;  // Always present
 
             (clipboard_mgr, session, session_handle)
         } else {
@@ -488,6 +483,7 @@ impl WrdServer {
         let keyboard_handler = input_handler.keyboard_handler.clone();
         let mouse_handler = input_handler.mouse_handler.clone();
         let coord_transformer = input_handler.coordinate_transformer.clone();
+        // On Portal v1, portal_clipboard_session may be placeholder - but multiplexer only uses it if clipboard_mgr exists
         let session_for_mux = Arc::clone(&portal_clipboard_session);
 
         tokio::spawn(multiplexer_loop::run_multiplexer_drain_loop(

@@ -55,7 +55,7 @@
 
 #[cfg(feature = "h264")]
 use openh264::encoder::{
-    BitRate, Encoder, EncoderConfig as OpenH264Config, FrameRate, FrameType, UsageType, VuiConfig,
+    BitRate, Complexity, Encoder, EncoderConfig as OpenH264Config, FrameRate, FrameType, UsageType, VuiConfig,
 };
 #[cfg(feature = "h264")]
 use openh264::formats::YUVSlices;
@@ -276,18 +276,26 @@ impl Avc444Encoder {
             (ColorMatrix::BT601, _) | (ColorMatrix::OpenH264, _) => VuiConfig::bt601(),
         };
 
+        // NOTE: No explicit QP range - let OpenH264 use full range (0-51) for optimal quality
+        // Use High complexity for better text sharpness (more encoder effort)
+        // See docs/AVC444-AUX-OMISSION-CRITICAL-FINDING.md for context.
         let mut encoder_config = OpenH264Config::new()
             .bitrate(BitRate::from_bps(config.bitrate_kbps * 1000))
             .max_frame_rate(FrameRate::from_hz(config.max_fps))
             .skip_frames(config.enable_skip_frame)
             .usage_type(UsageType::ScreenContentRealTime)
+            .complexity(Complexity::High)  // Better quality for text/UI (slower encoding)
             .scene_change_detect(false)  // Disable auto-IDR for bandwidth optimization
-            .vui(vui);  // Signal color space to decoder
+            .vui(vui);  // Signal color space to decoder (BT.709 full range)
 
         // Set level if we know dimensions
         if let Some(level) = level {
             encoder_config = encoder_config.level(level.to_openh264_level());
         }
+
+        info!(
+            "🎬 AVC444: High complexity, OpenH264 default QP (0-51), VUI enabled"
+        );
 
         // Create SINGLE encoder for both Main and Aux (MS-RDPEGFX spec compliant)
         let encoder = Encoder::with_api_config(
@@ -847,15 +855,31 @@ impl Avc444Encoder {
     ///
     /// Aux is sent when ANY of these conditions are true:
     /// 1. **Omission disabled** - always send (backward compatible)
-    /// 2. **Main is keyframe** - aux must accompany main IDR
-    /// 3. **First aux frame** - initial frame always sent
-    /// 4. **Forced refresh** - exceeded max_aux_interval
-    /// 5. **Content changed** - hash differs from previous aux
+    /// 2. **First aux frame** - initial frame always sent
+    /// 3. **Forced refresh** - exceeded max_aux_interval
+    /// 4. **Content changed** - hash differs from previous aux
+    ///
+    /// # CRITICAL: Main IDR does NOT trigger aux send!
+    ///
+    /// Previously, we sent aux whenever main was IDR ("sync required"). This
+    /// created a FEEDBACK LOOP that prevented P-frames:
+    ///
+    /// 1. Main IDR → send aux → DPB contains Aux
+    /// 2. Next Main references Aux (different content) → forced IDR
+    /// 3. Main IDR → send aux → DPB contains Aux
+    /// 4. ... loop continues indefinitely
+    ///
+    /// By NOT sending aux on Main IDR, we break this loop:
+    /// 1. Aux refresh (max_interval) → Main becomes IDR (unavoidable)
+    /// 2. Next Main: we DON'T send aux → DPB = Main
+    /// 3. Next Main: references Main → P-frame works!
+    ///
+    /// The client handles Main IDR + cached aux correctly (LC=1 mode).
     ///
     /// # Arguments
     ///
     /// * `aux_frame` - Current auxiliary YUV420 frame
-    /// * `main_is_keyframe` - Whether main stream is IDR this frame
+    /// * `_main_is_keyframe` - Whether main stream is IDR (IGNORED to break feedback loop)
     ///
     /// # Returns
     ///
@@ -863,18 +887,16 @@ impl Avc444Encoder {
     fn should_send_aux(
         &self,
         aux_frame: &super::yuv444_packing::Yuv420Frame,
-        main_is_keyframe: bool,
+        _main_is_keyframe: bool,  // IGNORED: See feedback loop documentation above
     ) -> bool {
         // If omission disabled, always send (backward compatible behavior)
         if !self.enable_aux_omission {
             return true;
         }
 
-        // Always send aux with main keyframes (IDR frames must sync)
-        if main_is_keyframe {
-            trace!("Sending aux: main is keyframe (sync required)");
-            return true;
-        }
+        // REMOVED: "main_is_keyframe → send aux" rule
+        // This was causing a feedback loop that prevented ALL P-frames!
+        // See docs/AVC444-AUX-OMISSION-CRITICAL-FINDING.md for details.
 
         // First aux frame must always be sent
         if self.last_aux_hash.is_none() {
@@ -885,10 +907,22 @@ impl Avc444Encoder {
         // Enforce maximum interval (forced refresh for quality)
         if self.frames_since_aux >= self.max_aux_interval {
             debug!(
-                "Sending aux: forced refresh ({}  frames since last, max={})",
+                "Sending aux: forced refresh ({} frames since last, max={})",
                 self.frames_since_aux, self.max_aux_interval
             );
             return true;
+        }
+
+        // CRITICAL: Enforce MINIMUM interval between aux sends to prevent DPB pollution!
+        // Without this, rapid content changes cause aux on every frame → feedback loop.
+        // This ensures Main stream has time to establish P-frame chains between aux refreshes.
+        const MIN_AUX_INTERVAL: u32 = 10; // At least 10 frames between aux sends
+        if self.frames_since_aux < MIN_AUX_INTERVAL {
+            trace!(
+                "Skipping aux: rate limited ({} frames since last, min={})",
+                self.frames_since_aux, MIN_AUX_INTERVAL
+            );
+            return false;
         }
 
         // Check if aux content has changed
