@@ -719,24 +719,41 @@ impl WrdDisplayHandler {
                         let aligned_height = align_to_16(frame.height as u32) as u16;
 
                         // Create H.264 encoder with resolution-appropriate level
+                        // Use config values for quality settings
                         let config = EncoderConfig {
-                            bitrate_kbps: 5000,
-                            max_fps: 30.0,
+                            bitrate_kbps: self.config.egfx.h264_bitrate,
+                            max_fps: self.config.video.target_fps as f32,
                             enable_skip_frame: true,
                             width: Some(aligned_width),
                             height: Some(aligned_height),
                             color_space: None, // Auto-select based on resolution
+                            qp_min: self.config.egfx.qp_min,
+                            qp_max: self.config.egfx.qp_max,
                         };
+                        info!(
+                            "🎬 H.264 encoder config: {}kbps, {}fps, QP[{}-{}]",
+                            self.config.egfx.h264_bitrate,
+                            self.config.video.target_fps,
+                            self.config.egfx.qp_min,
+                            self.config.egfx.qp_max
+                        );
 
-                        // Check if AVC444 is supported by the client
+                        // Check if AVC444 is supported by client AND enabled in server config
                         // AVC444 provides superior chroma quality for text/UI rendering
-                        let avc444_supported = if let Some(state) = handler.gfx_handler_state.read().await.as_ref() {
+                        let client_supports_avc444 = if let Some(state) = handler.gfx_handler_state.read().await.as_ref() {
                             state.is_avc444_enabled
                         } else {
                             false
                         };
+                        let avc444_enabled = self.config.egfx.avc444_enabled && client_supports_avc444;
 
-                        if avc444_supported {
+                        if !self.config.egfx.avc444_enabled {
+                            info!("AVC444 disabled in config, using AVC420");
+                        } else if !client_supports_avc444 {
+                            info!("Client doesn't support AVC444, using AVC420");
+                        }
+
+                        if avc444_enabled {
                             // Try AVC444 first (premium 4:4:4 chroma)
                             match Avc444Encoder::new(config.clone()) {
                                 Ok(mut encoder) => {

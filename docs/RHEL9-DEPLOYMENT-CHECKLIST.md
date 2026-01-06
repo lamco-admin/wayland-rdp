@@ -90,11 +90,12 @@ auth_method = "none"
 require_tls_13 = false
 
 [egfx]
-h264_bitrate = 8000
+h264_bitrate = 10000
 qp_min = 10
-qp_max = 28
-qp_default = 20
-avc444_enable_aux_omission = false
+qp_max = 25
+qp_default = 18
+# CRITICAL: Must be true for P-frames with single encoder!
+avc444_enable_aux_omission = true
 
 [advanced_video]
 scene_change_threshold = 0.4

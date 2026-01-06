@@ -14,10 +14,13 @@ use tokio::sync::Mutex;
 ///
 /// Contains the Portal clipboard manager and session needed for clipboard operations.
 /// Only Portal strategy can provide this; Mutter has no clipboard API.
+///
+/// Note: On Portal v1 (e.g., RHEL 9 GNOME 40), clipboard is not supported,
+/// so `manager` will be `None`. The session is always available.
 pub struct ClipboardComponents {
-    /// Portal clipboard manager
-    pub manager: Arc<lamco_portal::ClipboardManager>,
-    /// Portal session for clipboard operations
+    /// Portal clipboard manager - None on Portal v1 (no clipboard support)
+    pub manager: Option<Arc<lamco_portal::ClipboardManager>>,
+    /// Portal session for clipboard operations (always available)
     pub session: Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
 }
 
