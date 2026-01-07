@@ -80,20 +80,20 @@ bytes = "1.5"
 rustls-pemfile = "2.2"
 
 # -----------------------------------------------------------------------------
-# RDP protocol (IronRDP from local fork - includes file transfer support)
-# See IRONRDP-PATCHES.md for pending PR details
-# Using local path for development; change to git for release
+# RDP protocol (IronRDP from lamco-admin fork)
+# Fork includes: EGFX support, clipboard file transfer
+# See: https://github.com/lamco-admin/IronRDP
 # -----------------------------------------------------------------------------
-ironrdp = { path = "/home/greg/wayland/IronRDP/crates/ironrdp", default-features = false, features = ["server"] }
-ironrdp-server = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-server", features = ["egfx"] }
-ironrdp-tokio = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-tokio", features = ["reqwest"] }
-ironrdp-pdu = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-pdu" }
-ironrdp-displaycontrol = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-displaycontrol" }
-ironrdp-cliprdr = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-cliprdr" }
-ironrdp-core = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-core" }
-ironrdp-dvc = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-dvc" }
-ironrdp-svc = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-svc" }
-ironrdp-egfx = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-egfx" }
+ironrdp = { git = "https://github.com/lamco-admin/IronRDP", branch = "master", default-features = false, features = ["server"] }
+ironrdp-server = { git = "https://github.com/lamco-admin/IronRDP", branch = "master", features = ["egfx"] }
+ironrdp-tokio = { git = "https://github.com/lamco-admin/IronRDP", branch = "master", features = ["reqwest"] }
+ironrdp-pdu = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-displaycontrol = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-cliprdr = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-core = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-dvc = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-svc = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-egfx = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
 
 # -----------------------------------------------------------------------------
 # Wayland and Portal integration
@@ -148,6 +148,7 @@ cudarc = { version = "0.16", optional = true, default-features = false, features
 # -----------------------------------------------------------------------------
 nix = { version = "0.27", features = ["signal", "process", "mman"] }
 libc = "0.2"
+fuser = "0.15"  # FUSE filesystem for clipboard file transfer
 chrono = "0.4"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 sysinfo = "0.30"
@@ -285,37 +286,40 @@ cast_possible_wrap = "allow"
 # Patches - Override transitive dependencies
 # =============================================================================
 #
-# IronRDP local fork required for file transfer methods not yet in upstream:
+# IronRDP from lamco-admin public fork with features not yet in upstream:
+# - PR #1057: MS-RDPEGFX Graphics Pipeline Extension
+# - PR #1063: reqwest feature fix
 # - PR #1064: lock_clipboard() / unlock_clipboard()
 # - PR #1065: request_file_contents()
 # - PR #1066: SendFileContentsResponse
 #
-# Fork branch: pr3-file-contents-response-v2
-# Fork location: /home/greg/wayland/IronRDP
+# Fork: https://github.com/lamco-admin/IronRDP
+# Local: ~/IronRDP-public
+# Tracking: ~/lamco-admin/upstream/ironrdp/PUBLIC-FORK-STATUS.md
 #
-# When Devolutions merges PRs #1064-1066 and publishes new version:
+# When Devolutions merges all PRs and publishes new version:
 # 1. Remove this [patch] section
 # 2. Update ironrdp-* direct dependencies to use crates.io versions
 # =============================================================================
 
 [patch.crates-io]
-# IronRDP local fork - combined EGFX + file transfer support
-# PRs pending upstream: #1057 (EGFX), #1064-1066 (file transfer)
+# IronRDP from lamco-admin fork - EGFX + clipboard file transfer
+# PRs pending upstream: #1057 (EGFX), #1063-1066 (clipboard)
 # All crates patched to same source to avoid trait conflicts
-ironrdp = { path = "/home/greg/wayland/IronRDP/crates/ironrdp" }
-ironrdp-pdu = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-pdu" }
-ironrdp-server = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-server" }
-ironrdp-graphics = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-graphics" }
-ironrdp-cliprdr = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-cliprdr" }
-ironrdp-svc = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-svc" }
-ironrdp-dvc = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-dvc" }
-ironrdp-core = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-core" }
-ironrdp-tokio = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-tokio" }
-ironrdp-displaycontrol = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-displaycontrol" }
-ironrdp-egfx = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-egfx" }
+ironrdp = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-pdu = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-server = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-graphics = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-cliprdr = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-svc = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-dvc = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-core = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-tokio = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-displaycontrol = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-egfx = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
 
 # Patch git dependencies from lamco-rdp-workspace (lamco-rdp-clipboard uses git fork)
-# This ensures trait compatibility between git and local IronRDP sources
+# Redirect glamberson fork references to lamco-admin fork
 [patch."https://github.com/glamberson/IronRDP"]
-ironrdp-cliprdr = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-cliprdr" }
-ironrdp-core = { path = "/home/greg/wayland/IronRDP/crates/ironrdp-core" }
+ironrdp-cliprdr = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+ironrdp-core = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }

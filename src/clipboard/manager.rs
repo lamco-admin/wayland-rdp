@@ -235,6 +235,16 @@ pub struct ClipboardManager {
     /// File transfer state (for handling file clipboard operations)
     file_transfer_state: Arc<RwLock<FileTransferState>>,
 
+    /// FUSE filesystem manager for on-demand file transfer
+    fuse_manager: Arc<RwLock<Option<crate::clipboard::fuse::FuseManager>>>,
+
+    /// Channel sender for FUSE file content requests
+    fuse_request_tx: Option<mpsc::Sender<crate::clipboard::fuse::FileContentsRequest>>,
+
+    /// Pending FUSE responses (stream_id -> response channel)
+    /// Used to deliver RDP FileContentsResponse back to FUSE read() calls
+    pending_fuse_responses: Arc<RwLock<HashMap<u32, tokio::sync::oneshot::Sender<crate::clipboard::fuse::FileContentsResponse>>>>,
+
     /// Current RDP format list from Windows (for format ID lookup)
     /// Windows registered format IDs (like FileGroupDescriptorW) vary per session,
     /// so we store the actual list to look up the correct ID when requesting data.
@@ -471,6 +481,24 @@ impl ClipboardManager {
 
         let file_transfer_state = Arc::new(RwLock::new(FileTransferState::new(download_dir)));
 
+        // Create FUSE request channel (will be used to handle on-demand file reads)
+        let (fuse_request_tx, fuse_request_rx) = mpsc::channel::<crate::clipboard::fuse::FileContentsRequest>(32);
+
+        // Create FUSE manager (mount will happen when needed)
+        let fuse_manager = match crate::clipboard::fuse::FuseManager::new(fuse_request_tx.clone()) {
+            Ok(fm) => {
+                debug!("FUSE manager created");
+                Some(fm)
+            }
+            Err(e) => {
+                warn!("FUSE manager creation failed (file transfer may not work): {:?}", e);
+                None
+            }
+        };
+
+        let fuse_manager = Arc::new(RwLock::new(fuse_manager));
+        let pending_fuse_responses = Arc::new(RwLock::new(HashMap::new()));
+
         let mut manager = Self {
             config,
             converter,
@@ -485,9 +513,15 @@ impl ClipboardManager {
             dbus_bridge: Arc::new(RwLock::new(None)), // Will be set by start_dbus_clipboard_listener
             recently_written_hashes: Arc::new(RwLock::new(std::collections::HashMap::new())),
             file_transfer_state,
+            fuse_manager: Arc::clone(&fuse_manager),
+            fuse_request_tx: Some(fuse_request_tx),
+            pending_fuse_responses: Arc::clone(&pending_fuse_responses),
             current_rdp_formats: Arc::new(RwLock::new(Vec::new())),
             local_advertised_formats: Arc::new(RwLock::new(Vec::new())),
         };
+
+        // Start FUSE request handler (bridges FUSE reads to RDP requests)
+        manager.start_fuse_request_handler(fuse_request_rx, Arc::clone(&pending_fuse_responses));
 
         // Start event processor
         manager.start_event_processor(event_rx);
@@ -509,6 +543,61 @@ impl ClipboardManager {
     ) {
         *self.server_event_sender.write().await = Some(sender);
         debug!(" ServerEvent sender registered with clipboard manager");
+    }
+
+    /// Mount FUSE filesystem for clipboard file transfer
+    ///
+    /// Should be called once during session setup.
+    pub async fn mount_fuse(&self) -> Result<()> {
+        let mut fuse = self.fuse_manager.write().await;
+        if let Some(ref mut manager) = *fuse {
+            manager.mount()?;
+            info!("FUSE clipboard filesystem mounted at {:?}", manager.mount_point());
+        } else {
+            warn!("FUSE manager not available - file transfer will use fallback staging");
+        }
+        Ok(())
+    }
+
+    /// Unmount FUSE filesystem
+    pub async fn unmount_fuse(&self) -> Result<()> {
+        let mut fuse = self.fuse_manager.write().await;
+        if let Some(ref mut manager) = *fuse {
+            manager.unmount()?;
+            info!("FUSE clipboard filesystem unmounted");
+        }
+        Ok(())
+    }
+
+    /// Create virtual files in FUSE from file descriptors
+    ///
+    /// Returns paths to the virtual files for URI generation.
+    /// Used when Windows copies files and we need to present them to Linux.
+    pub async fn create_fuse_virtual_files(
+        &self,
+        descriptors: Vec<crate::clipboard::fuse::FileDescriptor>,
+        clip_data_id: Option<u32>,
+    ) -> Option<Vec<PathBuf>> {
+        let fuse = self.fuse_manager.read().await;
+        if let Some(ref manager) = *fuse {
+            if manager.is_mounted() {
+                let paths = manager.set_files(descriptors, clip_data_id);
+                debug!("Created {} virtual files in FUSE", paths.len());
+                return Some(paths);
+            }
+        }
+        None
+    }
+
+    /// Generate gnome-copied-files content from FUSE virtual file paths
+    pub fn generate_fuse_uri_content(paths: &[PathBuf]) -> String {
+        crate::clipboard::fuse::generate_gnome_copied_files_content(paths)
+    }
+
+    /// Check if FUSE is available and mounted
+    pub async fn is_fuse_available(&self) -> bool {
+        let fuse = self.fuse_manager.read().await;
+        fuse.as_ref().map(|m| m.is_mounted()).unwrap_or(false)
     }
 
     /// Set Portal clipboard manager and session (async to acquire write lock)
@@ -1055,6 +1144,107 @@ impl ClipboardManager {
         debug!("Linux -> Windows clipboard now enabled via extension");
     }
 
+    /// Start FUSE request handler
+    ///
+    /// This bridges synchronous FUSE read() calls to async RDP FileContentsRequests.
+    /// When the Linux file manager reads a virtual file, FUSE blocks on a channel
+    /// while we fetch the data from Windows via RDP.
+    fn start_fuse_request_handler(
+        &self,
+        mut request_rx: mpsc::Receiver<crate::clipboard::fuse::FileContentsRequest>,
+        pending_responses: Arc<RwLock<HashMap<u32, tokio::sync::oneshot::Sender<crate::clipboard::fuse::FileContentsResponse>>>>,
+    ) {
+        use crate::clipboard::fuse::FileContentsResponse;
+
+        let server_event_sender = Arc::clone(&self.server_event_sender);
+        let file_transfer_state = Arc::clone(&self.file_transfer_state);
+
+        tokio::spawn(async move {
+            debug!("FUSE request handler started");
+
+            while let Some(request) = request_rx.recv().await {
+                // Allocate a stream ID for this request
+                let stream_id = {
+                    let mut state = file_transfer_state.write().await;
+                    state.allocate_stream_id()
+                };
+
+                debug!(
+                    "FUSE request: file_index={} offset={} size={} -> stream_id={}",
+                    request.file_index, request.offset, request.size, stream_id
+                );
+
+                // Store response channel for later
+                {
+                    let mut pending = pending_responses.write().await;
+                    pending.insert(stream_id, request.response_tx);
+                }
+
+                // Send FileContentsRequest to RDP
+                if let Some(sender) = server_event_sender.read().await.as_ref() {
+                    use ironrdp_cliprdr::backend::ClipboardMessage;
+                    use ironrdp_cliprdr::pdu::{FileContentsFlags, FileContentsRequest as RdpFileContentsRequest};
+
+                    let rdp_request = RdpFileContentsRequest {
+                        stream_id,
+                        index: request.file_index,
+                        flags: FileContentsFlags::DATA,
+                        position: request.offset,
+                        requested_size: request.size,
+                        data_id: request.clip_data_id,
+                    };
+
+                    if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                        ClipboardMessage::SendFileContentsRequest(rdp_request),
+                    )) {
+                        error!("Failed to send FileContentsRequest to RDP: {:?}", e);
+                        // Send error response back to FUSE
+                        if let Some(response_tx) = pending_responses.write().await.remove(&stream_id) {
+                            let _ = response_tx.send(FileContentsResponse::Error(
+                                "Failed to send RDP request".to_string(),
+                            ));
+                        }
+                    }
+                } else {
+                    warn!("ServerEvent sender not available for FUSE request");
+                    // Send error response back to FUSE
+                    if let Some(response_tx) = pending_responses.write().await.remove(&stream_id) {
+                        let _ = response_tx.send(FileContentsResponse::Error(
+                            "RDP not connected".to_string(),
+                        ));
+                    }
+                }
+            }
+
+            debug!("FUSE request handler ended");
+        });
+    }
+
+    /// Deliver FUSE file contents response from RDP
+    ///
+    /// Called when we receive a FileContentsResponse from Windows.
+    /// This delivers the data back to the blocked FUSE read() call.
+    pub async fn deliver_fuse_response(&self, stream_id: u32, data: Vec<u8>, is_error: bool) {
+        use crate::clipboard::fuse::FileContentsResponse;
+
+        if let Some(response_tx) = self.pending_fuse_responses.write().await.remove(&stream_id) {
+            let response = if is_error {
+                FileContentsResponse::Error("RDP error".to_string())
+            } else {
+                FileContentsResponse::Data(data)
+            };
+
+            if response_tx.send(response).is_err() {
+                warn!("FUSE response channel closed for stream_id={}", stream_id);
+            } else {
+                trace!("Delivered FUSE response for stream_id={}", stream_id);
+            }
+        } else {
+            // This may be a response for the old staging-based transfer, not FUSE
+            trace!("No pending FUSE request for stream_id={} (may be staging transfer)", stream_id);
+        }
+    }
+
     /// Start event processing loop
     fn start_event_processor(&mut self, mut event_rx: mpsc::Receiver<ClipboardEvent>) {
         let converter = self.converter.clone();
@@ -1068,6 +1258,7 @@ impl ClipboardManager {
         let server_event_sender = Arc::clone(&self.server_event_sender);
         let recently_written_hashes = Arc::clone(&self.recently_written_hashes);
         let file_transfer_state = Arc::clone(&self.file_transfer_state);
+        let fuse_manager = Arc::clone(&self.fuse_manager);
         let current_rdp_formats = Arc::clone(&self.current_rdp_formats);
         let local_advertised_formats = Arc::clone(&self.local_advertised_formats);
 
@@ -1090,6 +1281,7 @@ impl ClipboardManager {
                             &server_event_sender,
                             &recently_written_hashes,
                             &file_transfer_state,
+                            &fuse_manager,
                             &current_rdp_formats,
                             &local_advertised_formats,
                         ).await {
@@ -1137,6 +1329,7 @@ impl ClipboardManager {
             RwLock<std::collections::HashMap<String, std::time::Instant>>,
         >,
         file_transfer_state: &Arc<RwLock<FileTransferState>>,
+        fuse_manager: &Arc<RwLock<Option<crate::clipboard::fuse::FuseManager>>>,
         current_rdp_formats: &Arc<RwLock<Vec<ClipboardFormat>>>,
         local_advertised_formats: &Arc<RwLock<Vec<ClipboardFormat>>>,
     ) -> Result<()> {
@@ -1225,6 +1418,7 @@ impl ClipboardManager {
                     pending_portal_requests,
                     recently_written_hashes,
                     file_transfer_state,
+                    fuse_manager,
                     server_event_sender,
                 )
                 .await
@@ -1815,6 +2009,7 @@ impl ClipboardManager {
             RwLock<std::collections::HashMap<String, std::time::Instant>>,
         >,
         file_transfer_state: &Arc<RwLock<FileTransferState>>,
+        fuse_manager: &Arc<RwLock<Option<crate::clipboard::fuse::FuseManager>>>,
         server_event_sender: &Arc<
             RwLock<Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>,
         >,
@@ -1891,6 +2086,91 @@ impl ClipboardManager {
                         );
                     }
 
+                    // Check if FUSE is available and mounted - use on-demand transfer
+                    let fuse_available = {
+                        let fuse = fuse_manager.read().await;
+                        fuse.as_ref().map(|m| m.is_mounted()).unwrap_or(false)
+                    };
+
+                    if fuse_available {
+                        // FUSE path: create virtual files and deliver URIs immediately
+                        // Data will be fetched on-demand when file manager reads
+                        info!("Using FUSE on-demand file transfer (no upfront download)");
+
+                        // Lock clipboard data for the duration of the transfer
+                        let clip_data_id = 1u32;
+                        if let Some(sender) = server_event_sender.read().await.as_ref() {
+                            use ironrdp_cliprdr::backend::ClipboardMessage;
+                            if let Err(e) = sender.send(ironrdp_server::ServerEvent::Clipboard(
+                                ClipboardMessage::SendLockClipboard { clip_data_id },
+                            )) {
+                                warn!("Failed to send Lock PDU for FUSE transfer: {:?}", e);
+                            }
+                        }
+
+                        // Convert library FileDescriptor to FUSE FileDescriptor
+                        let fuse_descriptors: Vec<crate::clipboard::fuse::FileDescriptor> = descriptors
+                            .iter()
+                            .map(|d| {
+                                let filename = sanitize_filename_for_linux(&d.name);
+                                crate::clipboard::fuse::FileDescriptor::new(
+                                    filename,
+                                    d.size.unwrap_or(0),
+                                )
+                            })
+                            .collect();
+
+                        // Create virtual files in FUSE
+                        let paths = {
+                            let fuse = fuse_manager.read().await;
+                            if let Some(ref manager) = *fuse {
+                                manager.set_files(fuse_descriptors, Some(clip_data_id))
+                            } else {
+                                Vec::new()
+                            }
+                        };
+
+                        if paths.is_empty() {
+                            error!("FUSE failed to create virtual files - falling back to staging");
+                            // Fall through to staging approach
+                        } else {
+                            // Generate URI list for Portal
+                            let uri_content = crate::clipboard::fuse::generate_gnome_copied_files_content(&paths);
+                            let uri_bytes = uri_content.into_bytes();
+
+                            info!(
+                                "Delivering {} FUSE virtual file URI(s) to Portal (serial={})",
+                                paths.len(),
+                                serial
+                            );
+
+                            // Write URI list to Portal
+                            let session_guard = session.lock().await;
+                            match portal
+                                .write_selection_data(&session_guard, serial, uri_bytes)
+                                .await
+                            {
+                                Ok(_) => {
+                                    info!(
+                                        "FUSE file URIs delivered - files available for on-demand read"
+                                    );
+                                }
+                                Err(e) => {
+                                    error!("Failed to deliver FUSE URIs to Portal: {:?}", e);
+                                    let _ = portal
+                                        .portal_clipboard()
+                                        .selection_write_done(&session_guard, serial, false)
+                                        .await;
+                                }
+                            }
+
+                            return Ok(());
+                        }
+                    }
+
+                    // Staging fallback path: download files upfront (when FUSE not available)
+                    info!("Using staging file transfer (FUSE not available)");
+
                     // Initialize file transfer state and request file contents
                     let sender_opt = server_event_sender.read().await.clone();
                     let sender = match sender_opt {
@@ -1939,7 +2219,7 @@ impl ClipboardManager {
                             let total_size = desc.size.unwrap_or(0);
 
                             if &filename != original_name {
-                                info!("Requesting file {}/{}: '{}' → '{}' (sanitized, {} bytes, stream_id={})",
+                                info!("Requesting file {}/{}: '{}' -> '{}' (sanitized, {} bytes, stream_id={})",
                                     idx + 1, descriptors.len(), original_name, filename, total_size, stream_id);
                             } else {
                                 info!(
@@ -2017,7 +2297,7 @@ impl ClipboardManager {
                         }
 
                         info!(
-                            "Initiated transfer for {} file(s), waiting for responses...",
+                            "Initiated staging transfer for {} file(s), waiting for responses...",
                             state.incoming_files.len()
                         );
                     }

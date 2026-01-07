@@ -1,0 +1,304 @@
+[server]
+listen_addr = "0.0.0.0:3389"
+max_connections = 5
+session_timeout = 0
+use_portals = true
+
+[security]
+cert_path = "certs/cert.pem"
+key_path = "certs/key.pem"
+enable_nla = false
+auth_method = "none"
+require_tls_13 = false
+
+[video]
+encoder = "auto"
+vaapi_device = "/dev/dri/renderD128"
+target_fps = 30
+bitrate = 4000
+damage_tracking = true
+cursor_mode = "metadata"
+
+[video_pipeline.processor]
+target_fps = 30
+max_queue_depth = 30
+adaptive_quality = true
+damage_threshold = 0.05
+drop_on_full_queue = true
+enable_metrics = true
+
+[video_pipeline.dispatcher]
+channel_size = 30
+priority_dispatch = true
+max_frame_age_ms = 150
+enable_backpressure = true
+high_water_mark = 0.8
+low_water_mark = 0.5
+load_balancing = true
+
+[video_pipeline.converter]
+buffer_pool_size = 8
+enable_simd = true
+damage_threshold = 0.75
+enable_statistics = true
+
+[input]
+use_libei = true
+keyboard_layout = "auto"
+enable_touch = false
+
+[clipboard]
+enabled = true
+max_size = 10485760
+# Minimum ms between clipboard events (rate limiting). 0 = disable, 200 = max 5/sec
+rate_limit_ms = 200
+allowed_types = []
+
+[multimon]
+enabled = true
+max_monitors = 4
+
+[performance]
+encoder_threads = 0
+network_threads = 0
+buffer_pool_size = 16
+zero_copy = true
+
+# ============================================================================
+# Adaptive FPS - Dynamic Frame Rate Based on Screen Activity
+# ============================================================================
+[performance.adaptive_fps]
+# Enable adaptive FPS (dynamically adjusts based on screen activity)
+# false = fixed FPS (uses max_fps as constant rate)
+enabled = true
+
+# Minimum FPS even for completely static content
+# Keeps connection alive and responsive
+min_fps = 5
+
+# Maximum FPS for high activity content (video, window dragging)
+# Default: 30 (balanced for most systems)
+# Set to 60 for high-performance mode (requires hardware encoder)
+#
+# HIGH PERFORMANCE MODE:
+#   max_fps = 60
+#   Requirements:
+#   - VAAPI or NVENC hardware encoder
+#   - Fast network (>10 Mbps recommended)
+#   - Modern client supporting H.264 High Profile
+max_fps = 30
+
+# Activity thresholds (damage ratio 0.0-1.0)
+# These control when FPS increases based on screen changes
+high_activity_threshold = 0.30   # >30% change = max FPS (video playback)
+medium_activity_threshold = 0.10 # 10-30% change = 2/3 max FPS (scrolling)
+low_activity_threshold = 0.01    # 1-10% change = 1/2 max FPS (typing)
+                                  # <1% change = min FPS (static desktop)
+
+# ============================================================================
+# Latency Governor - Quality vs Responsiveness Trade-off
+# ============================================================================
+[performance.latency]
+# Latency mode: "interactive", "balanced", "quality"
+# interactive = <50ms  (gaming, CAD, real-time apps)
+# balanced    = <100ms (general desktop, recommended)
+# quality     = <300ms (photo/video editing, color-critical work)
+mode = "balanced"
+
+# Maximum frame delay per mode (milliseconds)
+# Lower = more responsive, may drop frames under load
+# Higher = smoother playback, more latency
+interactive_max_delay_ms = 16  # ~60fps equivalent
+balanced_max_delay_ms = 33     # ~30fps equivalent
+quality_max_delay_ms = 100     # accumulate for quality
+
+# Damage thresholds for mode-specific behavior
+# Controls when to prioritize latency vs quality
+balanced_damage_threshold = 0.15
+quality_damage_threshold = 0.05
+
+[logging]
+level = "info"
+metrics = true
+
+# ============================================================================
+# EGFX Configuration - Graphics Pipeline Extension (H.264 Video)
+# ============================================================================
+[egfx]
+# Enable EGFX graphics pipeline for H.264 video streaming
+enabled = true
+
+# H.264 level selection: "auto" or explicit level
+# auto = Auto-select based on resolution and FPS
+# Explicit levels: "3.0", "3.1", "4.0", "4.1", "5.0", "5.1", "5.2"
+# Resolution guidance:
+#   800x600    → Level 3.0
+#   1280x720   → Level 3.1
+#   1920x1080  → Level 4.0
+#   2560x1440  → Level 4.1
+#   3840x2160  → Level 5.1
+h264_level = "auto"
+
+# H.264 bitrate in kbps (target bandwidth)
+# Lower = more compression artifacts, less bandwidth
+# Higher = better quality, more bandwidth
+# Recommended: 5000-8000 for 1080p, 8000-12000 for 1440p/4K
+h264_bitrate = 5000
+
+# ZGFX compression mode: "never", "auto", "always"
+# never = Uncompressed wrapper only (current production default)
+# auto = Compress if beneficial, skip if not (after optimization)
+# always = Always compress (debugging/testing)
+# Note: H.264 video already compressed, ZGFX provides minimal benefit
+zgfx_compression = "never"
+
+# Maximum frames in flight before backpressure
+# Controls flow control to prevent overwhelming client
+# Lower = lower latency, more frame drops under load
+# Higher = higher latency, smoother playback under load
+# Recommended: 3-5
+max_frames_in_flight = 3
+
+# Frame acknowledgment timeout (milliseconds)
+# How long to wait for client frame acknowledgment
+# Increase for high-latency networks
+frame_ack_timeout = 5000
+
+# Video codec selection: "avc420", "avc444"
+# avc420 = H.264 4:2:0 chroma (standard, good quality)
+# avc444 = H.264 4:4:4 chroma (better color, more bandwidth)
+# Note: avc444 requires client support and premium feature
+codec = "avc420"
+
+# Quality parameter (QP) range for H.264 encoding
+# Lower QP = better quality, larger frames
+# Higher QP = worse quality, smaller frames
+# Range: 0 (lossless) to 51 (very lossy)
+qp_min = 10
+qp_max = 25
+qp_default = 18
+
+# ============================================================================
+# AVC444 Configuration - MUST be in [egfx] section
+# ============================================================================
+# Enable AVC444 codec (4:4:4 chroma for better color)
+avc444_enabled = true
+
+# AVC444 Bandwidth Optimization - Auxiliary Stream Omission (Phase 1)
+# FreeRDP-proven pattern: Skip encoding aux when chroma unchanged
+# CRITICAL: With single encoder, aux omission ENABLES P-frames on Main!
+# - true = 92.7% P-frames, 0.81 MB/s, EXCELLENT quality (recommended)
+# - false = 100% IDR, higher bandwidth, WORSE quality (not recommended)
+avc444_enable_aux_omission = true
+
+# Maximum frames between aux updates (quality assurance refresh)
+# 30 = 1 second @ 30fps (balanced), 60 = 2 seconds (aggressive)
+avc444_max_aux_interval = 30
+
+# Change detection threshold (Phase 2 feature, currently unused)
+avc444_aux_change_threshold = 0.05
+
+# Force aux IDR when returning after omission
+# NOTE: With single encoder, this forces Main to IDR too!
+# MUST be false for proper P-frame operation
+avc444_force_aux_idr_on_return = false
+
+# ============================================================================
+# Damage Tracking - Bandwidth Optimization
+# ============================================================================
+[damage_tracking]
+# Enable damage region detection (only encode changed areas)
+# Provides 50-90% bandwidth reduction for static content
+enabled = true
+
+# Detection method: "pipewire", "diff", "hybrid"
+# pipewire = Use compositor-provided damage hints (if available)
+# diff = Frame differencing algorithm (always works)
+# hybrid = Try pipewire, fall back to diff (recommended)
+method = "diff"
+
+# Tile size for differencing algorithm (pixels)
+# Smaller = finer granularity, more CPU
+# Larger = coarser granularity, less CPU
+# Recommended: 32-128
+tile_size = 64
+
+# Difference threshold (0.0-1.0)
+# Higher = less sensitive, fewer regions marked dirty
+# Lower = more sensitive, more regions marked dirty
+# Recommended: 0.03-0.10
+diff_threshold = 0.05
+
+# Merge adjacent dirty tiles within this distance (pixels)
+# Reduces region count, improves encoding efficiency
+merge_distance = 32
+
+# ============================================================================
+# Hardware Encoding - GPU Acceleration (Premium Feature)
+# ============================================================================
+[hardware_encoding]
+# Enable hardware-accelerated encoding (VAAPI)
+# Provides 50-70% CPU reduction
+# Requires Intel/AMD GPU with VA-API support
+enabled = false
+
+# VA-API device path
+# Usually /dev/dri/renderD128 (Intel iGPU)
+# Check available devices: ls /dev/dri/render*
+vaapi_device = "/dev/dri/renderD128"
+
+# Enable zero-copy DMA-BUF path (if PipeWire supports)
+# Avoids CPU copy, GPU → GPU transfer
+# Best performance but requires compositor support
+enable_dmabuf_zerocopy = true
+
+# Fallback to software encoding if hardware fails
+fallback_to_software = true
+
+# Encoder quality preset: "speed", "balanced", "quality"
+# speed = Fastest encoding, lower quality
+# balanced = Good tradeoff
+# quality = Best quality, slower encoding
+quality_preset = "balanced"
+
+# ============================================================================
+# Display Control - Resolution and Monitor Management
+# ============================================================================
+[display]
+# Allow dynamic resolution changes (client window resize)
+# Requires RDPEDISP virtual channel support
+allow_resize = true
+
+# List of allowed resolutions (empty = all allowed)
+# Format: "WIDTHxHEIGHT" or "WIDTHxHEIGHT@FPS"
+# Example: ["1920x1080", "2560x1440", "3840x2160@30"]
+allowed_resolutions = []
+
+# DPI scaling support (future feature)
+dpi_aware = false
+
+# Allow orientation changes (portrait/landscape)
+allow_rotation = false
+
+# ============================================================================
+# Advanced Video Pipeline - Expert Settings
+# ============================================================================
+[advanced_video]
+# Encoder frame skipping for rate control
+# Allows encoder to drop frames to meet bitrate target
+enable_frame_skip = true
+
+# Scene change detection sensitivity (0.0-1.0)
+# Higher = more sensitive, more keyframes
+# Lower = less sensitive, fewer keyframes
+scene_change_threshold = 0.7
+
+# Intra refresh interval (frames)
+# Force keyframe every N frames
+# 0 = only on scene changes
+# Recommended: 300 (10 seconds @ 30fps)
+intra_refresh_interval = 300
+
+# Adaptive quality based on network feedback
+# Adjusts QP based on frame acknowledgment latency
+enable_adaptive_quality = false

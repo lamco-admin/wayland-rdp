@@ -46,6 +46,7 @@
 
 // Server-specific modules (policy and orchestration)
 pub mod error;
+pub mod fuse;
 pub mod ironrdp_backend;
 pub mod manager;
 pub mod sync;
@@ -99,6 +100,12 @@ pub use manager::{ClipboardConfig, ClipboardEvent, ClipboardManager};
 
 // Server sync manager (state machine + echo protection)
 pub use sync::{ClipboardState, SyncDirection, SyncManager};
+
+// FUSE-based clipboard file transfer
+pub use fuse::{
+    FileContentsRequest, FileContentsResponse, FileDescriptor, FuseManager,
+    generate_gnome_copied_files_content, generate_uri_list_content, get_mount_point,
+};
 
 // =============================================================================
 // Extension trait for FormatConverter (server-specific convenience methods)
