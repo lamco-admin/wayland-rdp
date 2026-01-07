@@ -173,6 +173,14 @@ impl FormatConverterExt for FormatConverter {
                     if !mime_types.contains(&m.to_string()) {
                         mime_types.push(m.to_string());
                     }
+                    // For file formats, also announce x-special/gnome-copied-files for GNOME compatibility
+                    // KDE Dolphin accepts text/uri-list, but GNOME Nautilus requires gnome-copied-files
+                    if m == "text/uri-list" {
+                        let gnome_mime = "x-special/gnome-copied-files";
+                        if !mime_types.contains(&gnome_mime.to_string()) {
+                            mime_types.push(gnome_mime.to_string());
+                        }
+                    }
                 }
             }
         }
