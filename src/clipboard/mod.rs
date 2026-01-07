@@ -56,32 +56,32 @@ pub mod sync;
 
 // Format conversion and clipboard types from lamco-clipboard-core
 pub use lamco_clipboard_core::{
-    ClipboardFormat, FormatConverter,
-    // Loop detection
-    LoopDetector, LoopDetectionConfig,
-    // Transfer engine
-    TransferConfig, TransferEngine, TransferProgress, TransferState,
     // Error types (base)
     ClipboardError as CoreClipboardError,
+    ClipboardFormat,
+    FormatConverter,
+    LoopDetectionConfig,
+    // Loop detection
+    LoopDetector,
+    // Transfer engine
+    TransferConfig,
+    TransferEngine,
+    TransferProgress,
+    TransferState,
 };
 
 // Standalone format mapping functions from library
 pub use lamco_clipboard_core::formats::{
-    mime_to_rdp_formats as lib_mime_to_rdp_formats,
-    rdp_format_to_mime as lib_rdp_format_to_mime,
+    mime_to_rdp_formats as lib_mime_to_rdp_formats, rdp_format_to_mime as lib_rdp_format_to_mime,
 };
 
 // D-Bus bridge from lamco-portal (GNOME fallback)
-pub use lamco_portal::dbus_clipboard::{
-    DbusClipboardBridge, DbusClipboardEvent,
-};
+pub use lamco_portal::dbus_clipboard::{DbusClipboardBridge, DbusClipboardEvent};
 
 // RDP backend from lamco-rdp-clipboard
 pub use lamco_rdp_clipboard::{
-    RdpCliprdrBackend, RdpCliprdrFactory as LibRdpCliprdrFactory,
-    ClipboardEvent as RdpClipboardEvent,
-    ClipboardEventReceiver, ClipboardEventSender,
-    ClipboardGeneralCapabilityFlags,
+    ClipboardEvent as RdpClipboardEvent, ClipboardEventReceiver, ClipboardEventSender,
+    ClipboardGeneralCapabilityFlags, RdpCliprdrBackend, RdpCliprdrFactory as LibRdpCliprdrFactory,
 };
 
 // =============================================================================
