@@ -4,6 +4,7 @@
 //! the running compositor and probe its capabilities.
 
 use anyhow::{Context, Result};
+use std::fs;
 use std::process::Command;
 use tracing::{debug, info, warn};
 
@@ -311,6 +312,114 @@ fn detect_wlroots_compositor() -> Option<String> {
     }
 
     None
+}
+
+/// OS release information from /etc/os-release
+#[derive(Debug, Clone, Default)]
+pub struct OsRelease {
+    /// Distribution ID (e.g., "rhel", "fedora", "ubuntu", "debian")
+    pub id: String,
+    /// Version ID (e.g., "9", "40", "24.04")
+    pub version_id: String,
+    /// Full name (e.g., "Red Hat Enterprise Linux 9.4")
+    pub name: String,
+    /// Pretty name for display
+    pub pretty_name: String,
+    /// ID-like chain (e.g., "rhel fedora" for RHEL)
+    pub id_like: Vec<String>,
+}
+
+impl OsRelease {
+    /// Check if this OS is RHEL or a RHEL derivative
+    pub fn is_rhel_family(&self) -> bool {
+        self.id == "rhel" || self.id_like.iter().any(|s| s == "rhel")
+    }
+
+    /// Check if this is specifically RHEL 9.x
+    pub fn is_rhel9(&self) -> bool {
+        self.id == "rhel" && self.version_id.starts_with('9')
+    }
+
+    /// Check if this is RHEL 8.x
+    pub fn is_rhel8(&self) -> bool {
+        self.id == "rhel" && self.version_id.starts_with('8')
+    }
+
+    /// Get major version as integer
+    pub fn major_version(&self) -> Option<u32> {
+        self.version_id
+            .split('.')
+            .next()
+            .and_then(|v| v.parse().ok())
+    }
+}
+
+/// Detect OS release information from /etc/os-release
+///
+/// This parses the standard os-release file to identify the Linux distribution
+/// and version. This is critical for platform-specific quirks like the
+/// AVC444 blur issue on RHEL 9.
+///
+/// # Returns
+///
+/// Returns `Some(OsRelease)` with distribution info, or `None` if detection fails.
+///
+/// # Example
+///
+/// ```no_run
+/// use lamco_rdp_server::compositor::probing::detect_os_release;
+///
+/// if let Some(os) = detect_os_release() {
+///     if os.is_rhel9() {
+///         println!("Running on RHEL 9 - AVC444 quirks apply");
+///     }
+/// }
+/// ```
+pub fn detect_os_release() -> Option<OsRelease> {
+    // Try /etc/os-release first (standard location)
+    let content = fs::read_to_string("/etc/os-release")
+        .or_else(|_| fs::read_to_string("/usr/lib/os-release"))
+        .ok()?;
+
+    let mut release = OsRelease::default();
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        if let Some((key, value)) = line.split_once('=') {
+            // Remove quotes from value
+            let value = value.trim_matches('"').trim_matches('\'');
+
+            match key {
+                "ID" => release.id = value.to_lowercase(),
+                "VERSION_ID" => release.version_id = value.to_string(),
+                "NAME" => release.name = value.to_string(),
+                "PRETTY_NAME" => release.pretty_name = value.to_string(),
+                "ID_LIKE" => {
+                    release.id_like = value
+                        .split_whitespace()
+                        .map(|s| s.to_lowercase())
+                        .collect();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if release.id.is_empty() {
+        debug!("Could not parse OS ID from os-release");
+        return None;
+    }
+
+    debug!(
+        "Detected OS: {} {} (ID_LIKE: {:?})",
+        release.id, release.version_id, release.id_like
+    );
+
+    Some(release)
 }
 
 /// Enumerate Wayland globals via wlr-randr or similar tools

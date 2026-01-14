@@ -178,7 +178,7 @@ impl Config {
         }
 
         match self.egfx.codec.as_str() {
-            "avc420" | "avc444" => {}
+            "avc420" | "avc444" | "auto" => {}
             _ => anyhow::bail!("Invalid EGFX codec: {}", self.egfx.codec),
         }
 

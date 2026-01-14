@@ -59,7 +59,7 @@ pub use capabilities::{
 };
 pub use portal_caps::{CursorMode, PortalCapabilities, SourceType};
 pub use profiles::{CompositorProfile, Quirk};
-pub use probing::{identify_compositor, probe_capabilities};
+pub use probing::{detect_os_release, identify_compositor, probe_capabilities, OsRelease};
 
 /// Check if we're running in a Wayland session
 pub fn is_wayland_session() -> bool {
