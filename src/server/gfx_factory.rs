@@ -41,10 +41,20 @@ use crate::egfx::WrdGraphicsHandler;
 /// This factory is passed to the RdpServer builder and creates
 /// a shared `GraphicsPipelineServer` for each client connection.
 ///
+/// # Platform Quirks
+///
+/// The factory accepts a `force_avc420_only` flag which is passed to the handler.
+/// This is used when platform detection (e.g., RHEL 9) identifies that AVC444
+/// produces visual artifacts. The handler will then disable AVC444 regardless
+/// of client capability.
+///
 /// # Usage
 ///
 /// ```ignore
-/// let gfx_factory = WrdGfxFactory::new(width, height);
+/// // Check if platform has AVC444 quirk
+/// let force_avc420 = capabilities.profile.has_quirk(&Quirk::Avc444Unreliable);
+///
+/// let gfx_factory = WrdGfxFactory::with_quirks(width, height, force_avc420);
 ///
 /// // Get handle for display handler before passing to RdpServer
 /// let gfx_handle = gfx_factory.server_handle();
@@ -68,6 +78,9 @@ pub struct WrdGfxFactory {
     /// Shared GraphicsPipelineServer for proactive frame sending
     /// Created lazily on first call to build_server_with_handle()
     server_handle: Arc<RwLock<Option<GfxServerHandle>>>,
+
+    /// Force AVC420-only mode due to platform quirks (e.g., RHEL 9)
+    force_avc420_only: bool,
 }
 
 /// Shared handler state accessible from display handler
@@ -105,6 +118,27 @@ impl WrdGfxFactory {
             height,
             handler_state: Arc::new(RwLock::new(None)),
             server_handle: Arc::new(RwLock::new(None)),
+            force_avc420_only: false,
+        }
+    }
+
+    /// Create a new GFX factory with platform quirk awareness
+    ///
+    /// # Arguments
+    ///
+    /// * `width` - Initial desktop width
+    /// * `height` - Initial desktop height
+    /// * `force_avc420_only` - If true, disable AVC444 even if client supports it
+    ///
+    /// Use this constructor when platform detection has identified quirks
+    /// that affect codec selection (e.g., RHEL 9 AVC444 blur issue).
+    pub fn with_quirks(width: u16, height: u16, force_avc420_only: bool) -> Self {
+        Self {
+            width,
+            height,
+            handler_state: Arc::new(RwLock::new(None)),
+            server_handle: Arc::new(RwLock::new(None)),
+            force_avc420_only,
         }
     }
 
@@ -132,18 +166,23 @@ impl GfxServerFactory for WrdGfxFactory {
     fn build_gfx_handler(&self) -> Box<dyn GraphicsPipelineHandler> {
         // Basic mode: just return the handler without shared access
         // Note: This method is called when build_server_with_handle() returns None
-        let handler = WrdGraphicsHandler::new(self.width, self.height);
+        let handler = WrdGraphicsHandler::with_quirks(
+            self.width,
+            self.height,
+            self.force_avc420_only,
+        );
         Box::new(handler)
     }
 
     fn build_server_with_handle(&self) -> Option<(GfxDvcBridge, GfxServerHandle)> {
-        // Create the handler WITH shared state synchronization
+        // Create the handler WITH shared state synchronization AND platform quirks
         // The handler will update handler_state when callbacks are invoked,
         // allowing EgfxFrameSender to check EGFX readiness
-        let handler = WrdGraphicsHandler::with_shared_state(
+        let handler = WrdGraphicsHandler::with_shared_state_and_quirks(
             self.width,
             self.height,
             Arc::clone(&self.handler_state),
+            self.force_avc420_only,
         );
 
         // Create the GraphicsPipelineServer wrapped in Arc<std::sync::Mutex<>>

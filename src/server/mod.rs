@@ -154,6 +154,12 @@ impl WrdServer {
                 crate::compositor::Quirk::MultiMonitorPositionQuirk => {
                     info!("📋 Multi-monitor positions may need adjustment");
                 }
+                crate::compositor::Quirk::Avc444Unreliable => {
+                    info!("📋 AVC444 disabled due to platform quirk (forcing AVC420 only)");
+                }
+                crate::compositor::Quirk::ClipboardUnavailable => {
+                    info!("📋 Clipboard sync unavailable (Portal v1 limitation)");
+                }
                 _ => {
                     debug!("Applying quirk: {:?}", quirk);
                 }
@@ -396,14 +402,25 @@ impl WrdServer {
 
         // Create EGFX/H.264 factory for video streaming BEFORE display handler
         // This enables hardware-accelerated H.264 encoding when client supports it
-        let gfx_factory = WrdGfxFactory::new(
+        //
+        // Check for platform quirks that affect codec selection:
+        // - Avc444Unreliable: Force AVC420 only (e.g., RHEL 9 blur issue)
+        let force_avc420_only = capabilities
+            .profile
+            .has_quirk(&crate::compositor::Quirk::Avc444Unreliable);
+        let gfx_factory = WrdGfxFactory::with_quirks(
             initial_size.0 as u16,
             initial_size.1 as u16,
+            force_avc420_only,
         );
         // Get shared references BEFORE passing factory to builder
         let gfx_handler_state = gfx_factory.handler_state();
         let gfx_server_handle = gfx_factory.server_handle();
-        info!("EGFX factory created for H.264/AVC420 streaming");
+        if force_avc420_only {
+            info!("EGFX factory created for H.264/AVC420 streaming (AVC444 disabled by platform quirk)");
+        } else {
+            info!("EGFX factory created for H.264/AVC420+AVC444 streaming");
+        }
 
         // Create display handler with PipeWire FD, stream info, graphics queue, and EGFX references
         let display_handler = Arc::new(
