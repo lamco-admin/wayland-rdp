@@ -27,6 +27,10 @@ cp "${PROJECT_DIR}/config.toml" "${BUILD_DIR}/" 2>/dev/null || true
 cp "${PROJECT_DIR}/LICENSE" "${BUILD_DIR}/" 2>/dev/null || true
 cp "${PROJECT_DIR}/README.md" "${BUILD_DIR}/" 2>/dev/null || true
 
+# Copy bundled crates (lamco-clipboard-core, lamco-rdp-clipboard)
+echo "Copying bundled crates..."
+cp -r "${PROJECT_DIR}/bundled-crates" "${BUILD_DIR}/"
+
 # Copy workspace with local dependencies
 echo "Copying workspace with local dependencies..."
 mkdir -p "${BUILD_DIR}/lamco-rdp-workspace"
@@ -52,6 +56,13 @@ cargo vendor vendor 2>&1 | tee vendor.log || {
         exit 1
     fi
 }
+
+# Patch vendored lamco-pipewire with local fixes (size=0 empty frame handling)
+echo "Patching vendored lamco-pipewire with local fixes..."
+if [ -f "${WORKSPACE_DIR}/crates/lamco-pipewire/src/pw_thread.rs" ] && [ -d "vendor/lamco-pipewire" ]; then
+    cp "${WORKSPACE_DIR}/crates/lamco-pipewire/src/pw_thread.rs" "vendor/lamco-pipewire/src/pw_thread.rs"
+    echo "  -> Patched pw_thread.rs (size=0 empty frame fix)"
+fi
 
 # Create .cargo/config.toml for vendored dependencies
 cat > .cargo/config.toml << 'EOF'

@@ -53,3 +53,9 @@ target/criterion/
 .env
 .env.local
 .claude/
+
+# Flatpak build artifacts
+packaging/repo/
+packaging/vendor/
+repo/
+.flatpak-builder/
