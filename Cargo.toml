@@ -39,9 +39,11 @@ lamco-portal = { version = "0.3.0", features = ["dbus-clipboard"] }
 lamco-pipewire = "0.1.3"
 lamco-video = "0.1.2"
 lamco-rdp-input = "0.1.1"
-# Clipboard crates - local path required (tightly coupled to patched ironrdp-cliprdr)
-lamco-clipboard-core = { path = "../lamco-rdp-workspace/crates/lamco-clipboard-core", features = ["image"] }
-lamco-rdp-clipboard = { path = "../lamco-rdp-workspace/crates/lamco-rdp-clipboard" }
+# Clipboard crates - bundled (tightly coupled to patched ironrdp-cliprdr)
+# For local dev: use ../lamco-rdp-workspace/crates/...
+# For packaging: bundled-crates/... is included in tarball
+lamco-clipboard-core = { path = "bundled-crates/lamco-clipboard-core", features = ["image"] }
+lamco-rdp-clipboard = { path = "bundled-crates/lamco-rdp-clipboard" }
 
 # -----------------------------------------------------------------------------
 # Async runtime

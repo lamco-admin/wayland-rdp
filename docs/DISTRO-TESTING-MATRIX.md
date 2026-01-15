@@ -1,8 +1,43 @@
 # Distribution Testing Matrix
 
-**Date:** 2025-12-31
-**Purpose:** Track testing status across Linux distributions
-**Goal:** Verify session persistence works on all target platforms
+**Date:** 2026-01-14
+**Purpose:** Track testing and build status across Linux distributions
+**Goal:** Verify session persistence and full functionality on all target platforms
+
+---
+
+## OBS Build Status
+
+*Project: lamco | OBS: https://192.168.10.8*
+
+### Native Package Builds
+
+| Distribution | Version | Rust | Build Status | Package | RHEL Compat |
+|--------------|---------|------|--------------|---------|-------------|
+| Fedora | 42 | 1.88+ | 🔨 Building | RPM | - |
+| Fedora | 41 | 1.87 | 🔨 Building | RPM | - |
+| Fedora | 40 | 1.79 | 🔨 Building | RPM | - |
+| openSUSE | Tumbleweed | 1.82+ | 🔨 Building | RPM | - |
+| openSUSE | Leap 15.6 | 1.78+ | 🔨 Building | RPM | - |
+| Debian | 13 (Trixie) | 1.79 | 🔨 Building | DEB | - |
+| AlmaLinux | 9 | 1.84 | 🔨 Building | RPM | ✅ RHEL 9/Rocky 9 |
+| Ubuntu | 24.04 | 1.75 | ❌ Unresolvable | - | - |
+| Debian | 12 | 1.63 | ❌ Unresolvable | - | - |
+
+### Universal Packages
+
+| Format | Status | Notes |
+|--------|--------|-------|
+| Flatpak | ✅ Built & Tested | `packaging/io.lamco.rdp-server.yml` |
+
+**Flatpak Bundle:** `packaging/io.lamco.rdp-server.flatpak` (6.4 MB) - portable bundle for VM testing
+
+### Unresolvable Distributions
+
+These require Flatpak due to old Rust versions in distro repos:
+
+- **Ubuntu 24.04**: Rust 1.75 (need >= 1.77)
+- **Debian 12**: Rust 1.63 (need >= 1.77)
 
 ---
 
