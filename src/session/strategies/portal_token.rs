@@ -16,6 +16,19 @@ use crate::session::strategy::{
 use crate::session::TokenManager;
 
 /// Portal session handle implementation
+///
+/// # Session Lock Design (RwLock)
+///
+/// We use RwLock instead of Mutex to allow concurrent input injection while
+/// clipboard operations are in progress. The session handle is just an identifier
+/// passed to D-Bus calls - each D-Bus operation creates its own connection/proxy.
+///
+/// - Input injection: Uses `.read().await` - concurrent access allowed
+/// - Clipboard operations: Uses `.read().await` - also concurrent (session not modified)
+///
+/// This prevents the situation where a slow clipboard operation (e.g., Portal
+/// selection_write blocking for 2+ seconds) would block all input injection,
+/// causing mouse queue overflow and input lag.
 pub struct PortalSessionHandleImpl {
     /// PipeWire file descriptor
     pipewire_fd: i32,
@@ -24,7 +37,8 @@ pub struct PortalSessionHandleImpl {
     /// Remote desktop manager (for input injection)
     remote_desktop: Arc<lamco_portal::RemoteDesktopManager>,
     /// Session for input injection and clipboard
-    pub(crate) session: Arc<tokio::sync::Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
+    /// Uses RwLock to allow concurrent input injection during clipboard operations
+    pub(crate) session: Arc<tokio::sync::RwLock<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
     /// Clipboard manager (for clipboard operations) - None on Portal v1
     clipboard_manager: Option<Arc<lamco_portal::ClipboardManager>>,
     /// Session type
@@ -34,7 +48,7 @@ pub struct PortalSessionHandleImpl {
 impl PortalSessionHandleImpl {
     /// Create from existing Portal handle and session components (for hybrid Mutter strategy)
     pub fn from_portal_session(
-        session: Arc<tokio::sync::Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
+        session: Arc<tokio::sync::RwLock<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
         remote_desktop: Arc<lamco_portal::RemoteDesktopManager>,
         clipboard_manager: Option<Arc<lamco_portal::ClipboardManager>>,
     ) -> Self {
@@ -65,7 +79,8 @@ impl SessionHandle for PortalSessionHandleImpl {
     }
 
     async fn notify_keyboard_keycode(&self, keycode: i32, pressed: bool) -> Result<()> {
-        let session = self.session.lock().await;
+        // Use read() for concurrent input injection - doesn't block clipboard operations
+        let session = self.session.read().await;
         self.remote_desktop
             .notify_keyboard_keycode(&session, keycode, pressed)
             .await
@@ -73,7 +88,8 @@ impl SessionHandle for PortalSessionHandleImpl {
     }
 
     async fn notify_pointer_motion_absolute(&self, stream_id: u32, x: f64, y: f64) -> Result<()> {
-        let session = self.session.lock().await;
+        // Use read() for concurrent input injection - doesn't block clipboard operations
+        let session = self.session.read().await;
         self.remote_desktop
             .notify_pointer_motion_absolute(&session, stream_id, x, y)
             .await
@@ -81,7 +97,8 @@ impl SessionHandle for PortalSessionHandleImpl {
     }
 
     async fn notify_pointer_button(&self, button: i32, pressed: bool) -> Result<()> {
-        let session = self.session.lock().await;
+        // Use read() for concurrent input injection - doesn't block clipboard operations
+        let session = self.session.read().await;
         self.remote_desktop
             .notify_pointer_button(&session, button, pressed)
             .await
@@ -89,7 +106,8 @@ impl SessionHandle for PortalSessionHandleImpl {
     }
 
     async fn notify_pointer_axis(&self, dx: f64, dy: f64) -> Result<()> {
-        let session = self.session.lock().await;
+        // Use read() for concurrent input injection - doesn't block clipboard operations
+        let session = self.session.read().await;
         self.remote_desktop
             .notify_pointer_axis(&session, dx, dy)
             .await
@@ -197,9 +215,12 @@ impl SessionStrategy for PortalTokenStrategy {
             Err(e) => {
                 let error_msg = format!("{:#}", e);
 
+                // Log the actual error for debugging
+                warn!("Portal session creation failed: {}", error_msg);
+
                 // Check if error is about persistence rejection
                 if error_msg.contains("cannot persist") || error_msg.contains("InvalidArgument") {
-                    warn!("Portal rejected persistence request, retrying without persistence");
+                    warn!("Persistence rejected - retrying without persistence");
                     warn!("Note: Session will not persist across restarts");
 
                     // Create new portal manager without persistence
@@ -294,7 +315,7 @@ impl SessionStrategy for PortalTokenStrategy {
             pipewire_fd,
             streams,
             remote_desktop: active_manager.remote_desktop().clone(),
-            session: Arc::new(tokio::sync::Mutex::new(session)),
+            session: Arc::new(tokio::sync::RwLock::new(session)),
             clipboard_manager,
             session_type: SessionType::Portal,
         };

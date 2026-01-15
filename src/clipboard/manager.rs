@@ -202,7 +202,7 @@ pub struct ClipboardManager {
         RwLock<
             Option<
                 Arc<
-                    Mutex<
+                    RwLock<
                         ashpd::desktop::Session<
                             'static,
                             ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
@@ -473,11 +473,16 @@ impl ClipboardManager {
         let (event_tx, event_rx) = mpsc::channel(100);
 
         // Create file transfer state with downloads directory
-        let download_dir = std::env::var("HOME")
+        // Use XDG_DOWNLOAD_DIR for proper Flatpak sandbox compatibility
+        let download_dir = std::env::var("XDG_DOWNLOAD_DIR")
             .ok()
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join("Downloads");
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|h| PathBuf::from(h).join("Downloads"))
+            })
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
 
         let file_transfer_state = Arc::new(RwLock::new(FileTransferState::new(download_dir)));
 
@@ -605,7 +610,7 @@ impl ClipboardManager {
         &mut self,
         portal: Arc<crate::portal::PortalClipboardManager>,
         session: Arc<
-            Mutex<
+            RwLock<
                 ashpd::desktop::Session<
                     'static,
                     ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
@@ -634,7 +639,7 @@ impl ClipboardManager {
         &self,
         portal: Arc<crate::portal::PortalClipboardManager>,
         _session: Arc<
-            Mutex<
+            RwLock<
                 ashpd::desktop::Session<
                     'static,
                     ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
@@ -700,7 +705,7 @@ impl ClipboardManager {
                                 portal_clipboard.read().await.clone(),
                                 portal_session.read().await.clone(),
                             ) {
-                                let session_guard = session.lock().await;
+                                let session_guard = session.read().await;
                                 if let Err(e) = portal
                                     .portal_clipboard()
                                     .selection_write_done(
@@ -790,7 +795,7 @@ impl ClipboardManager {
                                         portal_clipboard.read().await.clone(),
                                         portal_session.read().await.clone(),
                                     ) {
-                                        let session_guard = session.lock().await;
+                                        let session_guard = session.read().await;
                                         let _ = portal
                                             .portal_clipboard()
                                             .selection_write_done(
@@ -856,7 +861,7 @@ impl ClipboardManager {
                                             portal_clone.read().await.clone(),
                                             session_clone.read().await.clone(),
                                         ) {
-                                            let session_guard = session.lock().await;
+                                            let session_guard = session.read().await;
                                             if let Err(e) = portal
                                                 .portal_clipboard()
                                                 .selection_write_done(&session_guard, serial, false)
@@ -904,7 +909,7 @@ impl ClipboardManager {
         &self,
         portal: Arc<crate::portal::PortalClipboardManager>,
         _session: Arc<
-            Mutex<
+            RwLock<
                 ashpd::desktop::Session<
                     'static,
                     ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
@@ -1309,7 +1314,7 @@ impl ClipboardManager {
             RwLock<
                 Option<
                     Arc<
-                        Mutex<
+                        RwLock<
                             ashpd::desktop::Session<
                                 'static,
                                 ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
@@ -1508,7 +1513,7 @@ impl ClipboardManager {
             RwLock<
                 Option<
                     Arc<
-                        Mutex<
+                        RwLock<
                             ashpd::desktop::Session<
                                 'static,
                                 ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
@@ -1576,7 +1581,7 @@ impl ClipboardManager {
 
         // Announce formats to Portal using delayed rendering (SetSelection)
         // This tells Wayland "these formats are available" WITHOUT transferring data
-        let session_guard = session.lock().await;
+        let session_guard = session.read().await;
         portal
             .announce_rdp_formats(&session_guard, mime_types)
             .await
@@ -1599,7 +1604,7 @@ impl ClipboardManager {
             RwLock<
                 Option<
                     Arc<
-                        Mutex<
+                        RwLock<
                             ashpd::desktop::Session<
                                 'static,
                                 ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
@@ -1668,7 +1673,7 @@ impl ClipboardManager {
         debug!("Format {} maps to MIME: {}", format_id, mime_type);
 
         // Read from Portal clipboard via SelectionRead
-        let session_guard = session.lock().await;
+        let session_guard = session.read().await;
         let portal_data = match portal
             .read_local_clipboard(&session_guard, &mime_type)
             .await
@@ -1813,7 +1818,7 @@ impl ClipboardManager {
             RwLock<
                 Option<
                     Arc<
-                        Mutex<
+                        RwLock<
                             ashpd::desktop::Session<
                                 'static,
                                 ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
@@ -1842,7 +1847,7 @@ impl ClipboardManager {
         };
 
         // Try to read file URIs from Portal - prefer x-special/gnome-copied-files, fall back to text/uri-list
-        let session_guard = session.lock().await;
+        let session_guard = session.read().await;
         let uri_data = match portal
             .read_local_clipboard(&session_guard, "x-special/gnome-copied-files")
             .await
@@ -1992,7 +1997,7 @@ impl ClipboardManager {
             RwLock<
                 Option<
                     Arc<
-                        Mutex<
+                        RwLock<
                             ashpd::desktop::Session<
                                 'static,
                                 ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
@@ -2145,7 +2150,7 @@ impl ClipboardManager {
                             );
 
                             // Write URI list to Portal
-                            let session_guard = session.lock().await;
+                            let session_guard = session.read().await;
                             match portal
                                 .write_selection_data(&session_guard, serial, uri_bytes)
                                 .await
@@ -2180,7 +2185,7 @@ impl ClipboardManager {
                                 "ServerEvent sender not available - cannot request file contents"
                             );
                             // Cancel Portal request since we can't proceed
-                            let session_guard = session.lock().await;
+                            let session_guard = session.read().await;
                             let _ = portal
                                 .portal_clipboard()
                                 .selection_write_done(&session_guard, serial, false)
@@ -2396,8 +2401,34 @@ impl ClipboardManager {
                 error!("DIB to BMP conversion failed: {}", e);
                 ClipboardError::Core(e)
             })?
-        } else if requested_mime.starts_with("text/") && data.len() >= 2 {
-            // Text format - detect and convert UTF-16LE to UTF-8 with line ending conversion
+        } else if requested_mime == "text/rtf" || requested_mime == "application/rtf" {
+            // RTF is plain ASCII/Latin-1 text, NOT UTF-16
+            // Windows CF_RTF sends raw RTF markup as bytes
+            debug!(
+                "RTF format detected ({} bytes) - passing through with line ending conversion",
+                data.len()
+            );
+
+            // Convert to string (lossy for any invalid UTF-8, though RTF should be ASCII)
+            let text = String::from_utf8_lossy(&data);
+
+            // Sanitize for Linux: CRLF → LF, remove null bytes
+            let sanitized = sanitize_text_for_linux(&text);
+            let rtf_bytes = sanitized.as_bytes().to_vec();
+
+            debug!(
+                "RTF: {} raw bytes → {} bytes after line ending conversion",
+                data.len(),
+                rtf_bytes.len()
+            );
+            if !rtf_bytes.is_empty() {
+                let preview_len = rtf_bytes.len().min(80);
+                debug!("RTF preview: {:?}", String::from_utf8_lossy(&rtf_bytes[..preview_len]));
+            }
+            rtf_bytes
+        } else if (requested_mime == "text/plain" || requested_mime == "text/html") && data.len() >= 2 {
+            // text/plain and text/html from Windows are UTF-16LE (CF_UNICODETEXT)
+            // Convert UTF-16LE to UTF-8 with line ending conversion
             let utf16_data: Vec<u16> = data
                 .chunks_exact(2)
                 .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
@@ -2418,7 +2449,9 @@ impl ClipboardManager {
                 data.len(),
                 utf8_bytes.len()
             );
-            debug!("Text preview: {:?}", &sanitized[..sanitized.len().min(50)]);
+            if !sanitized.is_empty() {
+                debug!("Text preview: {:?}", &sanitized[..sanitized.len().min(50)]);
+            }
             utf8_bytes
         } else {
             // Unknown format or too small - pass through
@@ -2435,7 +2468,58 @@ impl ClipboardManager {
         // Hash dedup was blocking valid user actions and breaking clipboard UX
 
         // Write data to Portal via SelectionWrite workflow
-        let session_guard = session.lock().await;
+        // IMPORTANT: Use timeout to prevent event loop from getting stuck on lock contention
+        debug!("Acquiring session read lock for Portal write (serial {})", serial);
+        let lock_start = std::time::Instant::now();
+        let session_guard = match tokio::time::timeout(
+            tokio::time::Duration::from_secs(10),
+            session.read(),
+        )
+        .await
+        {
+            Ok(guard) => {
+                let lock_time = lock_start.elapsed();
+                if lock_time.as_millis() > 100 {
+                    warn!(
+                        "Session lock took {}ms to acquire (serial {})",
+                        lock_time.as_millis(),
+                        serial
+                    );
+                } else {
+                    debug!("Session lock acquired in {}ms (serial {})", lock_time.as_millis(), serial);
+                }
+                guard
+            }
+            Err(_) => {
+                error!(
+                    "TIMEOUT: Failed to acquire session read lock after 10s (serial {}) - possible deadlock!",
+                    serial
+                );
+                error!("This prevents event loop from getting stuck. Canceling this clipboard transfer.");
+                // Cancel the Portal transfer to prevent Portal from waiting forever
+                if let (Some(p), Some(s)) = (
+                    portal_clipboard.read().await.clone(),
+                    portal_session.read().await.clone(),
+                ) {
+                    // Use a short timeout for the cancel operation too
+                    if let Ok(sg) = tokio::time::timeout(
+                        tokio::time::Duration::from_secs(2),
+                        s.read(),
+                    )
+                    .await
+                    {
+                        let _ = p
+                            .portal_clipboard()
+                            .selection_write_done(&sg, serial, false)
+                            .await;
+                    }
+                }
+                return Err(ClipboardError::Unknown(
+                    "Session lock timeout - possible deadlock".to_string(),
+                ));
+            }
+        };
+
         let _write_attempt_time = std::time::Instant::now();
         info!(
             "📝 About to call Portal selection_write: serial={}, data_len={} bytes",
@@ -2443,11 +2527,42 @@ impl ClipboardManager {
             portal_data.len()
         );
 
-        match portal
-            .write_selection_data(&session_guard, serial, portal_data.clone())
-            .await
-        {
-            Ok(()) => {
+        // Use timeout on the Portal write operation as well
+        let write_result = tokio::time::timeout(
+            tokio::time::Duration::from_secs(30),
+            portal.write_selection_data(&session_guard, serial, portal_data.clone()),
+        )
+        .await;
+
+        match write_result {
+            Err(_) => {
+                error!(
+                    "TIMEOUT: Portal selection_write took >30s (serial {}) - canceling",
+                    serial
+                );
+                // Notify Portal of failure
+                let _ = portal
+                    .portal_clipboard()
+                    .selection_write_done(&session_guard, serial, false)
+                    .await;
+                return Err(ClipboardError::Unknown(
+                    "Portal write timeout".to_string(),
+                ));
+            }
+            Ok(Err(e)) => {
+                error!("Failed to write clipboard data to Portal: {:#}", e);
+
+                // Remove THIS failed request from pending queue
+                let mut pending = pending_portal_requests.write().await;
+                pending.retain(|(s, _, _)| *s != serial);
+                drop(pending);
+
+                return Err(ClipboardError::PortalError(format!(
+                    "SelectionWrite failed: {}",
+                    e
+                )));
+            }
+            Ok(Ok(())) => {
                 info!(
                     "Clipboard data delivered to Portal via SelectionWrite (serial {})",
                     serial
@@ -2473,7 +2588,7 @@ impl ClipboardManager {
                         portal_clipboard.read().await.clone(),
                         portal_session.read().await.clone(),
                     ) {
-                        let session_guard = session.lock().await;
+                        let session_guard = session.read().await;
                         for unfulfilled_serial in unfulfilled {
                             if let Err(e) = portal
                                 .portal_clipboard()
@@ -2488,19 +2603,6 @@ impl ClipboardManager {
                     }
                 }
             }
-            Err(e) => {
-                error!("Failed to write clipboard data to Portal: {:#}", e);
-
-                // Remove THIS failed request from pending queue
-                let mut pending = pending_portal_requests.write().await;
-                pending.retain(|(s, _, _)| *s != serial);
-                drop(pending);
-
-                return Err(ClipboardError::PortalError(format!(
-                    "SelectionWrite failed: {}",
-                    e
-                )));
-            }
         }
 
         Ok(())
@@ -2513,7 +2615,7 @@ impl ClipboardManager {
             RwLock<
                 Option<
                     Arc<
-                        Mutex<
+                        RwLock<
                             ashpd::desktop::Session<
                                 'static,
                                 ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
@@ -2554,7 +2656,7 @@ impl ClipboardManager {
             );
 
             // Notify Portal that the transfer failed
-            let session_guard = session.lock().await;
+            let session_guard = session.read().await;
             match portal
                 .portal_clipboard()
                 .selection_write_done(&session_guard, serial, false)
@@ -2700,7 +2802,7 @@ impl ClipboardManager {
             RwLock<
                 Option<
                     Arc<
-                        Mutex<
+                        RwLock<
                             ashpd::desktop::Session<
                                 'static,
                                 ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
@@ -2902,7 +3004,7 @@ impl ClipboardManager {
             RwLock<
                 Option<
                     Arc<
-                        Mutex<
+                        RwLock<
                             ashpd::desktop::Session<
                                 'static,
                                 ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
@@ -2933,7 +3035,7 @@ impl ClipboardManager {
                     portal_clipboard.read().await.as_ref().cloned(),
                     portal_session.read().await.as_ref().cloned(),
                 ) {
-                    let session_guard = session.lock().await;
+                    let session_guard = session.read().await;
                     let _ = portal
                         .portal_clipboard()
                         .selection_write_done(&session_guard, serial, false)
@@ -3083,7 +3185,7 @@ impl ClipboardManager {
                         portal_clipboard.read().await.as_ref().cloned(),
                         portal_session.read().await.as_ref().cloned(),
                     ) {
-                        let session_guard = session.lock().await;
+                        let session_guard = session.read().await;
 
                         // Write URI list data
                         let uri_bytes = uri_list.into_bytes();
