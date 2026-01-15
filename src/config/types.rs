@@ -702,32 +702,131 @@ impl Default for EgfxConfig {
 }
 
 /// Damage tracking configuration
+///
+/// Controls how frame changes are detected to optimize bandwidth.
+/// Smaller tiles and lower thresholds = more sensitive (detects small changes like typing)
+/// Larger tiles and higher thresholds = less sensitive (better for video/animations)
+///
+/// ## Sensitivity Tuning
+///
+/// For **text/office work** (typing must be detected):
+/// - `tile_size: 32` - Smaller tiles catch single-character changes
+/// - `diff_threshold: 0.02` - Lower threshold (2% of tile must change)
+/// - `pixel_threshold: 2` - More sensitive pixel comparison
+///
+/// For **video/streaming** (prioritize bandwidth):
+/// - `tile_size: 128` - Larger tiles reduce overhead
+/// - `diff_threshold: 0.10` - Higher threshold (10% required)
+/// - `pixel_threshold: 8` - Less sensitive to subtle changes
+///
+/// ## How Detection Works
+///
+/// 1. Frame is divided into tiles of `tile_size` x `tile_size` pixels
+/// 2. Each tile is compared to the previous frame
+/// 3. Pixels differing by more than `pixel_threshold` (in any RGB channel) are counted
+/// 4. If changed pixels exceed `diff_threshold` fraction of tile, tile is marked dirty
+/// 5. Dirty tiles are merged if within `merge_distance` pixels
+/// 6. Regions smaller than `min_region_area` are discarded
+///
+/// ## Example: Why Typing Might Not Be Detected
+///
+/// With defaults (tile_size=64, diff_threshold=0.05):
+/// - Tile area = 64×64 = 4096 pixels
+/// - Threshold = 4096 × 0.05 = 205 pixels must change
+/// - A typed character ≈ 10×14 = 140 pixels
+/// - 140 < 205 → tile NOT marked dirty → no update sent!
+///
+/// Solution: Use tile_size=32, diff_threshold=0.02:
+/// - Tile area = 32×32 = 1024 pixels
+/// - Threshold = 1024 × 0.02 = 21 pixels must change
+/// - Character = 140 pixels → 140 > 21 → tile marked dirty ✓
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DamageTrackingConfig {
     /// Enable damage region detection
+    ///
+    /// When enabled, only changed regions are encoded and sent,
+    /// significantly reducing bandwidth for static content.
     pub enabled: bool,
 
     /// Detection method: "pipewire", "diff", "hybrid"
+    ///
+    /// - "diff": CPU-based pixel differencing (most compatible)
+    /// - "pipewire": Use PipeWire damage hints if available
+    /// - "hybrid": Combine both methods
     pub method: String,
 
     /// Tile size for differencing (pixels)
+    ///
+    /// Smaller values = more sensitive, more CPU overhead
+    /// Larger values = less sensitive, less CPU overhead
+    ///
+    /// Recommended: 32 for text work, 64 for general use, 128 for video
+    #[serde(default = "default_tile_size")]
     pub tile_size: usize,
 
-    /// Difference threshold (0.0-1.0)
+    /// Fraction of tile pixels that must differ to mark tile as dirty (0.0-1.0)
+    ///
+    /// Lower values = more sensitive (detects smaller changes)
+    /// Higher values = less sensitive (ignores minor changes)
+    ///
+    /// Recommended: 0.02 for text work, 0.05 for general use, 0.10 for video
+    #[serde(default = "default_diff_threshold")]
     pub diff_threshold: f32,
 
-    /// Merge distance for adjacent tiles (pixels)
+    /// Pixel difference threshold for RGB comparison
+    ///
+    /// Pixels differing by less than this value (in any RGB channel) are
+    /// considered identical. Higher values ignore subtle color variations.
+    ///
+    /// Recommended: 2 for text work, 4 for general use, 8 for video
+    #[serde(default = "default_pixel_threshold")]
+    pub pixel_threshold: u8,
+
+    /// Merge distance for adjacent dirty tiles (pixels)
+    ///
+    /// Dirty tiles within this distance are merged into larger regions
+    /// to reduce encoding overhead.
+    #[serde(default = "default_merge_distance")]
     pub merge_distance: u32,
+
+    /// Minimum region area to encode (pixels²)
+    ///
+    /// Regions smaller than this are discarded as noise.
+    /// Set to 1 to encode all detected changes.
+    #[serde(default = "default_min_region_area")]
+    pub min_region_area: u64,
+}
+
+fn default_tile_size() -> usize {
+    32  // Smaller tiles for character-level sensitivity
+}
+
+fn default_diff_threshold() -> f32 {
+    0.02  // 2% threshold - sensitive enough for single characters
+}
+
+fn default_pixel_threshold() -> u8 {
+    2  // Sensitive pixel comparison
+}
+
+fn default_merge_distance() -> u32 {
+    16
+}
+
+fn default_min_region_area() -> u64 {
+    64  // 8x8 pixel minimum
 }
 
 impl Default for DamageTrackingConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,  // Enable by default for bandwidth savings
             method: "diff".to_string(),
-            tile_size: 64,
-            diff_threshold: 0.05,
-            merge_distance: 32,
+            tile_size: default_tile_size(),
+            diff_threshold: default_diff_threshold(),
+            pixel_threshold: default_pixel_threshold(),
+            merge_distance: default_merge_distance(),
+            min_region_area: default_min_region_area(),
         }
     }
 }

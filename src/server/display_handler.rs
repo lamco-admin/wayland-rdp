@@ -604,18 +604,20 @@ impl WrdDisplayHandler {
 
             // === DAMAGE DETECTION (Config-controlled) ===
             // Detects changed screen regions to skip unchanged frames (90%+ bandwidth reduction for static content)
-            // Now properly wired to config.toml damage_tracking section
+            // All parameters now configurable via config.toml [damage_tracking] section
+            // See DamageTrackingConfig documentation for sensitivity tuning guidance
             let damage_config = DamageConfig {
                 tile_size: self.config.damage_tracking.tile_size,
                 diff_threshold: self.config.damage_tracking.diff_threshold,
-                pixel_threshold: 4,  // Not in config yet, use default
+                pixel_threshold: self.config.damage_tracking.pixel_threshold,
                 merge_distance: self.config.damage_tracking.merge_distance,
-                min_region_area: 256,  // Not in config yet, use default
+                min_region_area: self.config.damage_tracking.min_region_area,
             };
 
             let mut damage_detector_opt = if self.config.damage_tracking.enabled {
-                debug!("🎯 Damage tracking ENABLED: tile_size={}, threshold={:.2}, merge_distance={}",
-                    damage_config.tile_size, damage_config.diff_threshold, damage_config.merge_distance);
+                debug!("Damage tracking ENABLED: tile_size={}, threshold={:.2}, pixel_threshold={}, merge_distance={}, min_region_area={}",
+                    damage_config.tile_size, damage_config.diff_threshold, damage_config.pixel_threshold,
+                    damage_config.merge_distance, damage_config.min_region_area);
                 Some(DamageDetector::new(damage_config))
             } else {
                 debug!("🎯 Damage tracking DISABLED via config");
