@@ -1,6 +1,6 @@
 # Distribution Testing Matrix
 
-**Date:** 2026-01-14
+**Date:** 2026-01-15
 **Purpose:** Track testing and build status across Linux distributions
 **Goal:** Verify session persistence and full functionality on all target platforms
 
@@ -45,38 +45,35 @@ These require Flatpak due to old Rust versions in distro repos:
 
 ### 🔴 CRITICAL - Must Test Before Enterprise Launch
 
-These are Portal v3 systems where Mutter is the only way to avoid dialog-every-restart:
-
 | Distribution | Version | GNOME | Portal | Expected Strategy | Test Status | VM Status |
 |--------------|---------|-------|--------|-------------------|-------------|-----------|
-| **RHEL 9** | 9.3 | 40.x | v3 (no tokens) | Mutter (if works) | ⏳ **UNTESTED** | Need VM |
+| **RHEL 9** | 9.7 | 40.10 | v4 (rejects persist) | Portal (no persist) | ✅ **RDP WORKING** | ✅ 192.168.10.6 |
 | **Ubuntu 22.04 LTS** | 22.04.3 | 42.x | v3 (no tokens) | Mutter (if works) | ⏳ **UNTESTED** | Need VM |
 
-**Why Critical:**
+**RHEL 9 Update (2026-01-15):** Full RDP session tested. GNOME Portal backend **rejects persistence** for RemoteDesktop sessions with error "Remote desktop sessions cannot persist". This is deliberate policy, not a missing feature. RDP functionality works fully (video, input), but each server restart requires user permission dialog.
+
+**RHEL 9 Capabilities (Tested):**
+```
+Portal version: 4
+ScreenCast: ✅  RemoteDesktop: ✅  Clipboard: ❌ (v1)
+Session Persistence: ❌ REJECTED by GNOME portal
+Credential Storage: Encrypted File (Flatpak sandbox)
+RDP Functionality: Video ✅, Keyboard ✅, Mouse ✅
+```
+
+**Ubuntu 22.04 Still Critical:**
 - Portal v3 doesn't support restore tokens
 - Without Mutter: Dialog appears EVERY restart (unacceptable for servers)
-- With Mutter: Zero dialogs (if API works on these versions)
-- **These are the systems Mutter was designed for**
+- With Mutter: Zero dialogs (if API works on GNOME 42)
+- **This is the system Mutter was designed for**
 
 **Test Plan:**
-1. Deploy lamco-rdp-server
-2. Check Service Registry output (should show Mutter BestEffort)
-3. Verify strategy selected (should be Mutter Direct)
-4. Test video (does PipeWire stream receive frames?)
-5. Test input (does mouse/keyboard work?)
-6. Test clipboard
-7. Restart server (does it start without dialog?)
-
-**Expected Results if Mutter Works:**
-- First run: 0 dialogs for video/input, 1 for clipboard
-- Second run: 0 dialogs (Mutter doesn't use tokens)
-- **Zero-dialog operation achieved** ✅
-
-**Expected Results if Mutter Broken:**
-- Falls back to Portal
-- First run: 1 dialog
-- Second run: 1 dialog (no token support on Portal v3)
-- **Need alternative solution** ❌
+1. Deploy lamco-rdp-server ✅ (RHEL 9 done)
+2. Check capabilities output ✅ (RHEL 9 done)
+3. Test video (does PipeWire stream receive frames?)
+4. Test input (does mouse/keyboard work?)
+5. Test clipboard
+6. Restart server (verify zero dialogs on second run)
 
 ---
 
@@ -86,7 +83,7 @@ These confirm Portal strategy works correctly:
 
 | Distribution | Version | GNOME | Portal | Expected Strategy | Test Status | VM Status |
 |--------------|---------|-------|--------|-------------------|-------------|-----------|
-| **Ubuntu 24.04 LTS** | 24.04.1 | 46.0 | v5 (tokens) | Portal | ✅ **TESTED** | ✅ Ready (192.168.10.205) |
+| **Ubuntu 24.04 LTS** | 24.04.3 | 46.0 | v5 (rejects persist) | Portal (no persist) | ✅ **RDP WORKING** | ✅ 192.168.10.205 |
 | **Fedora 40** | 40 | 46.0 | v5 (tokens) | Portal | ⏳ Need test | Need VM |
 | **SUSE Enterprise** | 15 SP6 | 45.x | v5 (tokens) | Mutter or Portal | ⏳ Need test | Need VM |
 | **Debian 12** | Bookworm | 43.x | v4 (tokens) | Portal | ⏳ Need test | Need VM |
@@ -277,17 +274,69 @@ Add to this matrix and create individual test reports.
 
 ## Expected Behavior Per Category
 
-### Portal v5 + GNOME 46+ (Ubuntu 24.04, Fedora 40+)
+### Portal v5 + GNOME 46 (Ubuntu 24.04) - TESTED
 ```
-✅ DirectCompositorAPI: Unavailable (GNOME 46+ known broken)
-✅ Strategy: Portal + Token
-✅ First run: 1 dialog
-✅ Subsequent runs: 0 dialogs (token restores)
-✅ Credential storage: GNOME Keyring
-✅ Verdict: Production Ready
+✅ Portal version: 5
+✅ Strategy: Portal (persistence REJECTED by backend)
+✅ ScreenCast: Yes, RemoteDesktop v2: Yes
+⚠️  Clipboard: Text works, but CRASH BUG exists (see below)
+✅ Credential storage: Encrypted file (AES-256-GCM)
+⚠️  First run: 1 dialog (screen sharing)
+⚠️  Subsequent runs: 1 dialog (persistence rejected)
+✅ RDP Functionality: Video (H.264/AVC444v2), keyboard, mouse all working
+✅ Latest test (2026-01-15): 593 frames encoded, ~10ms latency
+✅ Encoding: AVC420 + AVC444v2 with aux omission (bandwidth saving)
+⚠️  FUSE: Failed to mount (libfuse3 not available in Flatpak sandbox)
+❌  PORTAL CRASH: xdg-desktop-portal-gnome crashes during Excel→Calc paste
+⚠️  Verdict: Functional with known clipboard crash bug
 ```
 
-### Portal v3 + GNOME 40-45 (RHEL 9, Ubuntu 22.04)
+**🔴 CRITICAL BUG: Portal Crash During Clipboard Paste**
+
+Reproducible crash when pasting Excel cells into LibreOffice Calc:
+1. Copy cells in Excel (Windows RDP client)
+2. Right-click → Paste in LibreOffice Calc (Linux)
+3. xdg-desktop-portal-gnome crashes after ~2 second hang
+4. All input injection fails after crash
+
+Technical details:
+- `selection_write()` hangs for ~2 seconds, then fails
+- Error: "Message recipient disconnected from message bus"
+- Excel sends 15 clipboard formats (Biff12, Biff8, HTML, RTF, etc.)
+- Crash occurs during Portal's processing of the write
+
+**Root Cause:** Two issues:
+1. **xdg-desktop-portal-gnome bug**: Crashes when processing complex Excel data
+2. **lamco-rdp-server design flaw**: Clipboard and input share same session lock
+
+When clipboard `selection_write()` blocks waiting for Portal response:
+- Input injection is blocked waiting for session lock
+- Mouse queue fills up → "no available capacity" errors
+- After 2 seconds, Portal crashes and all queued input fails
+
+**Fix Required:** Separate session locks for clipboard vs input injection.
+
+**Same as RHEL 9:** GNOME's portal backend also rejects persistence for
+RemoteDesktop sessions on Ubuntu 24.04 with Portal v5.
+
+### Portal v4 + GNOME 40 (RHEL 9) - TESTED
+```
+✅ Portal version: 4
+✅ Strategy: Portal (persistence REJECTED by backend)
+✅ ScreenCast: Yes, RemoteDesktop: Yes
+❌ Clipboard: No (Portal RemoteDesktop v1)
+✅ Credential storage: Encrypted file
+⚠️  First run: 1 dialog (screen sharing)
+⚠️  Subsequent runs: 1 dialog (persistence rejected by GNOME portal)
+✅ RDP Functionality: Video, keyboard, mouse all working
+⚠️  Verdict: Functional (dialog on each restart)
+```
+
+**Root Cause:** GNOME's xdg-desktop-portal-gnome backend rejects persistence
+for RemoteDesktop sessions with error: "Remote desktop sessions cannot persist"
+This is a deliberate portal backend policy, not a missing feature.
+
+### Portal v3 + GNOME 42+ (Ubuntu 22.04) - UNTESTED
 ```
 ❓ DirectCompositorAPI: BestEffort (unknown if works)
 ❓ Strategy: Mutter (preferred) OR Portal (fallback)
@@ -355,12 +404,72 @@ gdbus introspect --session --dest org.freedesktop.portal.Desktop --object-path /
 
 ## Current Status Summary
 
-**Tested:** 1 platform (Ubuntu 24.04 / GNOME 46)
-**Working:** 1 platform (Portal strategy)
-**Broken:** Mutter on GNOME 46 (documented, not fixable)
-**Unknown:** Everything else (especially RHEL 9, Ubuntu 22.04)
+**Last Updated:** 2026-01-15
 
-**Critical Path:** Get RHEL 9 / Ubuntu 22.04 VMs, test Mutter on GNOME 40/42.
+**Tested:** 2 platforms - Both fully tested with RDP sessions
+- Ubuntu 24.04 / GNOME 46 (Portal v5) - Full RDP tested ✅
+- RHEL 9.7 / GNOME 40 (Portal v4) - Full RDP tested ✅
+
+**Key Findings:**
+
+1. **GNOME rejects persistence for RemoteDesktop sessions** (BOTH platforms)
+   - Error: "Remote desktop sessions cannot persist"
+   - Affects: RHEL 9 (Portal v4) AND Ubuntu 24.04 (Portal v5)
+   - This is GNOME portal backend policy, not a bug
+   - RDP works fully, but requires permission dialog on each server restart
+
+2. **Clipboard varies by Portal version**
+   - RHEL 9 (Portal RemoteDesktop v1): No clipboard support
+   - Ubuntu 24.04 (Portal RemoteDesktop v2): Clipboard working (text + files via staging)
+     - 35 initial errors (normal - client clipboard empty at connection)
+     - 4 successful format announcements
+     - 31 file transfers via staging (FUSE not available in Flatpak)
+
+**Working:**
+- Portal screen capture and input injection
+- Video encoding (EGFX/H.264 AVC444v2 with aux omission)
+- Keyboard and mouse input
+- Encrypted credential storage (Flatpak sandbox, AES-256-GCM)
+- Text clipboard (Ubuntu 24.04 via D-Bus GNOME extension)
+
+**Not Working / Known Issues:**
+- Session persistence on GNOME (both platforms) - GNOME policy rejects persistence
+- Clipboard sync on RHEL 9 (Portal RemoteDesktop v1 limitation)
+- FUSE file clipboard in Flatpak (libfuse3 mount fails - using staging fallback)
+
+**Next Steps:**
+1. ~~Run full RDP session test on RHEL 9~~ ✅ Complete
+2. ~~Run full RDP session test on Ubuntu 24.04~~ ✅ Complete (2026-01-15)
+3. Investigate FUSE mounting in Flatpak sandbox
+4. Test Ubuntu 22.04 (Portal v3) when VM available
+5. Test non-GNOME platforms (KDE/Sway) for persistence verification
+
+---
+
+## Known Issues for Commercial Release
+
+### 🔴 CRITICAL - Must Fix
+
+| Issue | Impact | Root Cause | Fix |
+|-------|--------|------------|-----|
+| Portal crash on Excel paste | Session dies | xdg-portal-gnome bug + our lock contention | Separate session locks |
+| Clipboard blocks input | Mouse queue overflow, lag | Shared session mutex | Use separate locks for clipboard vs input |
+| File paste fails in Flatpak | Can't paste files to ~/Downloads | Sandbox read-only | Use XDG portal for file access |
+
+### 🟡 MEDIUM - Should Fix
+
+| Issue | Impact | Root Cause | Fix |
+|-------|--------|------------|-----|
+| MemFd size=0 warnings | Log spam | PipeWire sends empty buffers normally | Downgrade WARN→DEBUG |
+| Format parameter building | Using fallback negotiation | PipeWire format negotiation | Investigate proper format building |
+| Clipboard format errors at start | 35 errors on connect | Client clipboard empty | Expected behavior, improve logging |
+
+### 🟢 LOW - Nice to Have
+
+| Issue | Impact | Root Cause | Fix |
+|-------|--------|------------|-----|
+| FUSE unavailable in Flatpak | File clipboard uses staging | libfuse3 not in sandbox | Add FUSE to Flatpak manifest |
+| Session persistence rejected | Dialog on every restart | GNOME policy | Cannot fix (GNOME decision) |
 
 ---
 

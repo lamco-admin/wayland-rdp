@@ -32,6 +32,16 @@ finish-args:
   # Config directory
   - --filesystem=~/.config/lamco-rdp-server:create
 
+  # File clipboard: read access to home directory for file transfer
+  - --filesystem=home:ro
+  # Downloads directory: write access for saving pasted files from clipboard
+  - --filesystem=xdg-download:rw
+
+  # FUSE support for clipboard virtual filesystem
+  # Note: libfuse3 uses fusermount3 which works in Flatpak without special device access
+  - --filesystem=xdg-run/wrd-clipboard-fuse:create
+  - --filesystem=/tmp:rw
+
 modules:
   # FUSE3 library for clipboard file transfer (drive redirection)
   - name: libfuse3
@@ -61,4 +71,4 @@ modules:
     sources:
       - type: archive
         path: lamco-rdp-server-0.1.0.tar.xz
-        sha256: 88837510ebabbb9a025e0a8a4860004c0cc47556a3ac3f1d78f30783f340f8af
+        sha256: 277521a3bd3e0bf48e12841aba9cbc3b53f994f0e8106df2a435d76992d4e9b4
