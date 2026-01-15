@@ -201,14 +201,14 @@ h264_bitrate = 5000
 zgfx_compression = "never"
 max_frames_in_flight = 3
 frame_ack_timeout = 5000
-codec = "avc420"
+codec = "avc444"
 qp_min = 10
 qp_max = 40
 qp_default = 23
 avc444_aux_bitrate_ratio = 0.5
 color_matrix = "auto"
 color_range = "auto"
-avc444_enabled = false
+avc444_enabled = true
 avc444_enable_aux_omission = true
 avc444_max_aux_interval = 30
 avc444_aux_change_threshold = 0.05
@@ -217,12 +217,40 @@ avc444_force_aux_idr_on_return = false
 # -----------------------------------------------------------------------------
 # DAMAGE TRACKING CONFIGURATION
 # -----------------------------------------------------------------------------
+# Controls how frame changes are detected to optimize bandwidth.
+# Smaller tiles and lower thresholds = more sensitive (detects typing)
+# Larger tiles and higher thresholds = less sensitive (better for video)
+#
+# SENSITIVITY MATH EXAMPLE:
+#   With tile_size=64, diff_threshold=0.05:
+#     Tile area = 64×64 = 4096 pixels
+#     Threshold = 4096 × 0.05 = 205 pixels must change
+#     A typed character ≈ 10×14 = 140 pixels
+#     140 < 205 → tile NOT marked dirty → no update sent!
+#
+#   With tile_size=32, diff_threshold=0.02:
+#     Tile area = 32×32 = 1024 pixels
+#     Threshold = 1024 × 0.02 = 21 pixels must change
+#     Character = 140 pixels → 140 > 21 → tile marked dirty ✓
+#
+# RECOMMENDED PRESETS:
+#   Text/office work: tile_size=32, diff_threshold=0.02, pixel_threshold=2
+#   Mixed use:        tile_size=48, diff_threshold=0.03, pixel_threshold=3
+#   Video/streaming:  tile_size=128, diff_threshold=0.10, pixel_threshold=8
+#
 [damage_tracking]
 enabled = true
 method = "diff"
-tile_size = 64
-diff_threshold = 0.05
-merge_distance = 32
+# Tile size in pixels - smaller = more sensitive to small changes
+tile_size = 32
+# Fraction of tile that must change (0.0-1.0) - lower = more sensitive
+diff_threshold = 0.02
+# Per-pixel color difference threshold (0-255) - lower = more sensitive
+pixel_threshold = 2
+# Distance to merge adjacent damage regions (pixels)
+merge_distance = 16
+# Minimum region area to send (filters noise) - lower = more sensitive
+min_region_area = 64
 
 # -----------------------------------------------------------------------------
 # HARDWARE ENCODING CONFIGURATION
