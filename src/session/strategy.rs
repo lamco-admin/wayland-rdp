@@ -8,7 +8,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 /// Portal clipboard components
 ///
@@ -17,11 +17,19 @@ use tokio::sync::Mutex;
 ///
 /// Note: On Portal v1 (e.g., RHEL 9 GNOME 40), clipboard is not supported,
 /// so `manager` will be `None`. The session is always available.
+///
+/// # Session Lock Design (RwLock)
+///
+/// We use RwLock instead of Mutex to allow concurrent operations.
+/// Both input injection and clipboard operations use `.read().await` since they
+/// don't modify the session - they just pass the session handle to D-Bus calls.
+/// This prevents clipboard operations from blocking input injection.
 pub struct ClipboardComponents {
     /// Portal clipboard manager - None on Portal v1 (no clipboard support)
     pub manager: Option<Arc<lamco_portal::ClipboardManager>>,
     /// Portal session for clipboard operations (always available)
-    pub session: Arc<Mutex<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
+    /// Uses RwLock to allow concurrent access from input and clipboard operations
+    pub session: Arc<RwLock<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
 }
 
 /// Common session handle trait

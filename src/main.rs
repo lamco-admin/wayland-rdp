@@ -82,8 +82,8 @@ async fn main() -> Result<()> {
 
     info!("════════════════════════════════════════════════════════");
     info!("  lamco-rdp-server v{}", env!("CARGO_PKG_VERSION"));
-    info!("  Built: {} {}", env!("BUILD_DATE"), env!("BUILD_TIME"));
-    info!("  Commit: {}", env!("GIT_HASH"));
+    info!("  Built: {} {}", option_env!("BUILD_DATE").unwrap_or("unknown"), option_env!("BUILD_TIME").unwrap_or(""));
+    info!("  Commit: {}", option_env!("GIT_HASH").unwrap_or("vendored"));
     info!("  Profile: {}", if cfg!(debug_assertions) { "debug" } else { "release" });
     info!("════════════════════════════════════════════════════════");
 

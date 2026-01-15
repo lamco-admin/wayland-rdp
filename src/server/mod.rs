@@ -77,7 +77,7 @@ use ironrdp_pdu::rdp::capability_sets::server_codecs_capabilities;
 use ironrdp_server::{Credentials, RdpServer};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
 use crate::clipboard::{ClipboardConfig, ClipboardManager, WrdCliprdrFactory};
@@ -358,7 +358,7 @@ impl WrdServer {
 
             info!("Separate Portal session created for input+clipboard (non-persistent)");
 
-            let session = Arc::new(Mutex::new(portal_handle.session));
+            let session = Arc::new(RwLock::new(portal_handle.session));
 
             // Create PortalSessionHandleImpl for input
             // If no clipboard (Portal v1), just use Mutter session_handle for input instead
@@ -547,6 +547,13 @@ impl WrdServer {
             // Note: Success message logged inside set_portal_clipboard
         } else {
             info!("Clipboard disabled - no Portal clipboard manager available");
+        }
+
+        // Mount FUSE filesystem for clipboard file transfer
+        // This enables on-demand file streaming for Windows → Linux file copy
+        if let Err(e) = clipboard_mgr.mount_fuse().await {
+            warn!("Failed to mount FUSE clipboard filesystem: {:?}", e);
+            warn!("File clipboard will use staging fallback (download files upfront)");
         }
 
         let clipboard_manager = Arc::new(Mutex::new(clipboard_mgr));
