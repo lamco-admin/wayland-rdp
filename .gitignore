@@ -2,6 +2,23 @@
 /target
 Cargo.lock
 
+# Flatpak build artifacts
+.flatpak-builder/
+*.flatpak
+
+# Vendored dependencies (regenerated from Cargo.lock)
+/vendor/
+
+# Cargo config for vendored builds (breaks normal builds)
+/.cargo/
+
+# Packaging build artifacts (keep config files, exclude outputs)
+packaging/build-dir/
+packaging/.flatpak-builder/
+packaging/.claude/
+packaging/*.tar.xz
+packaging/*.tar.gz
+
 # IDE and editor files
 .vscode/
 .idea/
