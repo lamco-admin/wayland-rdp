@@ -138,18 +138,50 @@ Edge cases and less common systems:
 
 ---
 
-### wlroots Compositors
+### wlroots Compositors (NEW SUPPORT - 2026-01-16)
 
-| Compositor | Distribution | Portal | Test Status | Notes |
-|------------|--------------|--------|-------------|-------|
-| **Sway** | Arch/Fedora | portal-wlr | ⏳ Need test | Should work perfectly |
-| **Hyprland** | Arch | portal-hyprland | ⏳ Known bugs | Token bugs documented |
-| **Wayfire** | Raspberry Pi OS | portal-wlr | ⏳ Optional | Interesting market |
+**Implementation:** Two strategies for wlroots support
+- **wlr-direct:** Native deployment (zero dialogs, direct protocols)
+- **libei/EIS:** Flatpak deployment (Portal + EIS protocol)
 
-**Test Focus:**
-- Portal token persistence
-- SelectionOwnerChanged signals
-- Encrypted file credential storage
+| Compositor | Distribution | Deployment | Strategy | Test Status | Notes |
+|------------|--------------|------------|----------|-------------|-------|
+| **Sway** | Arch Linux | Native | wlr-direct | ⏳ **READY TO TEST** | Zero dialogs, direct protocols |
+| **Sway** | Arch Linux | Flatpak | libei | ⏳ Need portal support | Requires xdpw PR #359 |
+| **Sway** | Fedora | Native | wlr-direct | ⏳ **READY TO TEST** | Zero dialogs, direct protocols |
+| **Hyprland** | Arch Linux | Native | wlr-direct | ⏳ **READY TO TEST** | Best option (portal has bugs) |
+| **Hyprland** | Arch Linux | Flatpak | libei | ⏳ Need portal support | Requires xdph ConnectToEIS |
+| **River** | Arch Linux | Native | wlr-direct | ⏳ Optional | Lower priority |
+| **Wayfire** | Raspberry Pi OS | Native | wlr-direct | ⏳ Optional | Interesting market |
+
+**Implementation Status:**
+- ✅ wlr-direct: FULLY IMPLEMENTED (1,050 lines)
+- ✅ libei: FULLY IMPLEMENTED (480 lines)
+- ✅ Service registry: Integrated
+- ✅ Strategy selector: Priority configured
+- ⏳ Testing: Pending VM setup
+
+**Test Focus (wlr-direct Native):**
+- Strategy selection (should auto-select wlr-direct)
+- Zero permission dialogs
+- Keyboard input (all keys, modifiers, special keys)
+- Mouse input (motion, clicks, scroll)
+- Multi-monitor coordinate transformation
+- XKB keymap (international layouts)
+- Input latency measurement
+
+**Test Focus (libei Flatpak):**
+- Portal ConnectToEIS availability
+- Strategy selection (should auto-select libei)
+- One-time permission dialog
+- Keyboard and mouse input via EIS
+- Event loop stability
+- Device discovery (keyboard/pointer)
+
+**Portal Requirements:**
+- xdg-desktop-portal-wlr: Needs PR #359 (ConnectToEIS support)
+- xdg-desktop-portal-hyprland: Needs ConnectToEIS implementation
+- Alternative: xdg-desktop-portal-hypr-remote (third-party)
 
 ---
 

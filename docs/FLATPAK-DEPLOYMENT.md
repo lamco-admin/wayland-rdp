@@ -135,7 +135,64 @@ key_path = "/home/username/.config/lamco-rdp-server/certs/key.pem"
 
 ---
 
+## wlroots Compositor Support (NEW - 2026-01-16)
+
+### Supported via libei/EIS Strategy
+
+lamco-rdp-server now includes **Flatpak-compatible wlroots support** using the libei/EIS protocol:
+
+**Supported compositors (when portal backend supports ConnectToEIS):**
+- Sway 1.7+
+- Hyprland
+- River
+- labwc
+- Other wlroots-based compositors
+
+**Requirements:**
+- Portal RemoteDesktop v2+ with ConnectToEIS method
+- xdg-desktop-portal-wlr with PR #359 merged
+- OR xdg-desktop-portal-hyprland with ConnectToEIS support
+- OR xdg-desktop-portal-hypr-remote (third-party)
+
+**Current status:**
+- ✅ Implementation: COMPLETE (libei strategy fully implemented)
+- ⏳ Portal backends: Waiting for ConnectToEIS support in portal backends
+- ⏳ Testing: Pending portal backend availability
+
+**How it works:**
+1. Flatpak calls Portal RemoteDesktop.ConnectToEIS()
+2. Portal returns Unix socket FD (crosses sandbox boundary)
+3. lamco-rdp-server uses EIS protocol via reis crate
+4. Portal backend translates to wlr virtual keyboard/pointer protocols
+
+**Fallback:** If ConnectToEIS not available, Flatpak on wlroots will have **no input injection**. Recommend native deployment for wlroots until portal backends add ConnectToEIS support.
+
+---
+
 ## Known Issues
+
+### wlroots Input Unavailable (Pre-2026-01-16)
+
+**Symptom:** On Sway, Hyprland, or other wlroots compositors, keyboard and mouse don't work in Flatpak.
+
+**Cause:** xdg-desktop-portal-wlr does not implement Portal RemoteDesktop interface.
+
+**Solution (2026-01-16):**
+- ✅ libei strategy implemented in lamco-rdp-server
+- ⏳ Waiting for portal backend ConnectToEIS support
+- Workaround: Use native deployment with wlr-direct strategy
+
+**Native deployment (recommended for wlroots):**
+```bash
+# Build native binary
+cargo build --release --features "wayland,h264"
+
+# Install as systemd user service
+systemctl --user enable lamco-rdp-server
+systemctl --user start lamco-rdp-server
+```
+
+See: `docs/testing/WLR-DIRECT-NATIVE-BUILD.md`
 
 ### Initial Connection Delay
 

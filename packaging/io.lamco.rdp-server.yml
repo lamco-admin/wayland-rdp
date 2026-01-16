@@ -66,7 +66,8 @@ modules:
         LIBCLANG_PATH: /usr/lib/sdk/llvm18/lib
     build-commands:
       # Note: vaapi disabled (incomplete color space API), pam-auth disabled (not sandboxable)
-      - cargo --offline build --release --no-default-features --features "h264"
+      # Features: h264 (video encoding), wayland (wlr-direct for native), libei (Flatpak-compatible wlroots)
+      - cargo --offline build --release --no-default-features --features "h264,wayland,libei"
       - install -Dm755 target/release/lamco-rdp-server /app/bin/lamco-rdp-server
     sources:
       - type: archive

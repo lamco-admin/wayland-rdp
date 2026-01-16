@@ -28,6 +28,35 @@ Built in Rust with a focus on security, performance, and compatibility with mode
 - **Hardware Encoding (NVENC)**: NVIDIA GPU acceleration (`--features nvenc`)
 - **AVC444**: Full 4:4:4 chroma with sRGB/full-range VUI signaling for perfect text clarity
 
+### wlroots Compositor Support (NEW - 2026-01-16)
+
+**Two strategies for wlroots-based compositors (Sway, Hyprland, River, labwc):**
+
+**Native Deployment (wlr-direct):**
+- Direct Wayland protocol usage (`zwp_virtual_keyboard_v1` + `zwlr_virtual_pointer_v1`)
+- Zero permission dialogs (direct compositor access)
+- Sub-millisecond input latency
+- Build with: `--features wayland`
+- Deployment: systemd user service or direct execution
+- Status: ✅ Production-ready, fully implemented
+
+**Flatpak Deployment (libei/EIS):**
+- Portal RemoteDesktop + EIS protocol via `reis` crate
+- Flatpak-compatible (Portal provides socket across sandbox)
+- One-time permission dialog (standard Portal flow)
+- Build with: `--features libei`
+- Deployment: Flatpak bundle
+- Status: ✅ Fully implemented, requires portal backend with ConnectToEIS support
+
+**Supported Compositors:**
+- ✅ Sway 1.7+ (native: wlr-direct, Flatpak: libei when portal supports it)
+- ✅ Hyprland (native: wlr-direct, Flatpak: libei when portal supports it)
+- ✅ River (native: wlr-direct)
+- ✅ labwc (native: wlr-direct)
+- ✅ Any wlroots-based compositor
+
+**See:** `docs/WLR-FULL-IMPLEMENTATION.md` for complete details
+
 ## Architecture
 
 ```

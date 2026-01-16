@@ -3,7 +3,8 @@
 //! Defines the common interface for different session creation strategies:
 //! - Portal + Token Strategy (universal)
 //! - Mutter Direct API (GNOME only)
-//! - wlr-screencopy (wlroots only, future)
+//! - libei/EIS (wlroots via Portal, Flatpak-compatible)
+//! - wlr-direct (wlroots native protocols, no Flatpak)
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -116,8 +117,10 @@ pub enum SessionType {
     Portal,
     /// Mutter direct D-Bus API
     MutterDirect,
-    /// wlr-screencopy protocol (future)
-    WlrScreencopy,
+    /// wlroots direct protocols (virtual keyboard/pointer)
+    WlrDirect,
+    /// libei/EIS protocol via Portal RemoteDesktop
+    Libei,
 }
 
 impl std::fmt::Display for SessionType {
@@ -125,7 +128,8 @@ impl std::fmt::Display for SessionType {
         match self {
             SessionType::Portal => write!(f, "Portal"),
             SessionType::MutterDirect => write!(f, "Mutter Direct API"),
-            SessionType::WlrScreencopy => write!(f, "wlr-screencopy"),
+            SessionType::WlrDirect => write!(f, "wlr-direct"),
+            SessionType::Libei => write!(f, "libei/EIS"),
         }
     }
 }
