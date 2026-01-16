@@ -38,7 +38,7 @@ finish-args:
   - --filesystem=xdg-download:rw
 
   # FUSE support for clipboard virtual filesystem
-  # Note: libfuse3 uses fusermount3 which works in Flatpak without special device access
+  # Note: FUSE mounts are limited in Flatpak sandbox; falls back to staging mode
   - --filesystem=xdg-run/wrd-clipboard-fuse:create
   - --filesystem=/tmp:rw
 
@@ -71,4 +71,4 @@ modules:
     sources:
       - type: archive
         path: lamco-rdp-server-0.1.0.tar.xz
-        sha256: 5f19aa739e3761a99256a6a647b326734005010696d3864c64a554540a1fc2c8
+        sha256: 9caac34b47b54f54f7972789fb66a0084e6395f6eb742f7d883fe41ef9678300

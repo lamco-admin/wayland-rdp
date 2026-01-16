@@ -83,3 +83,48 @@ enable_hw_acceleration = true
 
 # Thread count for encoding (0 = auto)
 encoder_threads = 0
+
+[egfx]
+# Enable EGFX graphics pipeline (H.264/AVC encoding)
+enabled = true
+
+# H.264 bitrate in kbps
+h264_bitrate = 5000
+
+# Video codec preference: "auto", "avc420", "avc444"
+# - avc444: Superior text/UI quality (4:4:4 chroma)
+# - avc420: Standard quality, lower bandwidth (4:2:0 chroma)
+# - auto: Use best available based on client capabilities
+codec = "auto"
+
+# Periodic IDR keyframe interval in seconds (0 = disabled)
+# Forces a full IDR keyframe at regular intervals to clear artifacts.
+# Recommended: 5-10 seconds for VDI, 2-3 for unreliable networks.
+periodic_idr_interval = 5
+
+[damage_tracking]
+# Enable damage region detection (only encode changed areas)
+enabled = true
+
+# Detection method: "diff" (CPU-based pixel comparison)
+method = "diff"
+
+# Tile size for damage detection (pixels)
+# Smaller = more sensitive but more CPU. FreeRDP uses 16x16 tiles.
+# With 16x16: 1% threshold = 2-3 pixels to trigger update (catches typing)
+tile_size = 16
+
+# Fraction of tile pixels that must differ (0.0-1.0)
+# Lower = more sensitive. 1% of 16x16 = 2-3 pixels minimum change
+diff_threshold = 0.01
+
+# Pixel value difference threshold (0-255)
+# Lower = catches subtle antialiased text edges
+pixel_threshold = 1
+
+# Merge nearby damage regions within this distance (pixels)
+merge_distance = 16
+
+# Minimum damaged area to trigger update (pixels)
+# 32 pixels filters sub-pixel noise while keeping small text updates
+min_region_area = 32

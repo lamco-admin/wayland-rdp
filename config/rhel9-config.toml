@@ -202,6 +202,9 @@ zgfx_compression = "never"
 max_frames_in_flight = 3
 frame_ack_timeout = 5000
 codec = "avc444"
+# Periodic IDR keyframe interval in seconds (0 = disabled)
+# Forces full keyframe to clear accumulated compression artifacts
+periodic_idr_interval = 5
 qp_min = 10
 qp_max = 40
 qp_default = 23
@@ -234,23 +237,28 @@ avc444_force_aux_idr_on_return = false
 #     Character = 140 pixels → 140 > 21 → tile marked dirty ✓
 #
 # RECOMMENDED PRESETS:
-#   Text/office work: tile_size=32, diff_threshold=0.02, pixel_threshold=2
-#   Mixed use:        tile_size=48, diff_threshold=0.03, pixel_threshold=3
-#   Video/streaming:  tile_size=128, diff_threshold=0.10, pixel_threshold=8
+#   Maximum sensitivity: tile_size=16, diff_threshold=0.01, pixel_threshold=1 (current)
+#   Text/office work:    tile_size=32, diff_threshold=0.02, pixel_threshold=2
+#   Mixed use:           tile_size=48, diff_threshold=0.03, pixel_threshold=3
+#   Video/streaming:     tile_size=128, diff_threshold=0.10, pixel_threshold=8
 #
 [damage_tracking]
 enabled = true
 method = "diff"
 # Tile size in pixels - smaller = more sensitive to small changes
-tile_size = 32
+# FreeRDP uses 16x16 tiles. Smaller = better for text/typing detection.
+tile_size = 16
 # Fraction of tile that must change (0.0-1.0) - lower = more sensitive
-diff_threshold = 0.02
+# 1% of 16x16 tile = 2-3 pixels - catches single character typing
+diff_threshold = 0.01
 # Per-pixel color difference threshold (0-255) - lower = more sensitive
-pixel_threshold = 2
+# Value of 1 catches subtle antialiased text edges
+pixel_threshold = 1
 # Distance to merge adjacent damage regions (pixels)
 merge_distance = 16
 # Minimum region area to send (filters noise) - lower = more sensitive
-min_region_area = 64
+# 32 pixels minimum to filter sub-pixel noise while keeping small updates
+min_region_area = 32
 
 # -----------------------------------------------------------------------------
 # HARDWARE ENCODING CONFIGURATION

@@ -567,6 +567,13 @@ pub struct EgfxConfig {
     /// Frame acknowledgment timeout (ms)
     pub frame_ack_timeout: u64,
 
+    /// Periodic IDR keyframe interval in seconds (0 = disabled)
+    /// Forces a full IDR keyframe at regular intervals to clear accumulated artifacts.
+    /// Recommended: 5-10 seconds for VDI, 2-3 for unreliable networks.
+    /// Default: 5 seconds
+    #[serde(default = "default_periodic_idr_interval")]
+    pub periodic_idr_interval: u32,
+
     /// Video codec preference: "auto", "avc420", "avc444"
     /// - "auto": Use best available codec (AVC444 if client supports V10+, else AVC420)
     /// - "avc420": Always use AVC420 (4:2:0 chroma), even if AVC444 is available
@@ -662,6 +669,10 @@ fn default_false() -> bool {
     false
 }
 
+fn default_periodic_idr_interval() -> u32 {
+    5 // 5 seconds - clears artifacts regularly without excessive bandwidth
+}
+
 fn default_color_matrix() -> String {
     "auto".to_string()
 }
@@ -683,6 +694,7 @@ impl Default for EgfxConfig {
             zgfx_compression: "never".to_string(),
             max_frames_in_flight: 3,
             frame_ack_timeout: 5000,
+            periodic_idr_interval: 5, // Force IDR every 5 seconds to clear artifacts
             codec: "auto".to_string(), // Use best available (AVC444 if supported, else AVC420)
             qp_min: 10,
             qp_max: 40,
@@ -709,10 +721,10 @@ impl Default for EgfxConfig {
 ///
 /// ## Sensitivity Tuning
 ///
-/// For **text/office work** (typing must be detected):
-/// - `tile_size: 32` - Smaller tiles catch single-character changes
-/// - `diff_threshold: 0.02` - Lower threshold (2% of tile must change)
-/// - `pixel_threshold: 2` - More sensitive pixel comparison
+/// For **text/office work** (typing must be detected) - NEW DEFAULTS:
+/// - `tile_size: 16` - Matches FreeRDP's 16x16 tiles for maximum sensitivity
+/// - `diff_threshold: 0.01` - 1% threshold catches single characters
+/// - `pixel_threshold: 1` - Maximum sensitivity pixel comparison
 ///
 /// For **video/streaming** (prioritize bandwidth):
 /// - `tile_size: 128` - Larger tiles reduce overhead
@@ -728,18 +740,15 @@ impl Default for EgfxConfig {
 /// 5. Dirty tiles are merged if within `merge_distance` pixels
 /// 6. Regions smaller than `min_region_area` are discarded
 ///
-/// ## Example: Why Typing Might Not Be Detected
+/// ## Example: New Defaults Ensure Typing Is Detected
 ///
-/// With defaults (tile_size=64, diff_threshold=0.05):
-/// - Tile area = 64×64 = 4096 pixels
-/// - Threshold = 4096 × 0.05 = 205 pixels must change
+/// With new defaults (tile_size=16, diff_threshold=0.01):
+/// - Tile area = 16×16 = 256 pixels
+/// - Threshold = 256 × 0.01 = 2.56 → 3 pixels must change
 /// - A typed character ≈ 10×14 = 140 pixels
-/// - 140 < 205 → tile NOT marked dirty → no update sent!
+/// - 140 > 3 → tile marked dirty ✓
 ///
-/// Solution: Use tile_size=32, diff_threshold=0.02:
-/// - Tile area = 32×32 = 1024 pixels
-/// - Threshold = 1024 × 0.02 = 21 pixels must change
-/// - Character = 140 pixels → 140 > 21 → tile marked dirty ✓
+/// This matches FreeRDP's approach (16x16 tiles) for reliable detection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DamageTrackingConfig {
     /// Enable damage region detection
@@ -798,15 +807,15 @@ pub struct DamageTrackingConfig {
 }
 
 fn default_tile_size() -> usize {
-    32  // Smaller tiles for character-level sensitivity
+    16  // 16x16 tiles for maximum sensitivity (FreeRDP uses 16x16)
 }
 
 fn default_diff_threshold() -> f32 {
-    0.02  // 2% threshold - sensitive enough for single characters
+    0.01  // 1% threshold - very sensitive, catches single-character changes
 }
 
 fn default_pixel_threshold() -> u8 {
-    2  // Sensitive pixel comparison
+    1  // Single pixel difference threshold for maximum sensitivity
 }
 
 fn default_merge_distance() -> u32 {

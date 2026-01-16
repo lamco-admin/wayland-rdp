@@ -462,6 +462,9 @@ impl FuseManager {
     }
 
     /// Mount the FUSE filesystem
+    ///
+    /// Tries to mount with `allow_other` first (allows file managers to access),
+    /// falls back to user-only mount if that fails (requires /etc/fuse.conf config).
     pub fn mount(&mut self) -> Result<()> {
         if self.session.is_some() {
             return Ok(()); // Already mounted
@@ -474,8 +477,8 @@ impl FuseManager {
 
         info!("Mounting FUSE clipboard filesystem at {:?}", self.mount_point);
 
-        // Create filesystem with shared state
-        let fs = FuseClipboardFsShared {
+        // Helper to create filesystem with shared state
+        let create_fs = || FuseClipboardFsShared {
             files: Arc::clone(&self.files),
             name_to_inode: Arc::clone(&self.name_to_inode),
             next_inode: Arc::clone(&self.next_inode),
@@ -483,21 +486,43 @@ impl FuseManager {
             mount_point: self.mount_point.clone(),
         };
 
-        // Mount options
-        let options = vec![
-            MountOption::RO,           // Read-only
+        // Try with AllowOther first (allows file managers to access the mount)
+        // This requires 'user_allow_other' in /etc/fuse.conf
+        let options_with_allow_other = vec![
+            MountOption::RO,
             MountOption::FSName("wrd-clipboard".to_string()),
-            MountOption::AllowOther,   // Allow other users (file manager)
-            MountOption::AutoUnmount,  // Auto-unmount on drop
+            MountOption::AllowOther,
+            MountOption::AutoUnmount,
         ];
 
-        // Spawn FUSE in background thread
-        let session = fuser::spawn_mount2(fs, &self.mount_point, &options).map_err(|e| {
-            ClipboardError::FileIoError(format!("Failed to mount FUSE: {}", e))
-        })?;
+        match fuser::spawn_mount2(create_fs(), &self.mount_point, &options_with_allow_other) {
+            Ok(session) => {
+                self.session = Some(SendableSession(session));
+                info!("FUSE clipboard filesystem mounted (allow_other enabled)");
+                return Ok(());
+            }
+            Err(e) => {
+                debug!(
+                    "FUSE mount with allow_other failed ({}), retrying without it",
+                    e
+                );
+            }
+        }
+
+        // Fallback: mount without AllowOther (only current user can access)
+        let options_user_only = vec![
+            MountOption::RO,
+            MountOption::FSName("wrd-clipboard".to_string()),
+            MountOption::AutoUnmount,
+        ];
+
+        let session =
+            fuser::spawn_mount2(create_fs(), &self.mount_point, &options_user_only).map_err(
+                |e| ClipboardError::FileIoError(format!("Failed to mount FUSE: {}", e)),
+            )?;
 
         self.session = Some(SendableSession(session));
-        info!("FUSE clipboard filesystem mounted successfully");
+        info!("FUSE clipboard filesystem mounted (user-only mode)");
 
         Ok(())
     }

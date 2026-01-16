@@ -143,6 +143,26 @@ impl VideoEncoder {
             VideoEncoder::Avc444(_) => "AVC444",
         }
     }
+
+    /// Request IDR keyframe (for PLI or manual recovery)
+    ///
+    /// Forces the next encoded frame to be a full IDR keyframe,
+    /// clearing any accumulated compression artifacts.
+    fn request_idr(&mut self) {
+        match self {
+            VideoEncoder::Avc420(encoder) => encoder.force_keyframe(),
+            VideoEncoder::Avc444(encoder) => encoder.request_idr(),
+        }
+    }
+
+    /// Check if periodic IDR is due (non-consuming)
+    /// Used to bypass damage detection and send full frame when IDR fires
+    fn is_periodic_idr_due(&self) -> bool {
+        match self {
+            VideoEncoder::Avc420(_) => false, // AVC420 doesn't have periodic IDR
+            VideoEncoder::Avc444(encoder) => encoder.is_periodic_idr_due(),
+        }
+    }
 }
 
 /// Frame rate regulator using token bucket algorithm
@@ -766,6 +786,10 @@ impl WrdDisplayHandler {
                                         self.config.egfx.avc444_aux_change_threshold,
                                         self.config.egfx.avc444_force_aux_idr_on_return,
                                     );
+                                    // Wire periodic IDR config for artifact recovery
+                                    encoder.configure_periodic_idr(
+                                        self.config.egfx.periodic_idr_interval,
+                                    );
 
                                     video_encoder = Some(VideoEncoder::Avc444(encoder));
                                     use_avc444 = true;
@@ -902,7 +926,18 @@ impl WrdDisplayHandler {
                         // === DAMAGE DETECTION (Config-controlled) ===
                         // Detect which regions changed since the last frame
                         // Skip encoding entirely if nothing changed (huge bandwidth savings)
-                        let damage_regions = if let Some(ref mut detector) = damage_detector_opt {
+                        //
+                        // CRITICAL: When periodic IDR is due, bypass damage detection!
+                        // We need to send the FULL SCREEN to clear ghost artifacts.
+                        // Otherwise, regions that "haven't changed" (but contain ghosts)
+                        // never get refreshed even when IDR fires.
+                        let force_full_frame = encoder.is_periodic_idr_due();
+
+                        let damage_regions = if force_full_frame {
+                            // Periodic IDR due - send full frame to clear all artifacts
+                            debug!("Forcing full frame for periodic IDR (bypassing damage detection)");
+                            vec![DamageRegion::full_frame(frame.width, frame.height)]
+                        } else if let Some(ref mut detector) = damage_detector_opt {
                             // Damage tracking enabled - detect changed regions
                             detector.detect(&frame.data, frame.width, frame.height)
                         } else {
