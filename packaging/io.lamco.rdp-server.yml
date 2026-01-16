@@ -72,4 +72,4 @@ modules:
     sources:
       - type: archive
         path: lamco-rdp-server-0.1.0.tar.xz
-        sha256: 8a5aab3f86f8550b9fa3cac82ccde88dd3312bfdad0e0726b792b311df51f2e7
+        sha256: 9381b86efe443dddb640e74d452777a613950635fbb9f79ade9a7bef7951e5d3
