@@ -22,8 +22,9 @@
 | **Clipboard** | Loop detection | ✅ Implemented | P0 - Rewire |
 | **Clipboard** | GNOME D-Bus fallback | ✅ Implemented | P0 - Rewire |
 | **Display** | Single monitor | ✅ Complete | - |
-| **Display** | Multi-monitor | 🟡 Partial | P1 |
-| **Display** | Dynamic resize | 🟡 Partial | P2 |
+| **Display** | Multi-monitor layout | ✅ Complete | - |
+| **Display** | Server-side resolution | ✅ Complete | - |
+| **Display** | Client-initiated resize | ⏸️ Deferred | P3 |
 | **Auth** | No authentication | ✅ Complete | - |
 | **Auth** | PAM authentication | ✅ Complete | - |
 | **Auth** | Certificate auth | 🟡 Partial | P2 |
@@ -62,24 +63,58 @@ Ensure existing implementations work correctly:
 
 ## Phase 2: Enhanced Display
 
-### P1: Multi-Monitor Support
-The layout code exists in `src/multimon/` but feature is disabled.
+### Resolution Terminology (Definitions)
 
-**Tasks**:
-- [ ] Enable multimon feature flag
-- [ ] Test multi-monitor Portal session
-- [ ] Handle monitor hotplug events
-- [ ] Support different DPI per monitor
-- [ ] RDP DISPLAYCONTROL channel for dynamic layout
+| Term | Definition | Status |
+|------|------------|--------|
+| **Server-side resolution** | Resolution of the Wayland desktop being captured | ✅ Working |
+| **Multi-monitor layout** | Multiple displays with different positions/sizes | ✅ Working |
+| **Mixed-resolution multimon** | Different monitors at different resolutions (e.g., 1080p + 4K) | ✅ Working |
+| **Client-initiated resize** | RDP client requests a different resolution than server has | ⏸️ Deferred |
+| **Dynamic resize** | Server changes resolution mid-session | ⏸️ Deferred |
 
-### P2: Dynamic Resize
-Handle client window resize without reconnection.
+### Current Resolution Behavior (✅ Complete)
 
-**Tasks**:
-- [ ] DISPLAYCONTROL PDU handling
-- [ ] Surface recreation on resize
-- [ ] PipeWire stream reconfiguration
-- [ ] Smooth resize without artifacts
+**How it works:**
+1. Server starts a Portal session with the Wayland compositor
+2. Portal returns stream info with the desktop's native resolution
+3. RDP client receives this resolution and must accept it
+4. If client window differs, client handles scaling locally
+
+**What's supported:**
+- ✅ Any server-side resolution (whatever the compositor provides)
+- ✅ Different resolutions per monitor in multi-monitor setups
+- ✅ High DPI displays (4K, 5K, etc.)
+- ✅ Client-side scaling when window size differs from server resolution
+
+**Configuration:** Resolution is determined by the Wayland compositor, not by config file.
+For headless VDI, configure resolution in the compositor (e.g., Weston virtual output).
+
+### Multi-Monitor Support (✅ Complete)
+
+Full layout code exists in `src/multimon/` with:
+- ✅ Monitor discovery from Portal StreamInfo
+- ✅ Layout calculation (horizontal, vertical, grid, preserve-positions)
+- ✅ Coordinate transformation between RDP and monitor-local space
+- ✅ Mixed resolutions across monitors
+
+**Remaining work (future):**
+- [ ] Monitor hotplug events (add/remove during session)
+- [ ] Per-monitor DPI reporting to client
+
+### P3: Client-Initiated Resize (Deferred)
+
+This would allow RDP clients to request a specific resolution.
+
+**Why deferred:**
+- Requires compositor cooperation to change resolution
+- GNOME/KDE sessions can't easily change resolution programmatically
+- Headless compositors (Weston) could support it but adds complexity
+- Current behavior (server dictates, client scales) works for most use cases
+
+**DISPLAYCONTROL channel:** The protocol handler exists (`display_handler.rs:1286`) but
+currently logs and ignores client resize requests. Clients handle this gracefully by
+scaling locally.
 
 ---
 
