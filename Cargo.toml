@@ -101,7 +101,7 @@ ironrdp-egfx = { git = "https://github.com/lamco-admin/IronRDP", branch = "maste
 # Wayland and Portal integration
 # -----------------------------------------------------------------------------
 wayland-client = { version = "0.31", optional = true }
-wayland-protocols = { version = "0.32", features = ["client", "unstable"], optional = true }
+wayland-protocols = { version = "0.31", features = ["client"], optional = true }
 wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
 ashpd = { version = "0.12.0", features = ["tokio"] }
 zbus = "4.0.1"
