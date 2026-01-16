@@ -121,7 +121,20 @@ Edge cases and less common systems:
 
 ---
 
-## Non-GNOME Platforms (Portal Only)
+## Non-GNOME Platforms
+
+### COSMIC Desktop (Smithay-based)
+
+| Distribution | Version | COSMIC | Portal | Test Status | VM Status |
+|--------------|---------|--------|--------|-------------|-----------|
+| **Pop!_OS** | 24.04 LTS | cosmic-comp 0.1.0 | v5 (no RD) | ✅ **TESTED** | ✅ 192.168.10.9 |
+
+**Test Result (2026-01-16):**
+- ❌ **Input NOT available** (Portal RemoteDesktop not implemented)
+- ✅ Service detection working (correctly marked unavailable)
+- ⏳ Waiting for Smithay PR #1388 (Ei support) to complete
+
+**Details:** See `docs/testing/POPOS-COSMIC-TEST-2026-01-16.md`
 
 ### KDE Plasma Testing
 
@@ -138,6 +151,34 @@ Edge cases and less common systems:
 
 ---
 
+### COSMIC Desktop (Smithay-based)
+
+| Desktop | Distribution | Version | Portal | Test Status | Result |
+|---------|--------------|---------|--------|-------------|--------|
+| **COSMIC** | Pop!_OS | Latest | v5 (ScreenCast only) | ✅ **TESTED 2026-01-16** | ❌ **NO INPUT** |
+
+**Test Date:** 2026-01-16
+**VM:** 192.168.10.9
+**OS:** Pop!_OS 24.04 LTS (kernel 6.17.9-76061709-generic)
+**Compositor:** COSMIC cosmic-comp 0.1.0
+**Deployment:** Flatpak
+
+**Findings:**
+- Portal v5 detected
+- ScreenCast: ✅ Available
+- RemoteDesktop: ❌ **NOT IMPLEMENTED** ("No such interface org.freedesktop.portal.RemoteDesktop")
+- libei/EIS Input: ❌ Unavailable (requires RemoteDesktop portal)
+- Strategy selected: Portal + Token (fallback)
+- Session creation: ❌ FAILED (no RemoteDesktop portal)
+
+**Root cause:** COSMIC Portal backend doesn't implement RemoteDesktop interface yet.
+**Status:** Smithay PR #1388 (Ei protocol support) is in progress but not complete.
+**Workaround:** None for COSMIC in Flatpak. Wait for Smithay PR #1388 completion.
+
+**Validation:** ✅ Service registry correctly detected RemoteDesktop unavailable, libei unavailable.
+
+---
+
 ### wlroots Compositors (NEW SUPPORT - 2026-01-16)
 
 **Implementation:** Two strategies for wlroots support
@@ -146,7 +187,7 @@ Edge cases and less common systems:
 
 | Compositor | Distribution | Deployment | Strategy | Test Status | Notes |
 |------------|--------------|------------|----------|-------------|-------|
-| **Sway** | Arch Linux | Native | wlr-direct | ⏳ **READY TO TEST** | Zero dialogs, direct protocols |
+| **Sway** | EndeavourOS (Arch) | Native | wlr-direct | ⏳ **INSTALLING NOW** | Zero dialogs, direct protocols |
 | **Sway** | Arch Linux | Flatpak | libei | ⏳ Need portal support | Requires xdpw PR #359 |
 | **Sway** | Fedora | Native | wlr-direct | ⏳ **READY TO TEST** | Zero dialogs, direct protocols |
 | **Hyprland** | Arch Linux | Native | wlr-direct | ⏳ **READY TO TEST** | Best option (portal has bugs) |
