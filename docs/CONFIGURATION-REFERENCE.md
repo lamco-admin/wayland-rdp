@@ -217,10 +217,36 @@ prefer_nvenc = true
 
 ```toml
 [display]
-allow_resize = true
-allowed_resolutions = []
-dpi_aware = false
-allow_rotation = false
+allow_resize = true             # Reserved for future client-initiated resize
+allowed_resolutions = []        # Reserved for future use
+dpi_aware = false               # Reserved for future per-monitor DPI
+allow_rotation = false          # Reserved for future display rotation
+```
+
+#### Resolution Behavior
+
+**Important:** The RDP session resolution is determined by the Wayland compositor, not by
+this configuration section. The server captures whatever resolution the desktop has.
+
+| Scenario | Resolution Source |
+|----------|-------------------|
+| GNOME/KDE session | Desktop's display settings |
+| Headless VDI (Weston) | Virtual output configuration |
+| Multi-monitor | Each monitor's native resolution |
+
+**What works today:**
+- Server captures at compositor's native resolution
+- Multi-monitor with mixed resolutions (e.g., 1080p + 4K)
+- RDP client receives server's resolution and scales locally if needed
+
+**What's deferred:**
+- Client-initiated resize (client requests different resolution)
+- Dynamic resize mid-session (server changes resolution)
+
+For headless VDI deployments, configure resolution in the compositor:
+```bash
+# Weston example
+weston --width=1920 --height=1080
 ```
 
 ### [advanced_video] (Optional)
