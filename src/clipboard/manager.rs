@@ -2091,6 +2091,28 @@ impl ClipboardManager {
                         );
                     }
 
+                    // CRITICAL: Check if we already have an active file transfer in progress
+                    // Portal sends BOTH text/uri-list AND x-special/gnome-copied-files requests
+                    // for the same paste operation - we must only process the FIRST one
+                    {
+                        let state = file_transfer_state.read().await;
+                        if !state.incoming_files.is_empty() {
+                            info!(
+                                "Skipping duplicate file transfer request ({}) - transfer already in progress with {} file(s)",
+                                requested_mime, state.incoming_files.len()
+                            );
+                            drop(state);
+
+                            // Cancel this Portal request - we're already handling the transfer
+                            let session_guard = session.read().await;
+                            let _ = portal
+                                .portal_clipboard()
+                                .selection_write_done(&session_guard, serial, false)
+                                .await;
+                            return Ok(());
+                        }
+                    }
+
                     // Check if FUSE is available and mounted - use on-demand transfer
                     let fuse_available = {
                         let fuse = fuse_manager.read().await;
@@ -2609,6 +2631,10 @@ impl ClipboardManager {
     }
 
     /// Handle RDP data error (must notify Portal to prevent retry crash)
+    ///
+    /// This is called when the RDP client responds with FormatDataResponse(error=true),
+    /// which is normal protocol behavior when the client doesn't have the requested format.
+    /// Per MS-RDPECLIP, this is expected and not an error condition.
     async fn handle_rdp_data_error(
         portal_clipboard: &Arc<RwLock<Option<Arc<crate::portal::PortalClipboardManager>>>>,
         portal_session: &Arc<
@@ -2629,7 +2655,8 @@ impl ClipboardManager {
             RwLock<std::collections::VecDeque<(u32, String, std::time::Instant)>>,
         >,
     ) -> Result<()> {
-        warn!("RDP data error - canceling pending Portal transfer");
+        // RDP client returned error - format not available (expected protocol behavior)
+        debug!("RDP FormatDataResponse: format not available, notifying Portal");
 
         // Get Portal clipboard and session
         let portal_opt = portal_clipboard.read().await.clone();
@@ -2650,7 +2677,7 @@ impl ClipboardManager {
         drop(pending);
 
         for serial in serials {
-            info!(
+            debug!(
                 "Notifying Portal of transfer failure (serial {})",
                 serial
             );

@@ -235,6 +235,22 @@ pub struct Avc444Encoder {
     /// When true: implements FreeRDP-proven bandwidth optimization
     /// When false: always sends both streams (current all-I behavior)
     enable_aux_omission: bool,
+
+    // === PERIODIC IDR (ARTIFACT RECOVERY) ===
+    /// Time of last IDR keyframe (for periodic forced IDR)
+    last_idr_time: std::time::Instant,
+
+    /// Interval in seconds for forced IDR keyframes (0 = disabled)
+    /// Forces full IDR at regular intervals to clear accumulated artifacts.
+    /// Recommended: 5-10 seconds for VDI, 2-3 for unreliable networks.
+    periodic_idr_interval_secs: u32,
+
+    /// Flag to force next frame as IDR (set by client PLI or periodic timer)
+    force_next_idr: bool,
+
+    /// Flag to force aux inclusion on next frame (set when periodic IDR fires)
+    /// This bypasses aux omission to ensure BOTH streams refresh together
+    force_aux_on_next_frame: bool,
 }
 
 #[cfg(feature = "h264")]
@@ -342,6 +358,11 @@ impl Avc444Encoder {
             aux_change_threshold: 0.05,   // Default, overridden by config
             force_aux_idr_on_return: false,  // Default, overridden by config
             enable_aux_omission: false,   // Default, overridden by config
+            // Periodic IDR defaults (overridden by configure_periodic_idr)
+            last_idr_time: std::time::Instant::now(),
+            periodic_idr_interval_secs: 5,  // Default 5 seconds
+            force_next_idr: false,
+            force_aux_on_next_frame: false,
         })
     }
 
@@ -407,6 +428,94 @@ impl Avc444Encoder {
         }
     }
 
+    /// Configure periodic IDR keyframe insertion
+    ///
+    /// Forces a full IDR keyframe at regular intervals to clear accumulated
+    /// compression artifacts. This is especially important for VDI where
+    /// artifacts from window movement can persist.
+    ///
+    /// # Arguments
+    ///
+    /// * `interval_secs` - Interval in seconds between forced IDR frames (0 = disabled)
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut encoder = Avc444Encoder::new(config)?;
+    /// encoder.configure_periodic_idr(5); // Force IDR every 5 seconds
+    /// ```
+    pub fn configure_periodic_idr(&mut self, interval_secs: u32) {
+        self.periodic_idr_interval_secs = interval_secs;
+        self.last_idr_time = std::time::Instant::now();
+
+        if interval_secs > 0 {
+            info!(
+                "🎬 Periodic IDR ENABLED: interval={}s (clears artifacts automatically)",
+                interval_secs
+            );
+        } else {
+            debug!("Periodic IDR disabled");
+        }
+    }
+
+    /// Request immediate IDR keyframe (for client PLI - Picture Loss Indication)
+    ///
+    /// Called when the client reports visual artifacts or packet loss.
+    /// The next encoded frame will be a full IDR keyframe.
+    pub fn request_idr(&mut self) {
+        self.force_next_idr = true;
+        debug!("IDR requested (PLI or manual trigger)");
+    }
+
+    /// Check if periodic IDR is due (non-consuming check)
+    ///
+    /// This allows callers to know if the next encode will trigger a periodic IDR
+    /// WITHOUT actually triggering it. Useful for forcing full-frame damage when
+    /// periodic IDR is about to fire, ensuring the entire screen gets refreshed.
+    pub fn is_periodic_idr_due(&self) -> bool {
+        if self.force_next_idr {
+            return true;
+        }
+        if self.periodic_idr_interval_secs > 0 {
+            let elapsed = self.last_idr_time.elapsed();
+            return elapsed >= std::time::Duration::from_secs(self.periodic_idr_interval_secs as u64);
+        }
+        false
+    }
+
+    /// Check if we should force an IDR frame due to periodic interval or PLI
+    ///
+    /// When this returns true, it also sets `force_aux_on_next_frame` to ensure
+    /// BOTH streams (Main + Aux) get refreshed. This is critical for clearing
+    /// artifacts - if we only IDR the Main stream while omitting Aux, the client
+    /// reuses its cached aux which may contain artifacts.
+    fn should_force_idr(&mut self) -> bool {
+        // Check PLI request first
+        if self.force_next_idr {
+            self.force_next_idr = false;
+            self.force_aux_on_next_frame = true;  // Force aux to clear ALL artifacts
+            self.last_idr_time = std::time::Instant::now();
+            info!("Forcing IDR (client PLI request) - both Main and Aux will refresh");
+            return true;
+        }
+
+        // Check periodic interval
+        if self.periodic_idr_interval_secs > 0 {
+            let elapsed = self.last_idr_time.elapsed();
+            if elapsed >= std::time::Duration::from_secs(self.periodic_idr_interval_secs as u64) {
+                self.last_idr_time = std::time::Instant::now();
+                self.force_aux_on_next_frame = true;  // Force aux to clear ALL artifacts
+                info!(
+                    "Forcing periodic IDR ({}s elapsed) - BOTH Main and Aux will refresh to clear artifacts",
+                    elapsed.as_secs()
+                );
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Encode a BGRA frame to dual H.264 bitstreams
     ///
     /// # Arguments
@@ -466,6 +575,12 @@ impl Avc444Encoder {
         let dims = (width as usize, height as usize);
         let strides = main_yuv420.strides();
 
+        // === PERIODIC IDR: Force keyframe at regular intervals or on PLI ===
+        // This clears accumulated compression artifacts automatically
+        if self.should_force_idr() {
+            self.encoder.force_intra_frame();
+        }
+
         // === DIAGNOSTIC: Force keyframes if flag is set ===
         // This disables P-frames to test if "original OK, changes wrong" is P-frame related
         if self.force_all_keyframes {
@@ -523,12 +638,21 @@ impl Avc444Encoder {
         let should_send_aux = self.should_send_aux(&aux_yuv420, main_is_keyframe);  // Now OK - no mutable borrow
 
         let aux_bitstream_opt = if should_send_aux {
-            // === SAFE MODE: Force aux IDR when reintroducing after omission ===
-            // If aux was omitted for N frames, forcing IDR when it returns ensures:
-            // - No dependency on stale aux frames decoder might have evicted
-            // - Clean reference point for future aux updates
-            // - Robust operation even with long omission intervals
-            if self.force_aux_idr_on_return && self.frames_since_aux > 0 {
+            // === CRITICAL: Force aux IDR when main is IDR (artifact clearing sync) ===
+            // When periodic IDR or PLI triggers, both streams need full refresh.
+            // If main is IDR but aux is P-frame, the aux P-frame references may be stale.
+            // This ensures BOTH streams refresh together for complete artifact clearing.
+            if main_is_keyframe {
+                self.encoder.force_intra_frame();  // Same encoder!
+                debug!(
+                    "Forcing aux IDR to sync with main IDR (artifact clearing)"
+                );
+            } else if self.force_aux_idr_on_return && self.frames_since_aux > 0 {
+                // === SAFE MODE: Force aux IDR when reintroducing after omission ===
+                // If aux was omitted for N frames, forcing IDR when it returns ensures:
+                // - No dependency on stale aux frames decoder might have evicted
+                // - Clean reference point for future aux updates
+                // - Robust operation even with long omission intervals
                 self.encoder.force_intra_frame();  // Same encoder!
                 debug!(
                     "Forcing aux IDR on reintroduction (omitted for {} frames)",
@@ -885,10 +1009,18 @@ impl Avc444Encoder {
     ///
     /// true if aux should be encoded and sent, false to omit
     fn should_send_aux(
-        &self,
+        &mut self,  // Changed to &mut self to clear force flag
         aux_frame: &super::yuv444_packing::Yuv420Frame,
         _main_is_keyframe: bool,  // IGNORED: See feedback loop documentation above
     ) -> bool {
+        // CRITICAL: Forced aux for artifact clearing (periodic IDR or PLI)
+        // This bypasses ALL omission logic to ensure client gets fresh aux stream
+        if self.force_aux_on_next_frame {
+            self.force_aux_on_next_frame = false;  // Consume the flag
+            info!("Sending aux: FORCED for artifact clearing (bypassing omission)");
+            return true;
+        }
+
         // If omission disabled, always send (backward compatible behavior)
         if !self.enable_aux_omission {
             return true;

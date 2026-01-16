@@ -121,7 +121,8 @@ impl WrdCliprdrFactory {
 
                         ClipboardEvent::FormatDataResponse { data, is_error } => {
                             if is_error {
-                                info!("🔗 Bridge: RDP FormatDataResponse ERROR → ClipboardManager");
+                                // Error response is expected when client doesn't have the format
+                                debug!("🔗 Bridge: RDP FormatDataResponse (format unavailable) → ClipboardManager");
                                 let _ = manager_tx.send(crate::clipboard::ClipboardEvent::RdpDataError).await;
                             } else {
                                 info!("🔗 Bridge: RDP FormatDataResponse ({} bytes) → ClipboardManager", data.len());
