@@ -50,8 +50,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
 use wayland_client::protocol::{wl_registry, wl_seat::WlSeat};
 use wayland_client::{globals::registry_queue_init, Connection, Dispatch, QueueHandle};
-use wayland_protocols::wp::text_input::zv1::client::zwp_text_input_manager_v1::ZwpTextInputManagerV1 as _; // Force protocol generation
-use wayland_protocols::unstable::virtual_keyboard::v1::client::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
+use wayland_protocols::misc::zwp_virtual_keyboard_v1::client::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1;
 
 use crate::session::strategy::{
@@ -504,11 +503,11 @@ impl Dispatch<WlSeat, ()> for WlrState {
     }
 }
 
-impl Dispatch<wayland_protocols::unstable::virtual_keyboard::v1::client::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1, ()> for WlrState {
+impl Dispatch<wayland_protocols::misc::zwp_virtual_keyboard_v1::client::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1, ()> for WlrState {
     fn event(
         _state: &mut Self,
-        _proxy: &wayland_protocols::unstable::virtual_keyboard::v1::client::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1,
-        _event: <wayland_protocols::unstable::virtual_keyboard::v1::client::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1 as wayland_client::Proxy>::Event,
+        _proxy: &wayland_protocols::misc::zwp_virtual_keyboard_v1::client::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1,
+        _event: <wayland_protocols::misc::zwp_virtual_keyboard_v1::client::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1 as wayland_client::Proxy>::Event,
         _data: &(),
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,

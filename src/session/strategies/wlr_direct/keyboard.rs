@@ -41,7 +41,7 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::io::FromRawFd;
 use tracing::{debug, info, warn};
 use wayland_client::QueueHandle;
-use wayland_protocols::unstable::virtual_keyboard::v1::client::{
+use wayland_protocols::misc::zwp_virtual_keyboard_v1::client::{
     zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1,
     zwp_virtual_keyboard_v1::{self, ZwpVirtualKeyboardV1},
 };
