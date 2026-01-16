@@ -533,8 +533,8 @@ impl SessionHandle for LibeiSessionHandleImpl {
 
         drop(devices);
 
-        // Send motion event
-        pointer_abs.motion(x, y);
+        // Send motion event (x, y in logical pixels as f32)
+        pointer_abs.motion_absolute(x as f32, y as f32);
 
         // Frame the event
         let serial = self.current_serial().await;
