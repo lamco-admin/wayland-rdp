@@ -616,12 +616,12 @@ impl SessionHandle for LibeiSessionHandleImpl {
 
         drop(devices);
 
-        // Send scroll events
+        // Send scroll events (convert f64 to f32 for reis API)
         if dx.abs() > 0.01 {
-            scroll.scroll(dx, 0.0);
+            scroll.scroll(dx as f32, 0.0);
         }
         if dy.abs() > 0.01 {
-            scroll.scroll(0.0, dy);
+            scroll.scroll(0.0, dy as f32);
         }
 
         // Frame the event
