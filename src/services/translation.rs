@@ -64,6 +64,12 @@ pub fn translate_capabilities(caps: &CompositorCapabilities) -> Vec<AdvertisedSe
     // wlr-screencopy (wlroots bypass)
     services.push(translate_wlr_screencopy(caps));
 
+    // wlr-direct input (wlroots virtual keyboard/pointer)
+    services.push(translate_wlr_direct_input(caps));
+
+    // libei/EIS input (Portal RemoteDesktop + EIS)
+    services.push(translate_libei_input(caps));
+
     // Unattended Access (aggregate capability)
     services.push(translate_unattended_access(caps));
 
@@ -544,6 +550,98 @@ fn translate_wlr_screencopy(caps: &CompositorCapabilities) -> AdvertisedService 
         AdvertisedService::unavailable(ServiceId::WlrScreencopy)
             .with_note("wlr-screencopy protocol not found")
     }
+}
+
+fn translate_wlr_direct_input(caps: &CompositorCapabilities) -> AdvertisedService {
+    use crate::session::DeploymentContext;
+
+    // Not available in Flatpak (no direct Wayland socket access)
+    if matches!(caps.deployment, DeploymentContext::Flatpak) {
+        return AdvertisedService::unavailable(ServiceId::WlrDirectInput)
+            .with_note("wlr-direct input blocked by Flatpak sandbox");
+    }
+
+    if !caps.compositor.is_wlroots_based() {
+        return AdvertisedService::unavailable(ServiceId::WlrDirectInput)
+            .with_note("Only available on wlroots-based compositors");
+    }
+
+    // Check for required input protocols
+    // zwp_virtual_keyboard_v1 (standard, should be available on most Wayland compositors)
+    // zwlr_virtual_pointer_v1 (wlroots-specific, requires wlroots 0.12+)
+    let has_keyboard = caps.has_protocol("zwp_virtual_keyboard_manager_v1", 1);
+    let has_pointer = caps.has_protocol("zwlr_virtual_pointer_manager_v1", 1);
+
+    if has_keyboard && has_pointer {
+        let keyboard_version = caps.get_protocol_version("zwp_virtual_keyboard_manager_v1").unwrap_or(1);
+        let pointer_version = caps.get_protocol_version("zwlr_virtual_pointer_manager_v1").unwrap_or(1);
+
+        let feature = WaylandFeature::WlrDirectInput {
+            keyboard_version,
+            pointer_version,
+            supports_modifiers: true,
+            supports_touch: false, // Touch not implemented in MVP
+        };
+
+        AdvertisedService::guaranteed(ServiceId::WlrDirectInput, feature)
+            .with_rdp_capability(RdpCapability::input_full())
+            .with_note("Direct input injection without portal permission dialog")
+    } else if has_keyboard && !has_pointer {
+        AdvertisedService::degraded(
+            ServiceId::WlrDirectInput,
+            WaylandFeature::WlrDirectInput {
+                keyboard_version: caps.get_protocol_version("zwp_virtual_keyboard_manager_v1").unwrap_or(1),
+                pointer_version: 0,
+                supports_modifiers: true,
+                supports_touch: false,
+            },
+            "Virtual keyboard available but virtual pointer missing (wlroots < 0.12?)"
+        )
+    } else {
+        AdvertisedService::unavailable(ServiceId::WlrDirectInput)
+            .with_note("Virtual keyboard/pointer protocols not found")
+    }
+}
+
+fn translate_libei_input(caps: &CompositorCapabilities) -> AdvertisedService {
+    let portal = &caps.portal;
+
+    // libei requires Portal RemoteDesktop with ConnectToEIS support (v2+)
+    if !portal.supports_remote_desktop {
+        return AdvertisedService::unavailable(ServiceId::LibeiInput)
+            .with_note("Portal RemoteDesktop not available");
+    }
+
+    // ConnectToEIS was added in Portal v2
+    // Older portals don't have this method
+    let has_connect_to_eis = portal.version >= 2;
+
+    if !has_connect_to_eis {
+        return AdvertisedService::unavailable(ServiceId::LibeiInput)
+            .with_note(&format!(
+                "Portal v{} does not support ConnectToEIS (requires v2+)",
+                portal.version
+            ));
+    }
+
+    // libei supports keyboard, pointer, and potentially touch
+    let feature = WaylandFeature::LibeiInput {
+        portal_version: portal.version,
+        has_connect_to_eis,
+        keyboard: true,
+        pointer: true,
+        touch: false, // Touch not yet implemented
+    };
+
+    // libei is Guaranteed when:
+    // 1. Portal RemoteDesktop v2+ is available
+    // 2. Portal backend implements ConnectToEIS (can't detect without trying)
+    //
+    // Note: This assumes the portal backend supports ConnectToEIS.
+    // If the backend doesn't support it, session creation will fail gracefully.
+    AdvertisedService::guaranteed(ServiceId::LibeiInput, feature)
+        .with_rdp_capability(RdpCapability::input_full())
+        .with_note("EIS protocol via Portal RemoteDesktop (Flatpak-compatible)")
 }
 
 fn translate_unattended_access(caps: &CompositorCapabilities) -> AdvertisedService {
