@@ -20,11 +20,11 @@ use_portals = true
 # TLS certificate paths (REQUIRED)
 #
 # Quick Start - Generate self-signed certificate:
-#   ./scripts/generate-certs.sh certs/ $(hostname)
+#   ./scripts/generate-certs.sh /etc/lamco-rdp-server $(hostname)
 #
 # Or manually:
 #   openssl req -x509 -newkey rsa:4096 -nodes \
-#     -keyout certs/key.pem -out certs/cert.pem \
+#     -keyout /etc/lamco-rdp-server/key.pem -out /etc/lamco-rdp-server/cert.pem \
 #     -days 365 -subj "/CN=$(hostname)" \
 #     -addext "subjectAltName=DNS:$(hostname),DNS:localhost,IP:127.0.0.1"
 #
@@ -33,8 +33,8 @@ use_portals = true
 #   cert_path = "/etc/letsencrypt/live/rdp.yourdomain.com/fullchain.pem"
 #   key_path = "/etc/letsencrypt/live/rdp.yourdomain.com/privkey.pem"
 #
-cert_path = "certs/cert.pem"
-key_path = "certs/key.pem"
+cert_path = "/etc/lamco-rdp-server/cert.pem"
+key_path = "/etc/lamco-rdp-server/key.pem"
 
 # Enable Network Level Authentication (client auth before session)
 enable_nla = true

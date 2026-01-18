@@ -6,7 +6,7 @@
 //! # Architecture
 //!
 //! ```text
-//! WrdGfxFactory (implements GfxServerFactory)
+//! LamcoGfxFactory (implements GfxServerFactory)
 //!       │
 //!       ├─► Creates Arc<Mutex<GraphicsPipelineServer>>
 //!       │
@@ -34,7 +34,7 @@ use tokio::sync::RwLock;
 use ironrdp_egfx::server::{GraphicsPipelineHandler, GraphicsPipelineServer};
 use ironrdp_server::{GfxDvcBridge, GfxServerFactory, GfxServerHandle};
 
-use crate::egfx::WrdGraphicsHandler;
+use crate::egfx::LamcoGraphicsHandler;
 
 /// Factory for creating EGFX graphics pipeline handlers
 ///
@@ -54,7 +54,7 @@ use crate::egfx::WrdGraphicsHandler;
 /// // Check if platform has AVC444 quirk
 /// let force_avc420 = capabilities.profile.has_quirk(&Quirk::Avc444Unreliable);
 ///
-/// let gfx_factory = WrdGfxFactory::with_quirks(width, height, force_avc420);
+/// let gfx_factory = LamcoGfxFactory::with_quirks(width, height, force_avc420);
 ///
 /// // Get handle for display handler before passing to RdpServer
 /// let gfx_handle = gfx_factory.server_handle();
@@ -67,7 +67,7 @@ use crate::egfx::WrdGraphicsHandler;
 /// // Display handler uses gfx_handle to send frames
 /// display_handler.set_gfx_server(gfx_handle);
 /// ```
-pub struct WrdGfxFactory {
+pub struct LamcoGfxFactory {
     /// Initial desktop dimensions
     width: u16,
     height: u16,
@@ -105,7 +105,7 @@ pub struct HandlerState {
 /// Type alias for shared handler state
 pub type SharedHandlerState = Arc<RwLock<Option<HandlerState>>>;
 
-impl WrdGfxFactory {
+impl LamcoGfxFactory {
     /// Create a new GFX factory
     ///
     /// # Arguments
@@ -162,12 +162,12 @@ impl WrdGfxFactory {
     }
 }
 
-impl GfxServerFactory for WrdGfxFactory {
+impl GfxServerFactory for LamcoGfxFactory {
     fn build_gfx_handler(&self) -> Box<dyn GraphicsPipelineHandler> {
         // Basic mode: just return the handler without shared access
         // Note: This method is called when build_server_with_handle() returns None
         let handler =
-            WrdGraphicsHandler::with_quirks(self.width, self.height, self.force_avc420_only);
+            LamcoGraphicsHandler::with_quirks(self.width, self.height, self.force_avc420_only);
         Box::new(handler)
     }
 
@@ -175,7 +175,7 @@ impl GfxServerFactory for WrdGfxFactory {
         // Create the handler WITH shared state synchronization AND platform quirks
         // The handler will update handler_state when callbacks are invoked,
         // allowing EgfxFrameSender to check EGFX readiness
-        let handler = WrdGraphicsHandler::with_shared_state_and_quirks(
+        let handler = LamcoGraphicsHandler::with_shared_state_and_quirks(
             self.width,
             self.height,
             Arc::clone(&self.handler_state),

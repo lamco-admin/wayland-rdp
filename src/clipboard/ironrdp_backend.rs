@@ -30,7 +30,7 @@ use crate::clipboard::manager::ClipboardManager;
 /// use tokio::sync::Mutex;
 ///
 /// let manager = Arc::new(Mutex::new(ClipboardManager::new(config).await?));
-/// let factory = WrdCliprdrFactory::new(manager);
+/// let factory = LamcoCliprdrFactory::new(manager);
 ///
 /// // Pass factory to IronRDP server builder
 /// ```
@@ -55,7 +55,7 @@ impl LamcoCliprdrFactory {
         let event_sender = ClipboardEventSender::new();
         let event_receiver = event_sender.subscribe();
 
-        info!("Created WrdCliprdrFactory with event channel");
+        info!("Created LamcoCliprdrFactory with event channel");
 
         // Start event bridge task to forward RDP backend events to ClipboardManager
         // This is critical - without it, RDP clipboard events (FormatList, DataRequest, etc.)
@@ -239,7 +239,7 @@ impl CliprdrBackendFactory for LamcoCliprdrFactory {
     }
 }
 
-impl ServerEventSender for WrdCliprdrFactory {
+impl ServerEventSender for LamcoCliprdrFactory {
     fn set_sender(&mut self, sender: mpsc::UnboundedSender<ironrdp_server::ServerEvent>) {
         info!("Clipboard factory received server event sender");
         self.server_event_sender = Some(sender.clone());
@@ -255,11 +255,11 @@ impl ServerEventSender for WrdCliprdrFactory {
     }
 }
 
-impl ironrdp_server::CliprdrServerFactory for WrdCliprdrFactory {}
+impl ironrdp_server::CliprdrServerFactory for LamcoCliprdrFactory {}
 
-impl std::fmt::Debug for WrdCliprdrFactory {
+impl std::fmt::Debug for LamcoCliprdrFactory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WrdCliprdrFactory")
+        f.debug_struct("LamcoCliprdrFactory")
             .field("has_server_sender", &self.server_event_sender.is_some())
             .finish()
     }
@@ -275,7 +275,7 @@ mod tests {
         let config = ClipboardConfig::default();
         let manager = Arc::new(Mutex::new(ClipboardManager::new(config).await.unwrap()));
 
-        let factory = WrdCliprdrFactory::new(manager);
+        let factory = LamcoCliprdrFactory::new(manager);
         let _backend = factory.build_cliprdr_backend();
         // Backend created successfully
     }
@@ -285,7 +285,7 @@ mod tests {
         let config = ClipboardConfig::default();
         let manager = Arc::new(Mutex::new(ClipboardManager::new(config).await.unwrap()));
 
-        let factory = WrdCliprdrFactory::new(manager);
+        let factory = LamcoCliprdrFactory::new(manager);
 
         // Factory should be created successfully
         // Event bridge starts automatically in new()
