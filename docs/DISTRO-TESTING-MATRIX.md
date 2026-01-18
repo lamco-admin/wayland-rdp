@@ -554,40 +554,99 @@ gdbus introspect --session --dest org.freedesktop.portal.Desktop --object-path /
 
 ---
 
+## Feature Support Summary by Distribution
+
+**Last Updated:** 2026-01-18 (v0.9.0)
+
+### Tested Platforms - Feature Matrix
+
+| Distribution | Video | Input | Clipboard | Session Persist | Strategy | Test Date |
+|--------------|-------|-------|-----------|-----------------|----------|-----------|
+| **Ubuntu 24.04** (GNOME 46, Portal v5) | ✅ H.264 | ✅ Full | ⚠️ Crashes | ❌ Rejected | Portal+Token | 2026-01-15 |
+| **RHEL 9.7** (GNOME 40, Portal v4) | ✅ H.264 | ✅ Full | ❌ No support | ❌ Rejected | Portal | 2026-01-15 |
+| **Pop!_OS 24.04** (COSMIC 0.1.0, Portal v5) | ✅ ScreenCast | ❌ No portal | ❌ No portal | ❌ No portal | None | 2026-01-16 |
+
+### Feature Status by Desktop Environment
+
+| Desktop | Portal Version | Video | Input | Clipboard | Session Tokens | Zero Dialogs | Notes |
+|---------|----------------|-------|-------|-----------|----------------|--------------|-------|
+| **GNOME 46** (Ubuntu 24.04) | v5 | ✅ | ✅ | ⚠️ Portal crashes | ❌ Rejected by backend | ✅ Via Mutter Direct | Portal v5 but persistence rejected |
+| **GNOME 40** (RHEL 9) | v4 | ✅ | ✅ | ❌ Portal v1 | ❌ Rejected by backend | ✅ Via Mutter Direct | Clipboard unavailable |
+| **COSMIC** (Pop!_OS) | v5 (partial) | ✅ | ❌ | ❌ | ❌ | ❌ | RemoteDesktop not implemented |
+| **KDE Plasma 6+** | v5 (expected) | ✅ Expected | ✅ Expected | ✅ Expected | ✅ Expected | ⚠️ Via Portal+Token | UNTESTED |
+| **wlroots** (Sway/Hyprland) | varies | ✅ Portal | ✅ wlr-direct | ⚠️ Portal | ✅ wlr-direct | ✅ wlr-direct | Native: zero dialogs |
+
+### Session Persistence by Strategy
+
+| Strategy | Compositors | Dialogs | Session Restore | Tested | Notes |
+|----------|-------------|---------|-----------------|--------|-------|
+| **Mutter Direct** | GNOME 42+ | 0 | ✅ Works | ⏳ Untested | Bypasses Portal, direct D-Bus API |
+| **wlr-direct** | Sway, Hyprland, River | 0 | ✅ Works | ⏳ Untested | Native Wayland protocols |
+| **Portal + libei** | wlroots (Flatpak) | 1 first time | ✅ Token | ⏳ Untested | Portal + EIS protocol |
+| **Portal + Token** | All with Portal v4+ | 1 first time | ❌ GNOME rejects | ✅ Tested | GNOME policy blocks persistence |
+| **Basic Portal** | All | Every restart | ❌ | ✅ Tested | Fallback strategy |
+
+### Clipboard Support by Portal Version
+
+| Portal Version | Clipboard API | Text | Images | Files | Tested On |
+|----------------|---------------|------|--------|-------|-----------|
+| **Portal v5 (RD v2)** | ✅ Available | ✅ Works | ⚠️ Crashes | ✅ Staging | Ubuntu 24.04 |
+| **Portal v4 (RD v2)** | ⚠️ Varies | Expected | Expected | Expected | Untested |
+| **Portal v4 (RD v1)** | ❌ No support | ❌ | ❌ | ❌ | RHEL 9 |
+| **Portal v3** | ❌ No RD clipboard | ❌ | ❌ | ❌ | Untested |
+
+**Key Issues:**
+- Ubuntu 24.04: xdg-desktop-portal-gnome crashes on complex clipboard (Excel paste)
+- RHEL 9: Portal RemoteDesktop v1 lacks clipboard interface
+- RwLock fix (Jan 7) prevents clipboard blocking input ✅
+
+---
+
 ## Current Status Summary
 
-**Last Updated:** 2026-01-15
+**Last Updated:** 2026-01-18 (v0.9.0 published)
 
-**Tested:** 2 platforms - Both fully tested with RDP sessions
-- Ubuntu 24.04 / GNOME 46 (Portal v5) - Full RDP tested ✅
-- RHEL 9.7 / GNOME 40 (Portal v4) - Full RDP tested ✅
+**Published:**
+- ✅ Flatpak v0.9.0 via GitHub Releases (universal, works on ALL Linux)
+- ⏳ OBS native packages building (7 distributions with MSRV fixes)
+
+**Tested Platforms - RDP Functionality:**
+- **Ubuntu 24.04**: Video ✅, Input ✅, Clipboard ⚠️ (crashes), Persistence ❌ (GNOME rejects)
+- **RHEL 9**: Video ✅, Input ✅, Clipboard ❌ (Portal v1), Persistence ❌ (GNOME rejects)
+- **Pop!_OS COSMIC**: Video ✅, Input ❌ (no portal), Clipboard ❌, Persistence ❌
 
 **Key Findings:**
 
-1. **GNOME rejects persistence for RemoteDesktop sessions** (BOTH platforms)
+1. **GNOME rejects persistence for RemoteDesktop sessions** (BOTH tested platforms)
    - Error: "Remote desktop sessions cannot persist"
-   - Affects: RHEL 9 (Portal v4) AND Ubuntu 24.04 (Portal v5)
-   - This is GNOME portal backend policy, not a bug
-   - RDP works fully, but requires permission dialog on each server restart
+   - Workaround: Use Mutter Direct API strategy (zero dialogs, untested)
+   - Impact: Portal strategy requires dialog on each restart
 
 2. **Clipboard varies by Portal version**
-   - RHEL 9 (Portal RemoteDesktop v1): No clipboard support
-   - Ubuntu 24.04 (Portal RemoteDesktop v2): Clipboard working (text + files via staging)
-     - 35 initial errors (normal - client clipboard empty at connection)
-     - 4 successful format announcements
-     - 31 file transfers via staging (FUSE not available in Flatpak)
+   - Portal v5 (RemoteDesktop v2): ✅ Working but unstable (crash bug)
+   - Portal v4 (RemoteDesktop v1): ❌ No clipboard interface
+   - Portal v3: ❌ No RemoteDesktop clipboard
 
-**Working:**
-- Portal screen capture and input injection
-- Video encoding (EGFX/H.264 AVC444v2 with aux omission)
-- Keyboard and mouse input
-- Encrypted credential storage (Flatpak sandbox, AES-256-GCM)
-- Text clipboard (Ubuntu 24.04 via D-Bus GNOME extension)
+3. **COSMIC Desktop not ready**
+   - Portal RemoteDesktop not implemented (Smithay PR #1388 pending)
+   - Only ScreenCast available (video only)
+   - Input unavailable in Flatpak deployment
+
+**Working Features:**
+- ✅ Portal screen capture (all tested platforms)
+- ✅ Input injection via Portal (GNOME platforms)
+- ✅ H.264 video encoding (AVC420, AVC444v2)
+- ✅ Multi-monitor support
+- ✅ Damage detection (bandwidth optimization)
+- ✅ Adaptive FPS
+- ✅ Encrypted credential storage
 
 **Not Working / Known Issues:**
-- Session persistence on GNOME (both platforms) - GNOME policy rejects persistence
-- Clipboard sync on RHEL 9 (Portal RemoteDesktop v1 limitation)
-- FUSE file clipboard in Flatpak (libfuse3 mount fails - using staging fallback)
+- ❌ Session persistence on GNOME (policy blocks it - Mutter Direct untested)
+- ⚠️ Clipboard crash on Ubuntu 24.04 (portal bug)
+- ❌ Clipboard on RHEL 9 (Portal v1 limitation)
+- ❌ COSMIC input (RemoteDesktop not implemented)
+- ⚠️ FUSE file clipboard in Flatpak (staging fallback works)
 
 **Next Steps:**
 1. ~~Run full RDP session test on RHEL 9~~ ✅ Complete
