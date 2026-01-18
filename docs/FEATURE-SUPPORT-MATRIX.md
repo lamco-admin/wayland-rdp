@@ -15,10 +15,14 @@ The Service Registry advertises 18 services with 4-level guarantees (Guaranteed,
 
 ### Ubuntu 24.04 (GNOME 46, Portal v5)
 
+**Platform Quirks Applied:**
+- None (no platform-specific quirks for Ubuntu 24.04/GNOME 46)
+- AVC444 enabled and working
+
 **Service Registry Detection:**
 | Service | Detected Level | Actual Behavior | Notes |
 |---------|----------------|-----------------|-------|
-| **VideoCapture** | Guaranteed | ✅ Working | H.264/AVC444v2, 30 FPS, ~10ms latency |
+| **VideoCapture** | Guaranteed | ✅ Working | H.264/AVC444v2 with aux omission, 30 FPS, ~10ms latency |
 | **RemoteInput** | Guaranteed | ✅ Working | Keyboard + mouse via Portal |
 | **Clipboard** | BestEffort | ⚠️ Crashes | Portal v2 API works but xdg-portal-gnome crashes on Excel paste |
 | **DamageTracking** | Guaranteed | ✅ Working | 90%+ bandwidth savings, tile-based detection |
@@ -46,10 +50,14 @@ The Service Registry advertises 18 services with 4-level guarantees (Guaranteed,
 
 ### RHEL 9.7 (GNOME 40, Portal v4)
 
+**Platform Quirks Applied:**
+- `Avc444Unreliable` - Forces AVC420 only (RHEL 9 + Mesa 22.x blur issue)
+- `ClipboardUnavailable` - Portal RemoteDesktop v1 has no clipboard API
+
 **Service Registry Detection:**
 | Service | Detected Level | Actual Behavior | Notes |
 |---------|----------------|-----------------|-------|
-| **VideoCapture** | Guaranteed | ✅ Working | H.264 encoding, smooth video |
+| **VideoCapture** | Guaranteed | ✅ Working | H.264/AVC420 ONLY (AVC444 disabled by quirk) |
 | **RemoteInput** | Guaranteed | ✅ Working | Keyboard + mouse via Portal |
 | **Clipboard** | Unavailable | ❌ No support | Portal RemoteDesktop v1 lacks clipboard API |
 | **DamageTracking** | Guaranteed | ✅ Working | Bandwidth optimization active |
