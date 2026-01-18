@@ -317,6 +317,10 @@ cast_possible_wrap = "allow"
 openh264 = { git = "https://github.com/lamco-admin/openh264-rs", branch = "lamco-lower-msrv" }
 openh264-sys2 = { git = "https://github.com/lamco-admin/openh264-rs", branch = "lamco-lower-msrv" }
 
+# zune-jpeg from GitHub main - MSRV fix merged but not released to crates.io yet
+# Crates.io 0.5.8 requires Rust 1.87, GitHub main has MSRV 1.75 (commit 2841ef7)
+zune-jpeg = { git = "https://github.com/etemesi254/zune-image", branch = "main" }
+
 # IronRDP from lamco-admin fork - EGFX + clipboard file transfer
 # PRs pending upstream: #1057 (EGFX), #1063-1066 (clipboard)
 # All crates patched to same source to avoid trait conflicts

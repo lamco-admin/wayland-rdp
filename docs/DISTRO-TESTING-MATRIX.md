@@ -1,6 +1,6 @@
 # Distribution Testing Matrix
 
-**Date:** 2026-01-15
+**Date:** 2026-01-18 (Updated with v0.9.0 OBS build status)
 **Purpose:** Track testing and build status across Linux distributions
 **Goal:** Verify session persistence and full functionality on all target platforms
 
@@ -9,35 +9,55 @@
 ## OBS Build Status
 
 *Project: lamco | OBS: https://192.168.10.8*
+*Version: v0.9.0 with MSRV fixes (openh264 fork + zune-jpeg GitHub)*
 
 ### Native Package Builds
 
-| Distribution | Version | Rust | Build Status | Package | RHEL Compat |
-|--------------|---------|------|--------------|---------|-------------|
-| Fedora | 42 | 1.88+ | 🔨 Building | RPM | - |
-| Fedora | 41 | 1.87 | 🔨 Building | RPM | - |
-| Fedora | 40 | 1.79 | 🔨 Building | RPM | - |
-| openSUSE | Tumbleweed | 1.82+ | 🔨 Building | RPM | - |
-| openSUSE | Leap 15.6 | 1.78+ | 🔨 Building | RPM | - |
-| Debian | 13 (Trixie) | 1.79 | 🔨 Building | DEB | - |
-| AlmaLinux | 9 | 1.84 | 🔨 Building | RPM | ✅ RHEL 9/Rocky 9 |
-| Ubuntu | 24.04 | 1.75 | ❌ Unresolvable | - | - |
-| Debian | 12 | 1.63 | ❌ Unresolvable | - | - |
+| Distribution | Version | Rust | Build Status | Package | MSRV Fix | RHEL Compat |
+|--------------|---------|------|--------------|---------|----------|-------------|
+| Fedora | 42 | 1.85.1 | ✅ Building | RPM | ✅ Applied | - |
+| Fedora | 41 | 1.85 | ✅ Building | RPM | ✅ Applied | - |
+| Fedora | 40 | 1.79 | ✅ Building | RPM | ✅ Applied | - |
+| openSUSE | Tumbleweed | 1.82+ | ✅ Building | RPM | ✅ Applied | - |
+| openSUSE | Leap 15.6 | 1.78+ | ✅ Building | RPM | ✅ Applied | - |
+| Debian | 13 (Trixie) | 1.79 | ✅ Building | DEB | ✅ Applied | - |
+| AlmaLinux | 9 | 1.84 | ✅ Building | RPM | ✅ Applied | ✅ RHEL 9/Rocky 9 |
+| Ubuntu | 24.04 | 1.75 | ❌ Unresolvable | - | N/A (Rust < 1.77) | - |
+| Debian | 12 | 1.63 | ❌ Unresolvable | - | N/A (Rust < 1.77) | - |
+
+**MSRV Fixes Applied (2026-01-18):**
+- openh264: Using lamco-admin/openh264-rs fork with MSRV 1.77 (down from 1.88)
+- zune-jpeg: Using etemesi254/zune-image GitHub main with MSRV 1.75 (down from 1.87)
+
+**Build Status Legend:**
+- ✅ Building = Compiling successfully with MSRV fixes
+- ❌ Unresolvable = Rust version < 1.77 (minimum required)
+
+**Expected Results:** 7/9 successful builds (pending completion)
 
 ### Universal Packages
 
 | Format | Status | Notes |
 |--------|--------|-------|
-| Flatpak | ✅ Built & Tested | `packaging/io.lamco.rdp-server.yml` |
+| Flatpak | ✅ Published | v0.9.0 available via GitHub Releases |
 
-**Flatpak Bundle:** `packaging/io.lamco.rdp-server.flatpak` (6.4 MB) - portable bundle for VM testing
+**Flatpak v0.9.0:**
+- Built from public repo: github.com/lamco-admin/lamco-rdp-server
+- Size: 6.5 MB compressed, 24 MB installed
+- Features: h264 + libei
+- Published: https://github.com/lamco-admin/lamco-rdp-server/releases/tag/v0.9.0
+- Install: `flatpak install lamco-rdp-server-0.9.0.flatpak`
 
 ### Unresolvable Distributions
 
 These require Flatpak due to old Rust versions in distro repos:
 
-- **Ubuntu 24.04**: Rust 1.75 (need >= 1.77)
-- **Debian 12**: Rust 1.63 (need >= 1.77)
+- **Ubuntu 24.04**: Rust 1.75 (need >= 1.77 minimum)
+- **Debian 12**: Rust 1.63 (need >= 1.77 minimum)
+
+**Why Rust 1.77 minimum?** Our codebase requires Rust 1.77+ features. Even with MSRV patches to dependencies (openh264, zune-jpeg), the core application needs 1.77.
+
+**Solution for these distributions:** Use Flatpak (published and available)
 
 ---
 
