@@ -190,7 +190,7 @@ Edge cases and less common systems:
 | **Sway** | EndeavourOS (Arch) | Native | wlr-direct | ⏳ **INSTALLING NOW** | Zero dialogs, direct protocols |
 | **Sway** | Arch Linux | Flatpak | libei | ⏳ Need portal support | Requires xdpw PR #359 |
 | **Sway** | Fedora | Native | wlr-direct | ⏳ **READY TO TEST** | Zero dialogs, direct protocols |
-| **Hyprland** | Arch Linux | Native | wlr-direct | ⏳ **READY TO TEST** | Best option (portal has bugs) |
+| **Hyprland** | EndeavourOS (Arch) | Native | wlr-direct | ⏳ **INSTALLING NOW** | Best option (portal has bugs) |
 | **Hyprland** | Arch Linux | Flatpak | libei | ⏳ Need portal support | Requires xdph ConnectToEIS |
 | **River** | Arch Linux | Native | wlr-direct | ⏳ Optional | Lower priority |
 | **Wayfire** | Raspberry Pi OS | Native | wlr-direct | ⏳ Optional | Interesting market |
@@ -525,8 +525,8 @@ gdbus introspect --session --dest org.freedesktop.portal.Desktop --object-path /
 
 | Issue | Impact | Root Cause | Fix |
 |-------|--------|------------|-----|
-| Portal crash on Excel paste | Session dies | xdg-portal-gnome bug + our lock contention | Separate session locks |
-| Clipboard blocks input | Mouse queue overflow, lag | Shared session mutex | Use separate locks for clipboard vs input |
+| Portal crash on Excel paste | Session dies | xdg-portal-gnome bug | ✅ **FIXED** - RwLock allows concurrent access (commit 3920fba, Jan 7) |
+| Clipboard blocks input | Mouse queue overflow, lag | ~~Shared session mutex~~ | ✅ **FIXED** - RwLock prevents blocking (commit 3920fba, Jan 7) |
 | File paste fails in Flatpak | Can't paste files to ~/Downloads | Sandbox read-only | Use XDG portal for file access |
 
 ### 🟡 MEDIUM - Should Fix

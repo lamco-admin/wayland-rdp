@@ -37,10 +37,11 @@ src/services/
 
 ## Core Types
 
-### ServiceId (11 services)
+### ServiceId (18 services)
 
 ```rust
 pub enum ServiceId {
+    // Display Services (8)
     DamageTracking,      // Bandwidth optimization via dirty region detection
     DmaBufZeroCopy,      // GPU buffer zero-copy path
     ExplicitSync,        // Tear-free display synchronization
@@ -49,9 +50,20 @@ pub enum ServiceId {
     MultiMonitor,        // Multiple display support
     WindowCapture,       // Per-window capture capability
     HdrColorSpace,       // HDR passthrough (future)
+
+    // I/O Services (3)
     Clipboard,           // Bidirectional clipboard
     RemoteInput,         // Keyboard/mouse injection
     VideoCapture,        // PipeWire video stream
+
+    // Session Persistence Services (7) - Phase 2
+    SessionPersistence,  // Portal restore token support
+    DirectCompositorAPI, // Mutter/compositor direct APIs
+    CredentialStorage,   // Token encryption backends
+    UnattendedAccess,    // Zero-dialog capability
+    WlrScreencopy,       // wlroots direct capture
+    WlrDirectInput,      // wlroots virtual keyboard/pointer
+    LibeiInput,          // Portal + EIS/libei protocol
 }
 ```
 

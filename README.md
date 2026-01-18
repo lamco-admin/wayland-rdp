@@ -71,6 +71,96 @@ lamco-rdp-server
 
 See `docs/architecture/COMPREHENSIVE-ARCHITECTURE-AUDIT-2025-12-27.md` for detailed architecture documentation.
 
+## Dependency Architecture
+
+lamco-rdp-server uses a layered dependency strategy:
+
+### Published Lamco Crates (crates.io)
+
+Stable, reusable components published independently:
+
+- **lamco-wayland** (0.2.3) - Wayland protocol bindings
+- **lamco-rdp** (0.5.0) - Core RDP utilities
+- **lamco-portal** (0.3.0) - XDG Desktop Portal integration
+- **lamco-pipewire** (0.1.4) - PipeWire screen capture
+- **lamco-video** (0.1.2) - Video frame processing
+- **lamco-rdp-input** (0.1.1) - Input event translation
+
+### Bundled Crates (Local Path Dependencies)
+
+These crates are **bundled locally** (not referenced from crates.io):
+
+- **lamco-clipboard-core** (0.5.0) - Clipboard protocol core (`bundled-crates/`)
+- **lamco-rdp-clipboard** (0.2.2) - IronRDP clipboard backend (`bundled-crates/`)
+
+**Why bundled?** These crates implement `CliprdrBackend` trait from `ironrdp-cliprdr`. Since we use a forked version of IronRDP (with pending upstream features), these crates must compile against the same fork version to avoid trait conflicts. They're published to crates.io for other users but bundled here for version compatibility.
+
+### Forked Dependencies
+
+**IronRDP Fork:** `https://github.com/lamco-admin/IronRDP` (master branch)
+
+Currently includes features awaiting upstream merge:
+- MS-RDPEGFX Graphics Pipeline Extension (PR #1057 - pending)
+- Clipboard file transfer methods (PRs #1063-1066 - **MERGED** ✅)
+
+All IronRDP crates are patched via `[patch.crates-io]` in Cargo.toml for consistency.
+
+## Session Persistence & Unattended Operation
+
+lamco-rdp-server implements **multi-strategy session management** enabling unattended operation across different Linux environments.
+
+### Available Strategies
+
+The server automatically selects the best strategy based on detected compositor and deployment context:
+
+1. **Mutter Direct API** (GNOME-specific)
+   - Zero permission dialogs (even first connection)
+   - Uses `org.gnome.Mutter.ScreenCast` and `RemoteDesktop` D-Bus APIs directly
+   - GNOME 42+ required
+   - Provides best user experience on GNOME desktops
+
+2. **wlr-direct** (wlroots native)
+   - Zero permission dialogs
+   - Uses native Wayland protocols (`zwp_virtual_keyboard_v1`, `zwlr_virtual_pointer_v1`)
+   - Build with `--features wayland`
+   - Works on Sway, Hyprland, River, labwc
+   - Sub-millisecond input latency
+
+3. **Portal + libei/EIS** (Flatpak-compatible wlroots)
+   - One-time permission dialog, then automatic
+   - Uses Portal RemoteDesktop + EIS protocol bridge
+   - Build with `--features libei`
+   - Works in Flatpak sandbox
+   - Compatible with wlroots compositors supporting ConnectToEIS
+
+4. **Portal + Restore Tokens** (Universal)
+   - One-time permission dialog, automatic reconnect
+   - Works on all desktops (GNOME, KDE, wlroots)
+   - Portal v4+ required for token support
+   - Credentials stored securely (Secret Service, TPM 2.0, or encrypted file)
+
+5. **Basic Portal** (Fallback)
+   - Permission dialog on every restart
+   - Works on all Portal-supported desktops
+   - Graceful degradation when persistence unavailable
+
+**Note:** GNOME's portal backend currently rejects session persistence for RemoteDesktop sessions (deliberate policy), so even with Portal v4+ you'll see a dialog on each restart. Mutter Direct API strategy bypasses this limitation.
+
+See `docs/architecture/SESSION-PERSISTENCE-ARCHITECTURE.md` for complete technical details.
+
+## Service Registry
+
+The Service Registry system translates compositor capabilities into 18 advertised services with 4-level guarantees (Guaranteed, BestEffort, Degraded, Unavailable).
+
+**Services include:**
+- Display: DamageTracking, DmaBufZeroCopy, ExplicitSync, FractionalScaling, MetadataCursor, MultiMonitor, WindowCapture, HdrColorSpace
+- I/O: Clipboard, RemoteInput, VideoCapture
+- Session Persistence: SessionPersistence, DirectCompositorAPI, CredentialStorage, UnattendedAccess, WlrScreencopy, WlrDirectInput, LibeiInput
+
+The registry enables runtime decisions (codec selection, FPS tuning, cursor mode) based on actual compositor capabilities.
+
+See `docs/SERVICE-REGISTRY-TECHNICAL.md` for implementation details.
+
 ## Building
 
 ### Prerequisites
@@ -107,6 +197,51 @@ cargo build --release --features hardware-encoding
 - NVIDIA driver with `libnvidia-encode.so`
 - CUDA toolkit
 - NVENC-capable GPU (GTX 6xx+, any RTX)
+
+### Flatpak vs Native Builds
+
+Different deployment methods support different features:
+
+#### Flatpak Build
+
+```bash
+cargo --offline build --release --no-default-features --features "h264,libei"
+```
+
+**Enabled Features:**
+- ✅ **h264** - OpenH264 video encoding (essential)
+- ✅ **libei** - Portal + EIS/libei input (wlroots support in Flatpak)
+
+**Disabled Features:**
+- ❌ **pam-auth** - Not sandboxable in Flatpak
+- ❌ **vaapi** - Limited in sandbox environment
+- ❌ **wayland** - wlr-direct protocols blocked by sandbox
+- ❌ **nvenc** - CUDA not available in Flatpak
+
+**Strategy Availability:**
+- Portal + Token (universal)
+- libei (wlroots via Portal + EIS)
+
+#### Native Build
+
+```bash
+cargo build --release  # Uses default features
+# Or with hardware encoding:
+cargo build --release --features "hardware-encoding"
+```
+
+**Enabled Features:**
+- ✅ **pam-auth** - PAM authentication
+- ✅ **h264** - OpenH264 encoding
+- ✅ **vaapi** - Intel/AMD GPU encoding (optional)
+- ✅ **nvenc** - NVIDIA GPU encoding (optional)
+- ✅ **wayland** - wlr-direct protocols (build with `--features wayland`)
+- ✅ **libei** - Portal + EIS (build with `--features libei`)
+
+**Strategy Availability:**
+- All 5 strategies (Mutter Direct, wlr-direct, libei, Portal + Token, Basic Portal)
+
+**Summary:** Flatpak prioritizes portability and sandboxing. Native builds support all features including hardware encoding and zero-dialog strategies.
 
 ## Quick Start
 

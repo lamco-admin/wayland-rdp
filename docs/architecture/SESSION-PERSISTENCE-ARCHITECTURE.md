@@ -2811,7 +2811,7 @@ pub fn translate_capabilities(caps: &CompositorCapabilities) -> Vec<AdvertisedSe
 }
 ```
 
-**Key guarantee:** `translate_capabilities()` **always returns 11 services**, even if all are Unavailable.
+**Key guarantee:** `translate_capabilities()` **always returns 18 services**, even if all are Unavailable.
 
 ### Answer to Your Question
 
