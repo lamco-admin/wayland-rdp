@@ -55,7 +55,8 @@ pub async fn probe_capabilities() -> Result<CompositorCapabilities> {
     let mut capabilities = CompositorCapabilities::new(compositor, portal, wayland_globals);
 
     // Step 5: Detect credential storage (Phase 2)
-    let (storage_method, encryption, accessible) = crate::session::detect_credential_storage(&capabilities.deployment).await;
+    let (storage_method, encryption, accessible) =
+        crate::session::detect_credential_storage(&capabilities.deployment).await;
     capabilities.credential_storage_method = storage_method;
     capabilities.credential_encryption = encryption;
     capabilities.credential_storage_accessible = accessible;
@@ -206,10 +207,7 @@ fn detect_gnome_version() -> Option<String> {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 // Output is like "GNOME Shell 46.0"
-                stdout
-                    .split_whitespace()
-                    .last()
-                    .map(|v| v.to_string())
+                stdout.split_whitespace().last().map(|v| v.to_string())
             } else {
                 None
             }
@@ -227,10 +225,7 @@ fn detect_kde_version() -> Option<String> {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 // Output is like "plasmashell 6.0.0"
-                stdout
-                    .split_whitespace()
-                    .last()
-                    .map(|v| v.to_string())
+                stdout.split_whitespace().last().map(|v| v.to_string())
             } else {
                 None
             }
@@ -247,10 +242,7 @@ fn detect_sway_version() -> Option<String> {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 // Output is like "sway version 1.9"
-                stdout
-                    .split_whitespace()
-                    .last()
-                    .map(|v| v.to_string())
+                stdout.split_whitespace().last().map(|v| v.to_string())
             } else {
                 None
             }
@@ -271,7 +263,12 @@ fn detect_hyprland_version() -> Option<String> {
                     if line.starts_with("Hyprland") || line.contains("version") {
                         return line
                             .split_whitespace()
-                            .find(|s| s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
+                            .find(|s| {
+                                s.chars()
+                                    .next()
+                                    .map(|c| c.is_ascii_digit())
+                                    .unwrap_or(false)
+                            })
                             .map(|v| v.to_string());
                     }
                 }
@@ -295,15 +292,8 @@ fn is_process_running(name: &str) -> bool {
 /// Detect wlroots-based compositor from running processes
 fn detect_wlroots_compositor() -> Option<String> {
     // Common wlroots-based compositors
-    const WLROOTS_COMPOSITORS: &[&str] = &[
-        "labwc",
-        "wayfire",
-        "river",
-        "dwl",
-        "cage",
-        "hikari",
-        "phoc",
-    ];
+    const WLROOTS_COMPOSITORS: &[&str] =
+        &["labwc", "wayfire", "river", "dwl", "cage", "hikari", "phoc"];
 
     for compositor in WLROOTS_COMPOSITORS {
         if is_process_running(compositor) {
@@ -399,10 +389,7 @@ pub fn detect_os_release() -> Option<OsRelease> {
                 "NAME" => release.name = value.to_string(),
                 "PRETTY_NAME" => release.pretty_name = value.to_string(),
                 "ID_LIKE" => {
-                    release.id_like = value
-                        .split_whitespace()
-                        .map(|s| s.to_lowercase())
-                        .collect();
+                    release.id_like = value.split_whitespace().map(|s| s.to_lowercase()).collect();
                 }
                 _ => {}
             }

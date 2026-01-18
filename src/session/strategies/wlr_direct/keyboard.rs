@@ -40,12 +40,12 @@ use anyhow::{anyhow, Context, Result};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::io::FromRawFd;
 use tracing::{debug, info, warn};
+use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_client::QueueHandle;
 use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
     zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1,
     zwp_virtual_keyboard_v1::{self, ZwpVirtualKeyboardV1},
 };
-use wayland_client::protocol::wl_seat::WlSeat;
 use xkbcommon::xkb;
 
 /// Virtual keyboard wrapper for zwp-virtual-keyboard-v1 protocol
@@ -103,8 +103,8 @@ impl VirtualKeyboard {
         info!("🔑 wlr_direct: Creating virtual keyboard with XKB keymap");
 
         // Generate XKB keymap from system defaults
-        let keymap_string = generate_xkb_keymap()
-            .context("Failed to generate XKB keymap from system defaults")?;
+        let keymap_string =
+            generate_xkb_keymap().context("Failed to generate XKB keymap from system defaults")?;
 
         debug!(
             "[wlr_direct] Generated XKB keymap: {} bytes",
@@ -270,11 +270,11 @@ fn generate_xkb_keymap() -> Result<String> {
     // Empty strings trigger default behavior from environment or system config
     let keymap = xkb::Keymap::new_from_names(
         &context,
-        "",    // rules: $XKB_DEFAULT_RULES or "evdev"
-        "",    // model: $XKB_DEFAULT_MODEL or "pc105"
-        "",    // layout: $XKB_DEFAULT_LAYOUT or "us"
-        "",    // variant: $XKB_DEFAULT_VARIANT or ""
-        None,  // options: $XKB_DEFAULT_OPTIONS or None
+        "",   // rules: $XKB_DEFAULT_RULES or "evdev"
+        "",   // model: $XKB_DEFAULT_MODEL or "pc105"
+        "",   // layout: $XKB_DEFAULT_LAYOUT or "us"
+        "",   // variant: $XKB_DEFAULT_VARIANT or ""
+        None, // options: $XKB_DEFAULT_OPTIONS or None
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )
     .ok_or_else(|| {
@@ -305,11 +305,7 @@ fn generate_xkb_keymap() -> Result<String> {
     debug!(
         "[wlr_direct] XKB keymap preview: {} bytes, starts with: {}",
         keymap_string.len(),
-        keymap_string
-            .chars()
-            .take(80)
-            .collect::<String>()
-            .trim()
+        keymap_string.chars().take(80).collect::<String>().trim()
     );
 
     Ok(keymap_string)
@@ -347,8 +343,11 @@ fn create_keymap_fd(keymap: &str) -> Result<OwnedFd> {
 
     // Create anonymous memory-backed file descriptor
     let name = CString::new("xkb-keymap")?;
-    let fd = memfd_create(&name, MemFdCreateFlag::MFD_CLOEXEC | MemFdCreateFlag::MFD_ALLOW_SEALING)
-        .context("Failed to create memfd. Requires Linux 3.17+ with memfd_create support.")?;
+    let fd = memfd_create(
+        &name,
+        MemFdCreateFlag::MFD_CLOEXEC | MemFdCreateFlag::MFD_ALLOW_SEALING,
+    )
+    .context("Failed to create memfd. Requires Linux 3.17+ with memfd_create support.")?;
 
     // Convert to OwnedFd for RAII
     let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
@@ -420,7 +419,10 @@ mod tests {
             }
             Err(e) => {
                 // This may fail in minimal test environments without XKB installed
-                println!("XKB keymap generation failed (expected in some test envs): {}", e);
+                println!(
+                    "XKB keymap generation failed (expected in some test envs): {}",
+                    e
+                );
             }
         }
     }

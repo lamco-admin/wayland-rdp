@@ -11,9 +11,8 @@ use tracing::{debug, info};
 
 // Re-export library backend and types
 pub use lamco_rdp_clipboard::{
+    ClipboardEvent, ClipboardEventReceiver, ClipboardEventSender, ClipboardGeneralCapabilityFlags,
     RdpCliprdrBackend, RdpCliprdrFactory as LibRdpCliprdrFactory,
-    ClipboardEvent, ClipboardEventReceiver, ClipboardEventSender,
-    ClipboardGeneralCapabilityFlags,
 };
 
 use crate::clipboard::manager::ClipboardManager;
@@ -26,7 +25,7 @@ use crate::clipboard::manager::ClipboardManager;
 /// # Example
 ///
 /// ```ignore
-/// use lamco_rdp_server::clipboard::{ClipboardManager, WrdCliprdrFactory};
+/// use lamco_rdp_server::clipboard::{ClipboardManager, LamcoCliprdrFactory};
 /// use std::sync::Arc;
 /// use tokio::sync::Mutex;
 ///
@@ -35,19 +34,18 @@ use crate::clipboard::manager::ClipboardManager;
 ///
 /// // Pass factory to IronRDP server builder
 /// ```
-pub struct WrdCliprdrFactory {
+pub struct LamcoCliprdrFactory {
     /// Clipboard manager shared across connections
     clipboard_manager: Arc<Mutex<ClipboardManager>>,
 
     /// Event sender for clipboard events
     event_sender: ClipboardEventSender,
 
-
     /// Server event sender for IronRDP (set via ServerEventSender trait)
     server_event_sender: Option<mpsc::UnboundedSender<ironrdp_server::ServerEvent>>,
 }
 
-impl WrdCliprdrFactory {
+impl LamcoCliprdrFactory {
     /// Create a new clipboard factory
     ///
     /// # Arguments
@@ -95,75 +93,113 @@ impl WrdCliprdrFactory {
 
                     match rdp_event {
                         ClipboardEvent::RemoteCopy { formats } => {
-                            info!("🔗 Bridge: RDP RemoteCopy ({} formats) → ClipboardManager", formats.len());
+                            info!(
+                                "🔗 Bridge: RDP RemoteCopy ({} formats) → ClipboardManager",
+                                formats.len()
+                            );
 
                             // Convert Vec<ironrdp_cliprdr::ClipboardFormat> to Vec<lamco_clipboard_core::ClipboardFormat>
-                            let converted: Vec<ClipboardFormat> = formats.iter().map(|f| {
-                                // ClipboardFormatName has a .value() method to get the inner string
-                                let name_str = f.name().map(|n| {
-                                    let val = n.value().to_string();
-                                    info!("📝 Format name: {:?} -> value: {}", n, val);
-                                    val
-                                });
-                                ClipboardFormat {
-                                    id: f.id().value(),
-                                    name: name_str,
-                                }
-                            }).collect();
+                            let converted: Vec<ClipboardFormat> = formats
+                                .iter()
+                                .map(|f| {
+                                    // ClipboardFormatName has a .value() method to get the inner string
+                                    let name_str = f.name().map(|n| {
+                                        let val = n.value().to_string();
+                                        info!("📝 Format name: {:?} -> value: {}", n, val);
+                                        val
+                                    });
+                                    ClipboardFormat {
+                                        id: f.id().value(),
+                                        name: name_str,
+                                    }
+                                })
+                                .collect();
 
-                            let _ = manager_tx.send(crate::clipboard::ClipboardEvent::RdpFormatList(converted)).await;
+                            let _ = manager_tx
+                                .send(crate::clipboard::ClipboardEvent::RdpFormatList(converted))
+                                .await;
                         }
 
                         ClipboardEvent::FormatDataRequest { format_id } => {
-                            info!("🔗 Bridge: RDP FormatDataRequest (format {}) → ClipboardManager", format_id.value());
-                            let _ = manager_tx.send(crate::clipboard::ClipboardEvent::RdpDataRequest(format_id.value(), None)).await;
+                            info!(
+                                "🔗 Bridge: RDP FormatDataRequest (format {}) → ClipboardManager",
+                                format_id.value()
+                            );
+                            let _ = manager_tx
+                                .send(crate::clipboard::ClipboardEvent::RdpDataRequest(
+                                    format_id.value(),
+                                    None,
+                                ))
+                                .await;
                         }
 
                         ClipboardEvent::FormatDataResponse { data, is_error } => {
                             if is_error {
                                 // Error response is expected when client doesn't have the format
                                 debug!("🔗 Bridge: RDP FormatDataResponse (format unavailable) → ClipboardManager");
-                                let _ = manager_tx.send(crate::clipboard::ClipboardEvent::RdpDataError).await;
+                                let _ = manager_tx
+                                    .send(crate::clipboard::ClipboardEvent::RdpDataError)
+                                    .await;
                             } else {
                                 info!("🔗 Bridge: RDP FormatDataResponse ({} bytes) → ClipboardManager", data.len());
-                                let _ = manager_tx.send(crate::clipboard::ClipboardEvent::RdpDataResponse(data)).await;
+                                let _ = manager_tx
+                                    .send(crate::clipboard::ClipboardEvent::RdpDataResponse(data))
+                                    .await;
                             }
                         }
 
-                        ClipboardEvent::FileContentsRequest { stream_id, index, position, size, is_size_request } => {
+                        ClipboardEvent::FileContentsRequest {
+                            stream_id,
+                            index,
+                            position,
+                            size,
+                            is_size_request,
+                        } => {
                             info!("🔗 Bridge: RDP FileContentsRequest (stream={}, index={}, pos={}, size={}, size_req={}) → ClipboardManager",
                                 stream_id, index, position, size, is_size_request);
-                            let _ = manager_tx.send(crate::clipboard::ClipboardEvent::RdpFileContentsRequest {
-                                stream_id,
-                                list_index: index,
-                                position,
-                                size,
-                                is_size_request,
-                            }).await;
+                            let _ = manager_tx
+                                .send(crate::clipboard::ClipboardEvent::RdpFileContentsRequest {
+                                    stream_id,
+                                    list_index: index,
+                                    position,
+                                    size,
+                                    is_size_request,
+                                })
+                                .await;
                         }
 
-                        ClipboardEvent::FileContentsResponse { stream_id, data, is_error } => {
+                        ClipboardEvent::FileContentsResponse {
+                            stream_id,
+                            data,
+                            is_error,
+                        } => {
                             if is_error {
                                 info!("🔗 Bridge: RDP FileContentsResponse ERROR (stream={}) → ClipboardManager", stream_id);
                             } else {
                                 info!("🔗 Bridge: RDP FileContentsResponse (stream={}, {} bytes) → ClipboardManager", stream_id, data.len());
                             }
-                            let _ = manager_tx.send(crate::clipboard::ClipboardEvent::RdpFileContentsResponse {
-                                stream_id,
-                                data,
-                                is_error,
-                            }).await;
+                            let _ = manager_tx
+                                .send(crate::clipboard::ClipboardEvent::RdpFileContentsResponse {
+                                    stream_id,
+                                    data,
+                                    is_error,
+                                })
+                                .await;
                         }
 
                         ClipboardEvent::Ready => {
                             info!("🔗 Bridge: RDP clipboard Ready → ClipboardManager");
-                            let _ = manager_tx.send(crate::clipboard::ClipboardEvent::RdpReady).await;
+                            let _ = manager_tx
+                                .send(crate::clipboard::ClipboardEvent::RdpReady)
+                                .await;
                         }
 
                         ClipboardEvent::RequestFormatList => {
                             // This is essentially the same as Ready - re-announce Linux clipboard
                             info!("🔗 Bridge: RDP RequestFormatList → ClipboardManager (treating as Ready)");
-                            let _ = manager_tx.send(crate::clipboard::ClipboardEvent::RdpReady).await;
+                            let _ = manager_tx
+                                .send(crate::clipboard::ClipboardEvent::RdpReady)
+                                .await;
                         }
 
                         _ => {
@@ -188,7 +224,7 @@ impl WrdCliprdrFactory {
     }
 }
 
-impl CliprdrBackendFactory for WrdCliprdrFactory {
+impl CliprdrBackendFactory for LamcoCliprdrFactory {
     fn build_cliprdr_backend(&self) -> Box<dyn ironrdp_cliprdr::backend::CliprdrBackend> {
         debug!("Building clipboard backend for new connection");
 

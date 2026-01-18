@@ -234,12 +234,7 @@ impl ColorSpaceConfig {
     /// * `color_range` - "auto", "limited", "full"
     /// * `width` - Frame width for auto selection
     /// * `height` - Frame height for auto selection
-    pub fn from_config(
-        color_space: &str,
-        color_range: &str,
-        width: u32,
-        height: u32,
-    ) -> Self {
+    pub fn from_config(color_space: &str, color_range: &str, width: u32, height: u32) -> Self {
         let base = match color_space.to_lowercase().as_str() {
             "openh264" => Self::OPENH264_COMPATIBLE,
             "bt709" => Self::BT709_LIMITED,
@@ -381,10 +376,7 @@ mod tests {
             ColorSpaceConfig::OPENH264_COMPATIBLE.description(),
             "OpenH264 limited"
         );
-        assert_eq!(
-            ColorSpaceConfig::BT709_FULL.description(),
-            "BT.709 full"
-        );
+        assert_eq!(ColorSpaceConfig::BT709_FULL.description(), "BT.709 full");
     }
 
     #[test]

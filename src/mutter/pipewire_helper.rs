@@ -31,8 +31,7 @@ pub fn connect_to_pipewire_daemon() -> Result<RawFd> {
     info!("Connecting to PipeWire default socket");
 
     // PipeWire socket is typically at $XDG_RUNTIME_DIR/pipewire-0
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-        .context("XDG_RUNTIME_DIR not set")?;
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").context("XDG_RUNTIME_DIR not set")?;
 
     let socket_path = format!("{}/pipewire-0", runtime_dir);
 
@@ -41,8 +40,10 @@ pub fn connect_to_pipewire_daemon() -> Result<RawFd> {
     // Use Unix domain socket to connect
     use std::os::unix::net::UnixStream;
 
-    let stream = UnixStream::connect(&socket_path)
-        .context(format!("Failed to connect to PipeWire socket: {}", socket_path))?;
+    let stream = UnixStream::connect(&socket_path).context(format!(
+        "Failed to connect to PipeWire socket: {}",
+        socket_path
+    ))?;
 
     let fd = stream.as_raw_fd();
 

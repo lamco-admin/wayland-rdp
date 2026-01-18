@@ -30,7 +30,14 @@ pub struct ClipboardComponents {
     pub manager: Option<Arc<lamco_portal::ClipboardManager>>,
     /// Portal session for clipboard operations (always available)
     /// Uses RwLock to allow concurrent access from input and clipboard operations
-    pub session: Arc<RwLock<ashpd::desktop::Session<'static, ashpd::desktop::remote_desktop::RemoteDesktop<'static>>>>,
+    pub session: Arc<
+        RwLock<
+            ashpd::desktop::Session<
+                'static,
+                ashpd::desktop::remote_desktop::RemoteDesktop<'static>,
+            >,
+        >,
+    >,
 }
 
 /// Common session handle trait

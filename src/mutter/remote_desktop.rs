@@ -41,13 +41,15 @@ impl<'a> MutterRemoteDesktop<'a> {
     ///
     /// Object path to the created session
     pub async fn create_session(&self) -> Result<OwnedObjectPath> {
-        let response = self.proxy
+        let response = self
+            .proxy
             .call_method("CreateSession", &())
             .await
             .context("Failed to call CreateSession")?;
 
         let body = response.body();
-        let path: OwnedObjectPath = body.deserialize()
+        let path: OwnedObjectPath = body
+            .deserialize()
             .context("Failed to deserialize CreateSession response")?;
 
         Ok(path)
@@ -252,12 +254,10 @@ mod tests {
     #[ignore] // Requires GNOME with Mutter
     async fn test_mutter_remote_desktop_availability() {
         match zbus::Connection::session().await {
-            Ok(conn) => {
-                match MutterRemoteDesktop::new(&conn).await {
-                    Ok(_proxy) => println!("Mutter RemoteDesktop API available"),
-                    Err(e) => println!("Mutter RemoteDesktop not available: {}", e),
-                }
-            }
+            Ok(conn) => match MutterRemoteDesktop::new(&conn).await {
+                Ok(_proxy) => println!("Mutter RemoteDesktop API available"),
+                Err(e) => println!("Mutter RemoteDesktop not available: {}", e),
+            },
             Err(e) => println!("D-Bus session not available: {}", e),
         }
     }

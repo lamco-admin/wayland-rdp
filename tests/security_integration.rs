@@ -1,5 +1,5 @@
-use tempfile::TempDir;
 use lamco_rdp_server::security::{AuthMethod, CertificateGenerator, TlsConfig, UserAuthenticator};
+use tempfile::TempDir;
 
 #[test]
 fn test_certificate_generation_and_loading() {

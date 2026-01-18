@@ -215,7 +215,9 @@ impl WlrSessionHandleImpl {
         }
 
         // Flush connection to send queued requests
-        self.connection.flush().context("Failed to flush Wayland connection")?;
+        self.connection
+            .flush()
+            .context("Failed to flush Wayland connection")?;
 
         Ok(())
     }
@@ -357,30 +359,30 @@ impl SessionHandle for WlrSessionHandleImpl {
 /// Uses registry_queue_init to enumerate globals and bind to required protocols.
 fn bind_protocols_and_create_devices(
     conn: &Connection,
-) -> Result<(VirtualKeyboard, VirtualPointer, wayland_client::EventQueue<WlrState>)> {
+) -> Result<(
+    VirtualKeyboard,
+    VirtualPointer,
+    wayland_client::EventQueue<WlrState>,
+)> {
     // Initialize registry and event queue
-    let (globals, mut event_queue) = registry_queue_init::<WlrState>(conn)
-        .context("Failed to initialize Wayland registry")?;
+    let (globals, mut event_queue) =
+        registry_queue_init::<WlrState>(conn).context("Failed to initialize Wayland registry")?;
 
     let qh = event_queue.handle();
 
     // Bind to virtual keyboard manager
-    let keyboard_manager: ZwpVirtualKeyboardManagerV1 = globals
-        .bind(&qh, 1..=1, ())
-        .context(
-            "Failed to bind zwp_virtual_keyboard_manager_v1. \
-             Compositor does not support virtual keyboard protocol."
-        )?;
+    let keyboard_manager: ZwpVirtualKeyboardManagerV1 = globals.bind(&qh, 1..=1, ()).context(
+        "Failed to bind zwp_virtual_keyboard_manager_v1. \
+             Compositor does not support virtual keyboard protocol.",
+    )?;
 
     debug!("[wlr_direct] Bound zwp_virtual_keyboard_manager_v1");
 
     // Bind to virtual pointer manager
-    let pointer_manager: ZwlrVirtualPointerManagerV1 = globals
-        .bind(&qh, 1..=2, ())
-        .context(
-            "Failed to bind zwlr_virtual_pointer_manager_v1. \
-             Compositor does not support wlr virtual pointer protocol (requires wlroots 0.12+)."
-        )?;
+    let pointer_manager: ZwlrVirtualPointerManagerV1 = globals.bind(&qh, 1..=2, ()).context(
+        "Failed to bind zwlr_virtual_pointer_manager_v1. \
+             Compositor does not support wlr virtual pointer protocol (requires wlroots 0.12+).",
+    )?;
 
     debug!("[wlr_direct] Bound zwlr_virtual_pointer_manager_v1");
 
@@ -408,8 +410,8 @@ fn bind_protocols_and_create_devices(
 
 /// Check if required protocols are available (used by is_available)
 fn bind_protocols(conn: &Connection) -> Result<()> {
-    let (globals, _event_queue) = registry_queue_init::<WlrState>(conn)
-        .context("Failed to initialize Wayland registry")?;
+    let (globals, _event_queue) =
+        registry_queue_init::<WlrState>(conn).context("Failed to initialize Wayland registry")?;
 
     // Check for required protocols by attempting to bind
     let has_keyboard = globals.contents().with_list(|list| {
@@ -422,10 +424,9 @@ fn bind_protocols(conn: &Connection) -> Result<()> {
             .any(|global| global.interface == "zwlr_virtual_pointer_manager_v1")
     });
 
-    let has_seat = globals.contents().with_list(|list| {
-        list.iter()
-            .any(|global| global.interface == "wl_seat")
-    });
+    let has_seat = globals
+        .contents()
+        .with_list(|list| list.iter().any(|global| global.interface == "wl_seat"));
 
     if !has_keyboard {
         return Err(anyhow!("zwp_virtual_keyboard_manager_v1 not found"));
@@ -550,7 +551,10 @@ mod tests {
         }
 
         let strategy = WlrDirectStrategy::new();
-        let session = strategy.create_session().await.expect("Failed to create session");
+        let session = strategy
+            .create_session()
+            .await
+            .expect("Failed to create session");
 
         assert_eq!(session.session_type(), SessionType::WlrDirect);
     }

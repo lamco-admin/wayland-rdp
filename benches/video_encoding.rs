@@ -72,29 +72,25 @@ fn bench_encode_single_frame(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(pixels));
 
-        group.bench_with_input(
-            BenchmarkId::new("keyframe", name),
-            &bgra_data,
-            |b, data| {
-                let config = EncoderConfig {
-                    width: Some(width),
-                    height: Some(height),
-                    bitrate_kbps: 5000,
-                    ..Default::default()
-                };
-                let mut encoder = Avc444Encoder::new(config).unwrap();
+        group.bench_with_input(BenchmarkId::new("keyframe", name), &bgra_data, |b, data| {
+            let config = EncoderConfig {
+                width: Some(width),
+                height: Some(height),
+                bitrate_kbps: 5000,
+                ..Default::default()
+            };
+            let mut encoder = Avc444Encoder::new(config).unwrap();
 
-                b.iter(|| {
-                    // Force keyframe each iteration
-                    encoder.force_keyframe();
-                    black_box(
-                        encoder
-                            .encode_bgra(black_box(data), width as u32, height as u32, 0)
-                            .unwrap(),
-                    )
-                })
-            },
-        );
+            b.iter(|| {
+                // Force keyframe each iteration
+                encoder.force_keyframe();
+                black_box(
+                    encoder
+                        .encode_bgra(black_box(data), width as u32, height as u32, 0)
+                        .unwrap(),
+                )
+            })
+        });
     }
 
     group.finish();

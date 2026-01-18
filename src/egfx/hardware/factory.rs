@@ -198,10 +198,7 @@ pub fn probe_backends() -> (bool, bool) {
     let vaapi = probe_vaapi();
     let nvenc = probe_nvenc();
 
-    debug!(
-        "Hardware encoding probe: vaapi={}, nvenc={}",
-        vaapi, nvenc
-    );
+    debug!("Hardware encoding probe: vaapi={}, nvenc={}", vaapi, nvenc);
 
     (vaapi, nvenc)
 }
@@ -299,9 +296,6 @@ mod tests {
     #[test]
     fn test_quality_preset_parsing() {
         assert_eq!(QualityPreset::from_str("speed"), Some(QualityPreset::Speed));
-        assert_eq!(
-            QualityPreset::from_str("invalid"),
-            None
-        );
+        assert_eq!(QualityPreset::from_str("invalid"), None);
     }
 }

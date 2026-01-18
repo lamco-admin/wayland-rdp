@@ -11,8 +11,8 @@ use std::os::fd::{AsRawFd, RawFd};
 use tracing::{debug, info, warn};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
 
-use super::screencast::{MutterScreenCast, MutterScreenCastSession, MutterScreenCastStream};
 use super::remote_desktop::{MutterRemoteDesktop, MutterRemoteDesktopSession};
+use super::screencast::{MutterScreenCast, MutterScreenCastSession, MutterScreenCastStream};
 
 /// Stream information from Mutter
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,7 +67,9 @@ impl MutterSessionManager {
 
         // Verify Mutter APIs are available
         if !super::is_mutter_api_available().await {
-            return Err(anyhow!("Mutter ScreenCast and RemoteDesktop APIs not available"));
+            return Err(anyhow!(
+                "Mutter ScreenCast and RemoteDesktop APIs not available"
+            ));
         }
 
         info!("Mutter session manager initialized successfully");
@@ -102,12 +104,14 @@ impl MutterSessionManager {
             .await
             .context("Failed to create Mutter ScreenCast session")?;
 
-        info!("Mutter ScreenCast session created: {:?}", screencast_session_path);
+        info!(
+            "Mutter ScreenCast session created: {:?}",
+            screencast_session_path
+        );
 
         // Create session proxy
         let session_proxy =
-            MutterScreenCastSession::new(&self.connection, screencast_session_path.clone())
-                .await?;
+            MutterScreenCastSession::new(&self.connection, screencast_session_path.clone()).await?;
 
         // Record monitor or virtual screen
         let stream_path = if let Some(connector) = monitor_connector {
@@ -157,20 +161,25 @@ impl MutterSessionManager {
 
         // Wait for PipeWireStreamAdded signal with timeout
         use futures_util::stream::StreamExt;
-        let node_id = match tokio::time::timeout(
-            tokio::time::Duration::from_secs(5),
-            signal_stream.next()
-        ).await {
-            Ok(Some(signal)) => {
-                let body = signal.body();
-                let node_id: u32 = body.deserialize()
-                    .context("Failed to deserialize PipeWireStreamAdded signal")?;
-                tracing::info!("Received PipeWire node ID {} from signal", node_id);
-                node_id
-            }
-            Ok(None) => return Err(anyhow::anyhow!("PipeWireStreamAdded signal stream ended")),
-            Err(_) => return Err(anyhow::anyhow!("Timeout waiting for PipeWireStreamAdded signal (5s)")),
-        };
+        let node_id =
+            match tokio::time::timeout(tokio::time::Duration::from_secs(5), signal_stream.next())
+                .await
+            {
+                Ok(Some(signal)) => {
+                    let body = signal.body();
+                    let node_id: u32 = body
+                        .deserialize()
+                        .context("Failed to deserialize PipeWireStreamAdded signal")?;
+                    tracing::info!("Received PipeWire node ID {} from signal", node_id);
+                    node_id
+                }
+                Ok(None) => return Err(anyhow::anyhow!("PipeWireStreamAdded signal stream ended")),
+                Err(_) => {
+                    return Err(anyhow::anyhow!(
+                        "Timeout waiting for PipeWireStreamAdded signal (5s)"
+                    ))
+                }
+            };
 
         let params = stream_proxy
             .parameters()
@@ -187,7 +196,10 @@ impl MutterSessionManager {
 
         // Log dimension source
         if params.width.is_none() || params.height.is_none() {
-            info!("Stream dimensions not provided by Mutter, using defaults: {}x{}", stream_info.width, stream_info.height);
+            info!(
+                "Stream dimensions not provided by Mutter, using defaults: {}x{}",
+                stream_info.width, stream_info.height
+            );
             info!("  Actual dimensions will be obtained from PipeWire stream metadata");
         }
 
@@ -209,7 +221,10 @@ impl MutterSessionManager {
             .await
             .context("Failed to create Mutter RemoteDesktop session")?;
 
-        info!("Mutter RemoteDesktop session created: {:?}", rd_session_path);
+        info!(
+            "Mutter RemoteDesktop session created: {:?}",
+            rd_session_path
+        );
 
         // Start RemoteDesktop session
         let rd_session_proxy =

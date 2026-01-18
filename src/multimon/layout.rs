@@ -494,8 +494,8 @@ mod tests {
         let calc = LayoutCalculator::new(LayoutStrategy::PreservePositions);
         let streams = vec![
             mock_stream(1, 0, 0, 1920, 1080),
-            mock_stream(2, 1920, 0, 1920, 1080),   // Right of first
-            mock_stream(3, 0, 1080, 1920, 1080),   // Below first
+            mock_stream(2, 1920, 0, 1920, 1080), // Right of first
+            mock_stream(3, 0, 1080, 1920, 1080), // Below first
         ];
 
         let desktop = calc.calculate_layout(&streams).unwrap();
@@ -540,7 +540,7 @@ mod tests {
 
         let desktop = calc.calculate_layout(&streams).unwrap();
 
-        assert_eq!(desktop.width, 3840);  // 2 columns × 1920
+        assert_eq!(desktop.width, 3840); // 2 columns × 1920
         assert_eq!(desktop.height, 2160); // 2 rows × 1080
 
         // Check grid positions
@@ -588,9 +588,7 @@ mod tests {
     #[test]
     fn test_many_monitors_horizontal() {
         let calc = LayoutCalculator::new(LayoutStrategy::Horizontal);
-        let streams: Vec<StreamInfo> = (0..6)
-            .map(|i| mock_stream(i, 0, 0, 1920, 1080))
-            .collect();
+        let streams: Vec<StreamInfo> = (0..6).map(|i| mock_stream(i, 0, 0, 1920, 1080)).collect();
 
         let desktop = calc.calculate_layout(&streams).unwrap();
 
@@ -738,16 +736,14 @@ mod tests {
             height: 1080,
             offset_x: 0,
             offset_y: 0,
-            monitors: vec![
-                MonitorLayout {
-                    id: 1,
-                    x: 0,
-                    y: 0,
-                    width: 1920,
-                    height: 1080,
-                    is_primary: true,
-                },
-            ],
+            monitors: vec![MonitorLayout {
+                id: 1,
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+                is_primary: true,
+            }],
         };
 
         let cloned = desktop.clone();
@@ -771,9 +767,7 @@ mod tests {
     #[test]
     fn test_layout_calculator_default() {
         let calc = LayoutCalculator::default();
-        let streams = vec![
-            mock_stream(1, 100, 50, 1920, 1080),
-        ];
+        let streams = vec![mock_stream(1, 100, 50, 1920, 1080)];
 
         let desktop = calc.calculate_layout(&streams).unwrap();
 

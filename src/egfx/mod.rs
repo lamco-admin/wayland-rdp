@@ -13,7 +13,7 @@
 //!                              └───────────────────────────────────────┘
 //!                                              │
 //!                                              ▼
-//!                                    WrdGraphicsHandler
+//!                                    LamcoGraphicsHandler
 //!                                    (capability negotiation + callbacks)
 //!                                              │
 //!                                              │ send_avc420/444_frame()
@@ -43,10 +43,10 @@
 mod encoder;
 
 // AVC444 support (premium 4:4:4 chroma)
+mod avc444_encoder;
 mod color_convert;
 mod color_space;
 mod yuv444_packing;
-mod avc444_encoder;
 
 // Hardware-accelerated encoding (VA-API, NVENC)
 #[cfg(any(feature = "vaapi", feature = "nvenc"))]
@@ -70,8 +70,7 @@ pub use color_convert::{bgra_to_yuv444, subsample_chroma_420, ColorMatrix, Yuv44
 
 // Re-export comprehensive color space configuration
 pub use color_space::{
-    ColourPrimaries, ColorRange, ColorSpaceConfig, MatrixCoefficients,
-    TransferCharacteristics,
+    ColorRange, ColorSpaceConfig, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
 };
 
 // Re-export YUV444 packing types
@@ -83,9 +82,9 @@ pub use yuv444_packing::{
 pub use h264_level::{ConstraintViolation, H264Level, LevelConstraints};
 
 // Re-export our handler implementation
-// Note: WrdGraphicsHandler implements ironrdp_egfx::GraphicsPipelineHandler internally
+// Note: LamcoGraphicsHandler implements ironrdp_egfx::GraphicsPipelineHandler internally
 // but that trait is not part of our public API
-pub use handler::{SharedGraphicsHandler, WrdGraphicsHandler};
+pub use handler::{LamcoGraphicsHandler, SharedGraphicsHandler};
 
 // Re-export video handler types (clean API - no IronRDP types)
 pub use video_handler::{EgfxVideoConfig, EgfxVideoHandler, EncodedFrame, EncodingStats};

@@ -17,7 +17,11 @@ fn main() {
     let devices = ["/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm"];
     for device in &devices {
         let exists = std::path::Path::new(device).exists();
-        println!("  {}: {}", device, if exists { "✓ exists" } else { "✗ missing" });
+        println!(
+            "  {}: {}",
+            device,
+            if exists { "✓ exists" } else { "✗ missing" }
+        );
     }
 
     // Step 2: Check driver version
@@ -42,10 +46,7 @@ fn main() {
 
 fn test_nvenc_encoder() {
     use lamco_rdp_server::config::HardwareEncodingConfig;
-    use lamco_rdp_server::egfx::hardware::{
-        QualityPreset,
-        nvenc::NvencEncoder,
-    };
+    use lamco_rdp_server::egfx::hardware::{nvenc::NvencEncoder, QualityPreset};
 
     let config = HardwareEncodingConfig {
         enabled: true,
@@ -76,10 +77,10 @@ fn test_nvenc_encoder() {
             for y in 0..1080 {
                 for x in 0..1920 {
                     let idx = (y * 1920 + x) * 4;
-                    frame[idx] = (x % 256) as u8;     // B
+                    frame[idx] = (x % 256) as u8; // B
                     frame[idx + 1] = (y % 256) as u8; // G
-                    frame[idx + 2] = 128;             // R
-                    frame[idx + 3] = 255;             // A
+                    frame[idx + 2] = 128; // R
+                    frame[idx + 3] = 255; // A
                 }
             }
             println!("  ✓ Frame created");
@@ -94,11 +95,13 @@ fn test_nvenc_encoder() {
                     println!("  ✓ Frame encoded successfully!");
                     println!("    Size: {} bytes", h264_frame.size);
                     println!("    Is keyframe: {}", h264_frame.is_keyframe);
-                    println!("    First bytes: {:02x} {:02x} {:02x} {:02x}",
+                    println!(
+                        "    First bytes: {:02x} {:02x} {:02x} {:02x}",
                         h264_frame.data.get(0).unwrap_or(&0),
                         h264_frame.data.get(1).unwrap_or(&0),
                         h264_frame.data.get(2).unwrap_or(&0),
-                        h264_frame.data.get(3).unwrap_or(&0));
+                        h264_frame.data.get(3).unwrap_or(&0)
+                    );
                 }
                 Ok(None) => {
                     println!("  ✓ Frame submitted (no output yet - buffered)");

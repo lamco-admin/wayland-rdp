@@ -179,7 +179,7 @@ pub fn get_pipewire_version() -> Option<String> {
 /// Log complete diagnostics on startup
 pub fn log_startup_diagnostics() {
     info!("╔════════════════════════════════════════════════════════════╗");
-    info!("║          WRD-Server Startup Diagnostics                   ║");
+    info!("║          Startup Diagnostics                              ║");
     info!("╚════════════════════════════════════════════════════════════╝");
 
     // System info

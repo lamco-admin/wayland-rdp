@@ -85,8 +85,8 @@ impl Config {
                 use_portals: true,
             },
             security: SecurityConfig {
-                cert_path: PathBuf::from("/etc/wrd-server/cert.pem"),
-                key_path: PathBuf::from("/etc/wrd-server/key.pem"),
+                cert_path: PathBuf::from("/etc/lamco-rdp-server/cert.pem"),
+                key_path: PathBuf::from("/etc/lamco-rdp-server/key.pem"),
                 enable_nla: true,
                 auth_method: "pam".to_string(),
                 require_tls_13: true,
@@ -174,7 +174,10 @@ impl Config {
         // Validate EGFX configuration
         match self.egfx.zgfx_compression.as_str() {
             "never" | "auto" | "always" => {}
-            _ => anyhow::bail!("Invalid ZGFX compression mode: {}", self.egfx.zgfx_compression),
+            _ => anyhow::bail!(
+                "Invalid ZGFX compression mode: {}",
+                self.egfx.zgfx_compression
+            ),
         }
 
         match self.egfx.codec.as_str() {
@@ -185,24 +188,37 @@ impl Config {
         // Validate damage tracking method
         match self.damage_tracking.method.as_str() {
             "pipewire" | "diff" | "hybrid" => {}
-            _ => anyhow::bail!("Invalid damage tracking method: {}", self.damage_tracking.method),
+            _ => anyhow::bail!(
+                "Invalid damage tracking method: {}",
+                self.damage_tracking.method
+            ),
         }
 
         // Validate hardware encoding quality preset
         match self.hardware_encoding.quality_preset.as_str() {
             "speed" | "balanced" | "quality" => {}
-            _ => anyhow::bail!("Invalid quality preset: {}", self.hardware_encoding.quality_preset),
+            _ => anyhow::bail!(
+                "Invalid quality preset: {}",
+                self.hardware_encoding.quality_preset
+            ),
         }
 
         // Validate QP ranges
         if self.egfx.qp_min > self.egfx.qp_max {
-            anyhow::bail!("qp_min ({}) cannot be greater than qp_max ({})",
-                         self.egfx.qp_min, self.egfx.qp_max);
+            anyhow::bail!(
+                "qp_min ({}) cannot be greater than qp_max ({})",
+                self.egfx.qp_min,
+                self.egfx.qp_max
+            );
         }
 
         if self.egfx.qp_default < self.egfx.qp_min || self.egfx.qp_default > self.egfx.qp_max {
-            anyhow::bail!("qp_default ({}) must be between qp_min ({}) and qp_max ({})",
-                         self.egfx.qp_default, self.egfx.qp_min, self.egfx.qp_max);
+            anyhow::bail!(
+                "qp_default ({}) must be between qp_min ({}) and qp_max ({})",
+                self.egfx.qp_default,
+                self.egfx.qp_min,
+                self.egfx.qp_max
+            );
         }
 
         Ok(())

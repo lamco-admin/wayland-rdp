@@ -179,10 +179,7 @@ impl CompositorProfile {
         let os_release = detect_os_release();
 
         // Build quirk list based on compositor and platform
-        let mut quirks = vec![
-            Quirk::RequiresWaylandSession,
-            Quirk::RestartCaptureOnResize,
-        ];
+        let mut quirks = vec![Quirk::RequiresWaylandSession, Quirk::RestartCaptureOnResize];
 
         // RHEL 9 specific quirks
         if let Some(ref os) = os_release {
@@ -311,19 +308,13 @@ impl CompositorProfile {
     fn weston_profile() -> Self {
         Self {
             compositor: CompositorType::Weston,
-            wayland_protocols: vec![
-                "wl_compositor".to_string(),
-                "xdg_wm_base".to_string(),
-            ],
+            wayland_protocols: vec!["wl_compositor".to_string(), "xdg_wm_base".to_string()],
             portal_backend: None,
             recommended_capture: CaptureBackend::Portal,
             recommended_buffer_type: BufferType::MemFd,
             supports_damage_hints: false,
             supports_explicit_sync: false,
-            quirks: vec![
-                Quirk::LimitedBufferFormats,
-                Quirk::InaccurateScreenSize,
-            ],
+            quirks: vec![Quirk::LimitedBufferFormats, Quirk::InaccurateScreenSize],
             recommended_fps_cap: 30,
             portal_timeout_ms: 30000,
         }
@@ -384,7 +375,7 @@ impl CompositorProfile {
             supports_damage_hints: false,
             supports_explicit_sync: false,
             quirks: vec![
-                Quirk::PoorDmaBufSupport,          // Don't assume DMA-BUF works
+                Quirk::PoorDmaBufSupport, // Don't assume DMA-BUF works
                 Quirk::NeedsExplicitCursorComposite,
             ],
             recommended_fps_cap: 30,
@@ -433,7 +424,9 @@ mod tests {
 
     #[test]
     fn test_for_compositor() {
-        let gnome = CompositorType::Gnome { version: Some("46.0".to_string()) };
+        let gnome = CompositorType::Gnome {
+            version: Some("46.0".to_string()),
+        };
         let profile = CompositorProfile::for_compositor(&gnome);
         assert_eq!(profile.portal_backend, Some("gnome".to_string()));
     }

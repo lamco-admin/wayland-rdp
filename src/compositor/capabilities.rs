@@ -171,7 +171,6 @@ pub struct CompositorCapabilities {
     pub profile: CompositorProfile,
 
     // === Phase 2: Session Persistence ===
-
     /// Deployment context (Flatpak, systemd, initd, etc.)
     /// Affects which session strategies are available
     pub deployment: crate::session::DeploymentContext,
@@ -207,10 +206,8 @@ impl CompositorCapabilities {
         // Default session persistence fields (will be set by probing)
         let deployment = crate::session::detect_deployment_context();
         let has_session_dbus = true; // If we got this far, D-Bus works
-        let has_secret_service_access = !matches!(
-            deployment,
-            crate::session::DeploymentContext::Flatpak
-        );
+        let has_secret_service_access =
+            !matches!(deployment, crate::session::DeploymentContext::Flatpak);
 
         // Default credential storage (will be set by async probing)
         use crate::session::{CredentialStorageMethod, EncryptionType};
@@ -285,10 +282,7 @@ impl CompositorCapabilities {
             self.portal.supports_remote_desktop,
             self.portal.supports_clipboard
         );
-        info!(
-            "  Cursor modes: {:?}",
-            self.portal.available_cursor_modes
-        );
+        info!("  Cursor modes: {:?}", self.portal.available_cursor_modes);
         info!(
             "  Recommended capture: {:?}",
             self.profile.recommended_capture

@@ -1,4 +1,4 @@
-//! WRD-Server - Wayland Remote Desktop Server
+//! lamco-rdp-server - Wayland Remote Desktop Server
 //!
 //! Entry point for the server binary.
 
@@ -8,23 +8,23 @@ use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use lamco_rdp_server::config::Config;
-use lamco_rdp_server::server::WrdServer;
+use lamco_rdp_server::server::LamcoRdpServer;
 
-/// Command-line arguments for wrd-server
+/// Command-line arguments for lamco-rdp-server
 #[derive(Parser, Debug)]
-#[command(name = "wrd-server")]
+#[command(name = "lamco-rdp-server")]
 #[command(version, about = "Wayland Remote Desktop Server", long_about = None)]
 pub struct Args {
     /// Configuration file path
-    #[arg(short, long, default_value = "/etc/wrd-server/config.toml")]
+    #[arg(short, long, default_value = "/etc/lamco-rdp-server/config.toml")]
     pub config: String,
 
     /// Listen address
-    #[arg(short, long, env = "WRD_LISTEN_ADDR")]
+    #[arg(short, long, env = "LAMCO_RDP_LISTEN_ADDR")]
     pub listen: Option<String>,
 
     /// Listen port
-    #[arg(short, long, env = "WRD_PORT", default_value = "3389")]
+    #[arg(short, long, env = "LAMCO_RDP_PORT", default_value = "3389")]
     pub port: u16,
 
     /// Verbose logging (can be specified multiple times)
@@ -82,12 +82,25 @@ async fn main() -> Result<()> {
 
     info!("════════════════════════════════════════════════════════");
     info!("  lamco-rdp-server v{}", env!("CARGO_PKG_VERSION"));
-    info!("  Built: {} {}", option_env!("BUILD_DATE").unwrap_or("unknown"), option_env!("BUILD_TIME").unwrap_or(""));
-    info!("  Commit: {}", option_env!("GIT_HASH").unwrap_or("vendored"));
-    info!("  Profile: {}", if cfg!(debug_assertions) { "debug" } else { "release" });
+    info!(
+        "  Built: {} {}",
+        option_env!("BUILD_DATE").unwrap_or("unknown"),
+        option_env!("BUILD_TIME").unwrap_or("")
+    );
+    info!(
+        "  Commit: {}",
+        option_env!("GIT_HASH").unwrap_or("vendored")
+    );
+    info!(
+        "  Profile: {}",
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
+    );
     info!("════════════════════════════════════════════════════════");
 
-    // Handle diagnostic commands (exit after running)
     if args.show_capabilities {
         return show_capabilities().await;
     }
@@ -123,9 +136,8 @@ async fn main() -> Result<()> {
     info!("Configuration loaded successfully");
     tracing::debug!("Config: {:?}", config);
 
-    // Create and start WRD server
-    info!("Initializing WRD Server");
-    let server = match WrdServer::new(config).await {
+    info!("Initializing server");
+    let server = match LamcoRdpServer::new(config).await {
         Ok(s) => s,
         Err(e) => {
             eprintln!("{}", lamco_rdp_server::utils::format_user_error(&e));
@@ -133,13 +145,13 @@ async fn main() -> Result<()> {
         }
     };
 
-    info!("Starting WRD Server");
+    info!("Starting server");
     if let Err(e) = server.run().await {
         eprintln!("{}", lamco_rdp_server::utils::format_user_error(&e));
         return Err(e);
     }
 
-    info!("WRD Server shut down");
+    info!("Server shut down");
     Ok(())
 }
 
@@ -159,14 +171,45 @@ async fn show_capabilities() -> Result<()> {
         });
 
     println!("Compositor: {}", caps.compositor);
-    println!("  Version: {}", caps.compositor.version().unwrap_or("unknown"));
+    println!(
+        "  Version: {}",
+        caps.compositor.version().unwrap_or("unknown")
+    );
     println!();
 
     println!("Portal: version {}", caps.portal.version);
-    println!("  ScreenCast: {}", if caps.portal.supports_screencast { "✅" } else { "❌" });
-    println!("  RemoteDesktop: {}", if caps.portal.supports_remote_desktop { "✅" } else { "❌" });
-    println!("  Clipboard: {}", if caps.portal.supports_clipboard { "✅" } else { "❌" });
-    println!("  Restore tokens: {}", if caps.portal.version >= 4 { "✅ Supported" } else { "❌ Not supported (v < 4)" });
+    println!(
+        "  ScreenCast: {}",
+        if caps.portal.supports_screencast {
+            "✅"
+        } else {
+            "❌"
+        }
+    );
+    println!(
+        "  RemoteDesktop: {}",
+        if caps.portal.supports_remote_desktop {
+            "✅"
+        } else {
+            "❌"
+        }
+    );
+    println!(
+        "  Clipboard: {}",
+        if caps.portal.supports_clipboard {
+            "✅"
+        } else {
+            "❌"
+        }
+    );
+    println!(
+        "  Restore tokens: {}",
+        if caps.portal.version >= 4 {
+            "✅ Supported"
+        } else {
+            "❌ Not supported (v < 4)"
+        }
+    );
     println!();
 
     // Deployment detection
@@ -202,7 +245,14 @@ async fn show_persistence_status() -> Result<()> {
 
     println!("Deployment: {}", deployment);
     println!("Storage: {} ({})", storage_method, encryption);
-    println!("Token Status: {}", if has_token { "✅ Available" } else { "❌ Not found" });
+    println!(
+        "Token Status: {}",
+        if has_token {
+            "✅ Available"
+        } else {
+            "❌ Not found"
+        }
+    );
     println!();
 
     if has_token {
@@ -253,7 +303,7 @@ async fn grant_permission_flow() -> Result<()> {
 
     // Create server (this will trigger permission dialog)
     info!("Creating server to obtain permission...");
-    let _server = WrdServer::new(config).await?;
+    let _server = LamcoRdpServer::new(config).await?;
 
     println!();
     println!("✅ Permission granted and token stored!");
@@ -289,7 +339,10 @@ async fn run_diagnostics() -> Result<()> {
     // Test 3: Compositor detection
     print!("[  ] Compositor identification... ");
     let compositor = lamco_rdp_server::compositor::identify_compositor();
-    if matches!(compositor, lamco_rdp_server::compositor::CompositorType::Unknown { .. }) {
+    if matches!(
+        compositor,
+        lamco_rdp_server::compositor::CompositorType::Unknown { .. }
+    ) {
         println!("⚠️  Unknown (using generic support)");
     } else {
         println!("✅ {}", compositor);

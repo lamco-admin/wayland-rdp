@@ -30,14 +30,14 @@
 //! which encoding to use based on client capabilities and frame characteristics.
 
 use std::time::Instant;
-use tokio::sync::{mpsc, RwLock};
 #[cfg(feature = "h264")]
 use tokio::sync::Mutex;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::egfx::encoder::{EncoderError, EncoderResult};
 #[cfg(feature = "h264")]
 use crate::egfx::encoder::{Avc420Encoder, EncoderConfig};
+use crate::egfx::encoder::{EncoderError, EncoderResult};
 use crate::pipewire::VideoFrame;
 
 /// Configuration for EGFX video handling
@@ -167,7 +167,7 @@ impl EgfxVideoHandler {
             enable_skip_frame: config.enable_frame_skip,
             width: Some(initial_width as u16),
             height: Some(initial_height as u16),
-            color_space: None, // Auto-select based on resolution
+            color_space: None,    // Auto-select based on resolution
             ..Default::default()  // QP defaults
         };
 
@@ -351,8 +351,7 @@ pub trait EgfxVideoHandlerFactory: Send + Sync {
     /// # Returns
     ///
     /// Channel receiver for encoded frames, or None if EGFX unavailable
-    fn build_handler(&self, width: u32, height: u32)
-        -> Option<mpsc::Receiver<EncodedFrame>>;
+    fn build_handler(&self, width: u32, height: u32) -> Option<mpsc::Receiver<EncodedFrame>>;
 
     /// Check if EGFX/H.264 encoding is available
     fn is_available(&self) -> bool;
@@ -372,10 +371,8 @@ impl DefaultEgfxVideoHandlerFactory {
 impl EgfxVideoHandlerFactory for DefaultEgfxVideoHandlerFactory {
     fn build_handler(
         &self,
-        #[cfg_attr(not(feature = "h264"), allow(unused_variables))]
-        width: u32,
-        #[cfg_attr(not(feature = "h264"), allow(unused_variables))]
-        height: u32,
+        #[cfg_attr(not(feature = "h264"), allow(unused_variables))] width: u32,
+        #[cfg_attr(not(feature = "h264"), allow(unused_variables))] height: u32,
     ) -> Option<mpsc::Receiver<EncodedFrame>> {
         #[cfg(feature = "h264")]
         {

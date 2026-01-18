@@ -69,9 +69,7 @@ fn bench_detect_no_damage(c: &mut Criterion) {
             // Prime with first frame
             let _ = detector.detect(data, width as u32, height as u32);
 
-            b.iter(|| {
-                black_box(detector.detect(black_box(data), width as u32, height as u32))
-            })
+            b.iter(|| black_box(detector.detect(black_box(data), width as u32, height as u32)))
         });
     }
 
@@ -210,15 +208,18 @@ fn bench_tile_sizes(c: &mut Criterion) {
             ..Default::default()
         };
 
-        group.bench_function(BenchmarkId::new("1080p", format!("{}px_tiles", tile_size)), |b| {
-            let mut detector = DamageDetector::new(config.clone());
-            let _ = detector.detect(&frame1, width as u32, height as u32);
-
-            b.iter(|| {
+        group.bench_function(
+            BenchmarkId::new("1080p", format!("{}px_tiles", tile_size)),
+            |b| {
+                let mut detector = DamageDetector::new(config.clone());
                 let _ = detector.detect(&frame1, width as u32, height as u32);
-                black_box(detector.detect(black_box(&frame2), width as u32, height as u32))
-            })
-        });
+
+                b.iter(|| {
+                    let _ = detector.detect(&frame1, width as u32, height as u32);
+                    black_box(detector.detect(black_box(&frame2), width as u32, height as u32))
+                })
+            },
+        );
     }
 
     group.finish();
@@ -233,9 +234,7 @@ fn bench_damage_region_ops(c: &mut Criterion) {
         let r1 = DamageRegion::new(0, 0, 100, 100);
         let r2 = DamageRegion::new(50, 50, 100, 100);
 
-        b.iter(|| {
-            black_box(r1.overlaps(black_box(&r2)))
-        })
+        b.iter(|| black_box(r1.overlaps(black_box(&r2))))
     });
 
     // Benchmark union
@@ -243,9 +242,7 @@ fn bench_damage_region_ops(c: &mut Criterion) {
         let r1 = DamageRegion::new(0, 0, 100, 100);
         let r2 = DamageRegion::new(50, 50, 100, 100);
 
-        b.iter(|| {
-            black_box(r1.union(black_box(&r2)))
-        })
+        b.iter(|| black_box(r1.union(black_box(&r2))))
     });
 
     // Benchmark is_adjacent
@@ -253,9 +250,7 @@ fn bench_damage_region_ops(c: &mut Criterion) {
         let r1 = DamageRegion::new(0, 0, 64, 64);
         let r2 = DamageRegion::new(80, 0, 64, 64);
 
-        b.iter(|| {
-            black_box(r1.is_adjacent(black_box(&r2), 32))
-        })
+        b.iter(|| black_box(r1.is_adjacent(black_box(&r2), 32)))
     });
 
     group.finish();

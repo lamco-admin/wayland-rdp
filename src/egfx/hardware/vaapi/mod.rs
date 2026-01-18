@@ -34,19 +34,21 @@ use std::rc::Rc;
 use cros_libva::{
     self as libva, BufferType, Config, Context, Display, EncCodedBuffer, EncPictureParameter,
     EncSequenceParameter, EncSliceParameter, MappedCodedBuffer, Picture, Surface, UsageHint,
-    VAEntrypoint, VAProfile, VA_INVALID_ID, VA_INVALID_SURFACE, VA_PICTURE_H264_INVALID,
-    VA_PICTURE_H264_SHORT_TERM_REFERENCE, VA_RT_FORMAT_YUV420, VAImageFormat,
+    VAEntrypoint, VAImageFormat, VAProfile, VA_INVALID_ID, VA_INVALID_SURFACE,
+    VA_PICTURE_H264_INVALID, VA_PICTURE_H264_SHORT_TERM_REFERENCE, VA_RT_FORMAT_YUV420,
 };
 use tracing::{debug, info, trace, warn};
 
 use crate::config::HardwareEncodingConfig;
-use crate::egfx::color_space::{ColorRange, ColorSpaceConfig, ColorSpacePreset, MatrixCoefficients};
+use crate::egfx::color_space::{
+    ColorRange, ColorSpaceConfig, ColorSpacePreset, MatrixCoefficients,
+};
 
+use super::error::VaapiError;
 use super::{
     EncodeTimer, H264Frame, HardwareEncoder, HardwareEncoderError, HardwareEncoderResult,
     HardwareEncoderStats, QualityPreset,
 };
-use super::error::VaapiError;
 
 /// Number of surfaces in the pool for triple buffering
 const SURFACE_POOL_SIZE: usize = 3;
@@ -155,10 +157,7 @@ impl VaapiEncoder {
         if !Path::new(&device_path).exists() {
             return Err(HardwareEncoderError::from(VaapiError::DeviceOpenFailed {
                 path: hw_config.vaapi_device.clone(),
-                source: std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Device not found",
-                ),
+                source: std::io::Error::new(std::io::ErrorKind::NotFound, "Device not found"),
             }));
         }
 
@@ -231,23 +230,25 @@ impl VaapiEncoder {
             .map_err(|e| VaapiError::ContextCreateFailed(e.to_string()))?;
 
         // Query NV12 image format
-        let image_formats = display
-            .query_image_formats()
-            .map_err(|e| HardwareEncoderError::EncodeFailed(format!("Failed to query image formats: {}", e)))?;
+        let image_formats = display.query_image_formats().map_err(|e| {
+            HardwareEncoderError::EncodeFailed(format!("Failed to query image formats: {}", e))
+        })?;
 
         let nv12_format = image_formats
             .iter()
             .find(|f| f.fourcc == u32::from_ne_bytes(*b"NV12"))
             .copied()
-            .ok_or_else(|| HardwareEncoderError::EncodeFailed("NV12 format not supported".to_string()))?;
+            .ok_or_else(|| {
+                HardwareEncoderError::EncodeFailed("NV12 format not supported".to_string())
+            })?;
 
         // Calculate coded buffer size (estimate: 1.5x raw frame size for worst case)
         let coded_buffer_size = ((width * height * 3) / 2) as usize;
 
         // Create coded buffer
-        let coded_buffer = context
-            .create_enc_coded(coded_buffer_size)
-            .map_err(|e| HardwareEncoderError::EncodeFailed(format!("Failed to create coded buffer: {}", e)))?;
+        let coded_buffer = context.create_enc_coded(coded_buffer_size).map_err(|e| {
+            HardwareEncoderError::EncodeFailed(format!("Failed to create coded buffer: {}", e))
+        })?;
 
         // Calculate bitrate based on preset
         let bitrate_kbps = preset.bitrate_kbps();
@@ -325,16 +326,15 @@ impl VaapiEncoder {
 
         while i < data.len() {
             // Find start code
-            let start_code_len = if i + 4 <= data.len()
-                && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01]
-            {
-                4
-            } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
-                3
-            } else {
-                i += 1;
-                continue;
-            };
+            let start_code_len =
+                if i + 4 <= data.len() && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01] {
+                    4
+                } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
+                    3
+                } else {
+                    i += 1;
+                    continue;
+                };
 
             let nal_start = i + start_code_len;
             if nal_start >= data.len() {
@@ -418,11 +418,18 @@ impl HardwareEncoder for VaapiEncoder {
 
         trace!(
             "Encoding frame {} (IDR={}) to surface {}",
-            self.frame_count, is_idr, surface_idx
+            self.frame_count,
+            is_idr,
+            surface_idx
         );
 
         // Convert BGRA to NV12 using configured color space
-        let nv12_data = bgra_to_nv12(bgra_data, width as usize, height as usize, &self.color_space);
+        let nv12_data = bgra_to_nv12(
+            bgra_data,
+            width as usize,
+            height as usize,
+            &self.color_space,
+        );
 
         // Upload via Image API - create image, write data, image drop calls vaPutImage
         {
@@ -431,7 +438,10 @@ impl HardwareEncoder for VaapiEncoder {
                 self.nv12_format,
                 (width, height),
                 (width, height),
-            ).map_err(|e| HardwareEncoderError::EncodeFailed(format!("Failed to create image: {}", e)))?;
+            )
+            .map_err(|e| {
+                HardwareEncoderError::EncodeFailed(format!("Failed to create image: {}", e))
+            })?;
 
             // Copy NV12 data to image
             let image_data = image.as_mut();
@@ -455,9 +465,17 @@ impl HardwareEncoder for VaapiEncoder {
         // Build and add sequence params for IDR
         if is_idr {
             let seq_param = self.build_sequence_params(mb_width as u16, mb_height as u16);
-            let seq_buffer = self.context
-                .create_buffer(BufferType::EncSequenceParameter(EncSequenceParameter::H264(seq_param)))
-                .map_err(|e| HardwareEncoderError::EncodeFailed(format!("Failed to create seq buffer: {}", e)))?;
+            let seq_buffer = self
+                .context
+                .create_buffer(BufferType::EncSequenceParameter(
+                    EncSequenceParameter::H264(seq_param),
+                ))
+                .map_err(|e| {
+                    HardwareEncoderError::EncodeFailed(format!(
+                        "Failed to create seq buffer: {}",
+                        e
+                    ))
+                })?;
             picture.add_buffer(seq_buffer);
         }
 
@@ -467,31 +485,46 @@ impl HardwareEncoder for VaapiEncoder {
             self.coded_buffer.id(),
             is_idr,
         );
-        let pic_buffer = self.context
-            .create_buffer(BufferType::EncPictureParameter(EncPictureParameter::H264(pic_param)))
-            .map_err(|e| HardwareEncoderError::EncodeFailed(format!("Failed to create pic buffer: {}", e)))?;
+        let pic_buffer = self
+            .context
+            .create_buffer(BufferType::EncPictureParameter(EncPictureParameter::H264(
+                pic_param,
+            )))
+            .map_err(|e| {
+                HardwareEncoderError::EncodeFailed(format!("Failed to create pic buffer: {}", e))
+            })?;
         picture.add_buffer(pic_buffer);
 
         // Build and add slice params
         let slice_param = self.build_slice_params(num_macroblocks, is_idr);
-        let slice_buffer = self.context
-            .create_buffer(BufferType::EncSliceParameter(EncSliceParameter::H264(slice_param)))
-            .map_err(|e| HardwareEncoderError::EncodeFailed(format!("Failed to create slice buffer: {}", e)))?;
+        let slice_buffer = self
+            .context
+            .create_buffer(BufferType::EncSliceParameter(EncSliceParameter::H264(
+                slice_param,
+            )))
+            .map_err(|e| {
+                HardwareEncoderError::EncodeFailed(format!("Failed to create slice buffer: {}", e))
+            })?;
         picture.add_buffer(slice_buffer);
 
         // Execute encoding pipeline: begin → render → end → sync
-        let picture = picture.begin()
-            .map_err(|e| HardwareEncoderError::EncodeFailed(format!("vaBeginPicture failed: {}", e)))?;
-        let picture = picture.render()
-            .map_err(|e| HardwareEncoderError::EncodeFailed(format!("vaRenderPicture failed: {}", e)))?;
-        let picture = picture.end()
-            .map_err(|e| HardwareEncoderError::EncodeFailed(format!("vaEndPicture failed: {}", e)))?;
-        let _picture = picture.sync()
-            .map_err(|(e, _)| HardwareEncoderError::EncodeFailed(format!("vaSyncSurface failed: {}", e)))?;
+        let picture = picture.begin().map_err(|e| {
+            HardwareEncoderError::EncodeFailed(format!("vaBeginPicture failed: {}", e))
+        })?;
+        let picture = picture.render().map_err(|e| {
+            HardwareEncoderError::EncodeFailed(format!("vaRenderPicture failed: {}", e))
+        })?;
+        let picture = picture.end().map_err(|e| {
+            HardwareEncoderError::EncodeFailed(format!("vaEndPicture failed: {}", e))
+        })?;
+        let _picture = picture.sync().map_err(|(e, _)| {
+            HardwareEncoderError::EncodeFailed(format!("vaSyncSurface failed: {}", e))
+        })?;
 
         // Read encoded data from coded buffer
-        let mapped = MappedCodedBuffer::new(&self.coded_buffer)
-            .map_err(|e| HardwareEncoderError::EncodeFailed(format!("Failed to map coded buffer: {}", e)))?;
+        let mapped = MappedCodedBuffer::new(&self.coded_buffer).map_err(|e| {
+            HardwareEncoderError::EncodeFailed(format!("Failed to map coded buffer: {}", e))
+        })?;
 
         let mut encoded_data = Vec::new();
         for segment in mapped.iter() {
@@ -507,7 +540,8 @@ impl HardwareEncoder for VaapiEncoder {
 
         // Update statistics
         let encode_time_ms = timer.elapsed_ms();
-        self.stats.record_frame(encode_time_ms, encoded_data.len(), is_idr);
+        self.stats
+            .record_frame(encode_time_ms, encoded_data.len(), is_idr);
 
         // Reset IDR flag
         if self.force_idr {
@@ -554,55 +588,55 @@ impl VaapiEncoder {
         mb_width: u16,
         mb_height: u16,
     ) -> libva::EncSequenceParameterBufferH264 {
-        use libva::{H264EncSeqFields, H264VuiFields, EncSequenceParameterBufferH264};
+        use libva::{EncSequenceParameterBufferH264, H264EncSeqFields, H264VuiFields};
 
         let seq_fields = H264EncSeqFields::new(
-            1,  // chroma_format_idc (1 = 4:2:0)
-            1,  // frame_mbs_only_flag
-            0,  // mb_adaptive_frame_field_flag
-            0,  // seq_scaling_matrix_present_flag
-            1,  // direct_8x8_inference_flag
-            4,  // log2_max_frame_num_minus4
-            0,  // pic_order_cnt_type
-            4,  // log2_max_pic_order_cnt_lsb_minus4
-            0,  // delta_pic_order_always_zero_flag
+            1, // chroma_format_idc (1 = 4:2:0)
+            1, // frame_mbs_only_flag
+            0, // mb_adaptive_frame_field_flag
+            0, // seq_scaling_matrix_present_flag
+            1, // direct_8x8_inference_flag
+            4, // log2_max_frame_num_minus4
+            0, // pic_order_cnt_type
+            4, // log2_max_pic_order_cnt_lsb_minus4
+            0, // delta_pic_order_always_zero_flag
         );
 
         let vui_fields = H264VuiFields::new(
-            0, // aspect_ratio_info_present_flag
-            1, // timing_info_present_flag
-            0, // bitstream_restriction_flag
+            0,  // aspect_ratio_info_present_flag
+            1,  // timing_info_present_flag
+            0,  // bitstream_restriction_flag
             16, // log2_max_mv_length_horizontal
             16, // log2_max_mv_length_vertical
-            0, // fixed_frame_rate_flag
-            0, // low_delay_hrd_flag
-            1, // motion_vectors_over_pic_boundaries_flag
+            0,  // fixed_frame_rate_flag
+            0,  // low_delay_hrd_flag
+            1,  // motion_vectors_over_pic_boundaries_flag
         );
 
         EncSequenceParameterBufferH264::new(
-            0,                           // seq_parameter_set_id
-            self.get_h264_level(),       // level_idc
-            self.idr_interval,           // intra_period
-            self.idr_interval,           // intra_idr_period
-            1,                           // ip_period
-            self.bitrate_bps,            // bits_per_second
-            1,                           // max_num_ref_frames
-            mb_width,                    // picture_width_in_mbs
-            mb_height,                   // picture_height_in_mbs
+            0,                     // seq_parameter_set_id
+            self.get_h264_level(), // level_idc
+            self.idr_interval,     // intra_period
+            self.idr_interval,     // intra_idr_period
+            1,                     // ip_period
+            self.bitrate_bps,      // bits_per_second
+            1,                     // max_num_ref_frames
+            mb_width,              // picture_width_in_mbs
+            mb_height,             // picture_height_in_mbs
             &seq_fields,
-            0,                           // bit_depth_luma_minus8
-            0,                           // bit_depth_chroma_minus8
-            0,                           // num_ref_frames_in_pic_order_cnt_cycle
-            0,                           // offset_for_non_ref_pic
-            0,                           // offset_for_top_to_bottom_field
-            [0; 256],                    // offset_for_ref_frame
-            None,                        // frame_crop
-            Some(vui_fields),            // vui_fields
-            0,                           // aspect_ratio_idc
-            1,                           // sar_width
-            1,                           // sar_height
-            1,                           // num_units_in_tick
-            30,                          // time_scale (30 fps)
+            0,                // bit_depth_luma_minus8
+            0,                // bit_depth_chroma_minus8
+            0,                // num_ref_frames_in_pic_order_cnt_cycle
+            0,                // offset_for_non_ref_pic
+            0,                // offset_for_top_to_bottom_field
+            [0; 256],         // offset_for_ref_frame
+            None,             // frame_crop
+            Some(vui_fields), // vui_fields
+            0,                // aspect_ratio_idc
+            1,                // sar_width
+            1,                // sar_height
+            1,                // num_units_in_tick
+            30,               // time_scale (30 fps)
         )
     }
 
@@ -613,7 +647,7 @@ impl VaapiEncoder {
         coded_buf_id: u32,
         is_idr: bool,
     ) -> libva::EncPictureParameterBufferH264 {
-        use libva::{H264EncPicFields, EncPictureParameterBufferH264, PictureH264};
+        use libva::{EncPictureParameterBufferH264, H264EncPicFields, PictureH264};
 
         let curr_pic = PictureH264::new(
             surface_id,
@@ -623,33 +657,27 @@ impl VaapiEncoder {
             } else {
                 0
             },
-            (self.frame_count * 2) as i32,  // top_field_order_cnt
-            (self.frame_count * 2) as i32,  // bottom_field_order_cnt
+            (self.frame_count * 2) as i32, // top_field_order_cnt
+            (self.frame_count * 2) as i32, // bottom_field_order_cnt
         );
 
         // Initialize reference frames (empty for now - simple encoding without B-frames)
         let reference_frames: [PictureH264; 16] = std::array::from_fn(|_| {
-            PictureH264::new(
-                VA_INVALID_SURFACE,
-                0,
-                VA_PICTURE_H264_INVALID,
-                0,
-                0,
-            )
+            PictureH264::new(VA_INVALID_SURFACE, 0, VA_PICTURE_H264_INVALID, 0, 0)
         });
 
         let pic_fields = H264EncPicFields::new(
-            if is_idr { 1 } else { 0 },  // idr_pic_flag
-            1,                            // reference_pic_flag
-            1,                            // entropy_coding_mode_flag (CABAC)
-            0,                            // weighted_pred_flag
-            0,                            // weighted_bipred_idc
-            0,                            // constrained_intra_pred_flag
-            1,                            // transform_8x8_mode_flag
-            1,                            // deblocking_filter_control_present_flag
-            0,                            // redundant_pic_cnt_present_flag
-            0,                            // pic_order_present_flag
-            0,                            // pic_scaling_matrix_present_flag
+            if is_idr { 1 } else { 0 }, // idr_pic_flag
+            1,                          // reference_pic_flag
+            1,                          // entropy_coding_mode_flag (CABAC)
+            0,                          // weighted_pred_flag
+            0,                          // weighted_bipred_idc
+            0,                          // constrained_intra_pred_flag
+            1,                          // transform_8x8_mode_flag
+            1,                          // deblocking_filter_control_present_flag
+            0,                          // redundant_pic_cnt_present_flag
+            0,                          // pic_order_present_flag
+            0,                          // pic_scaling_matrix_present_flag
         );
 
         // QP based on preset
@@ -663,15 +691,15 @@ impl VaapiEncoder {
             curr_pic,
             reference_frames,
             coded_buf_id,
-            0,                    // pic_parameter_set_id
-            0,                    // seq_parameter_set_id
-            0,                    // last_picture
+            0,                       // pic_parameter_set_id
+            0,                       // seq_parameter_set_id
+            0,                       // last_picture
             self.frame_count as u16, // frame_num
-            qp,                   // pic_init_qp
-            0,                    // num_ref_idx_l0_active_minus1
-            0,                    // num_ref_idx_l1_active_minus1
-            0,                    // chroma_qp_index_offset
-            0,                    // second_chroma_qp_index_offset
+            qp,                      // pic_init_qp
+            0,                       // num_ref_idx_l0_active_minus1
+            0,                       // num_ref_idx_l1_active_minus1
+            0,                       // chroma_qp_index_offset
+            0,                       // second_chroma_qp_index_offset
             &pic_fields,
         )
     }
@@ -687,61 +715,49 @@ impl VaapiEncoder {
         // Initialize empty reference lists
         // Create two separate ref lists since PictureH264 doesn't implement Clone
         let ref_pic_list_0: [PictureH264; 32] = std::array::from_fn(|_| {
-            PictureH264::new(
-                VA_INVALID_SURFACE,
-                0,
-                VA_PICTURE_H264_INVALID,
-                0,
-                0,
-            )
+            PictureH264::new(VA_INVALID_SURFACE, 0, VA_PICTURE_H264_INVALID, 0, 0)
         });
         let ref_pic_list_1: [PictureH264; 32] = std::array::from_fn(|_| {
-            PictureH264::new(
-                VA_INVALID_SURFACE,
-                0,
-                VA_PICTURE_H264_INVALID,
-                0,
-                0,
-            )
+            PictureH264::new(VA_INVALID_SURFACE, 0, VA_PICTURE_H264_INVALID, 0, 0)
         });
 
         let slice_type = if is_idr { SLICE_TYPE_I } else { SLICE_TYPE_P };
 
         EncSliceParameterBufferH264::new(
-            0,                       // macroblock_address
-            num_macroblocks,         // num_macroblocks
-            VA_INVALID_ID,           // macroblock_info (not used)
-            slice_type,              // slice_type
-            0,                       // pic_parameter_set_id
-            self.frame_count as u16, // idr_pic_id
+            0,                             // macroblock_address
+            num_macroblocks,               // num_macroblocks
+            VA_INVALID_ID,                 // macroblock_info (not used)
+            slice_type,                    // slice_type
+            0,                             // pic_parameter_set_id
+            self.frame_count as u16,       // idr_pic_id
             (self.frame_count * 2) as u16, // pic_order_cnt_lsb
-            0,                       // delta_pic_order_cnt_bottom
-            [0, 0],                  // delta_pic_order_cnt
-            0,                       // direct_spatial_mv_pred_flag
-            0,                       // num_ref_idx_active_override_flag
-            0,                       // num_ref_idx_l0_active_minus1
-            0,                       // num_ref_idx_l1_active_minus1
-            ref_pic_list_0,          // ref_pic_list_0
-            ref_pic_list_1,          // ref_pic_list_1
-            0,                       // luma_log2_weight_denom
-            0,                       // chroma_log2_weight_denom
-            0,                       // luma_weight_l0_flag
-            [0; 32],                 // luma_weight_l0
-            [0; 32],                 // luma_offset_l0
-            0,                       // chroma_weight_l0_flag
-            [[0; 2]; 32],            // chroma_weight_l0
-            [[0; 2]; 32],            // chroma_offset_l0
-            0,                       // luma_weight_l1_flag
-            [0; 32],                 // luma_weight_l1
-            [0; 32],                 // luma_offset_l1
-            0,                       // chroma_weight_l1_flag
-            [[0; 2]; 32],            // chroma_weight_l1
-            [[0; 2]; 32],            // chroma_offset_l1
-            0,                       // cabac_init_idc
-            0,                       // slice_qp_delta
-            0,                       // disable_deblocking_filter_idc
-            0,                       // slice_alpha_c0_offset_div2
-            0,                       // slice_beta_offset_div2
+            0,                             // delta_pic_order_cnt_bottom
+            [0, 0],                        // delta_pic_order_cnt
+            0,                             // direct_spatial_mv_pred_flag
+            0,                             // num_ref_idx_active_override_flag
+            0,                             // num_ref_idx_l0_active_minus1
+            0,                             // num_ref_idx_l1_active_minus1
+            ref_pic_list_0,                // ref_pic_list_0
+            ref_pic_list_1,                // ref_pic_list_1
+            0,                             // luma_log2_weight_denom
+            0,                             // chroma_log2_weight_denom
+            0,                             // luma_weight_l0_flag
+            [0; 32],                       // luma_weight_l0
+            [0; 32],                       // luma_offset_l0
+            0,                             // chroma_weight_l0_flag
+            [[0; 2]; 32],                  // chroma_weight_l0
+            [[0; 2]; 32],                  // chroma_offset_l0
+            0,                             // luma_weight_l1_flag
+            [0; 32],                       // luma_weight_l1
+            [0; 32],                       // luma_offset_l1
+            0,                             // chroma_weight_l1_flag
+            [[0; 2]; 32],                  // chroma_weight_l1
+            [[0; 2]; 32],                  // chroma_offset_l1
+            0,                             // cabac_init_idc
+            0,                             // slice_qp_delta
+            0,                             // disable_deblocking_filter_idc
+            0,                             // slice_alpha_c0_offset_div2
+            0,                             // slice_beta_offset_div2
         )
     }
 }
@@ -856,10 +872,9 @@ mod tests {
     fn test_bgra_to_nv12() {
         // Create simple 4x4 test image (red)
         let bgra = vec![
-            0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255,
-            0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255,
-            0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255,
-            0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255,
+            0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0,
+            255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+            255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255,
         ];
 
         // Test with BT.709 (default for HD)
@@ -872,7 +887,11 @@ mod tests {
         // Red in BT.709 limited range: Y ≈ 63 (Kr*255 scaled to 16-235)
         // Check Y values are in reasonable range for red
         for &y in &nv12[0..16] {
-            assert!(y >= 50 && y <= 100, "Y value {} out of range for red in BT.709", y);
+            assert!(
+                y >= 50 && y <= 100,
+                "Y value {} out of range for red in BT.709",
+                y
+            );
         }
     }
 
@@ -880,10 +899,9 @@ mod tests {
     fn test_bgra_to_nv12_different_color_spaces() {
         // Create simple 4x4 test image (green)
         let bgra = vec![
-            0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
-            0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
-            0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
-            0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
+            0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
+            0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
+            0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
         ];
 
         // BT.709: Kg = 0.7152, so green is brightest

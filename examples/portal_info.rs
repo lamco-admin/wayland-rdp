@@ -57,7 +57,8 @@ async fn main() -> Result<()> {
 
     println!("Moving mouse cursor (you should see it move)...");
     for _ in 0..10 {
-        rd.notify_pointer_motion(session.ashpd_session(), 5.0, 0.0).await?;
+        rd.notify_pointer_motion(session.ashpd_session(), 5.0, 0.0)
+            .await?;
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
     println!("✓ Mouse moved\n");

@@ -1,6 +1,6 @@
 //! Server Implementation Module
 //!
-//! This module provides the main WRD-Server implementation, orchestrating all subsystems
+//! This module provides the main server implementation, orchestrating all subsystems
 //! to provide complete RDP server functionality for Wayland desktops.
 //!
 //! # Architecture
@@ -120,7 +120,7 @@ impl WrdServer {
     ///
     /// A new `WrdServer` instance ready to run
     pub async fn new(config: Config) -> Result<Self> {
-        info!("Initializing WRD Server");
+        info!("Initializing server");
         let config = Arc::new(config);
 
         // === CAPABILITY PROBING ===
@@ -218,15 +218,27 @@ impl WrdServer {
 
         info!("🎛️ Service-based feature configuration:");
         if damage_level >= ServiceLevel::BestEffort {
-            info!("   ✅ Damage tracking: {} - enabling adaptive FPS", damage_level);
+            info!(
+                "   ✅ Damage tracking: {} - enabling adaptive FPS",
+                damage_level
+            );
         } else {
-            info!("   ⚠️ Damage tracking: {} - using frame diff fallback", damage_level);
+            info!(
+                "   ⚠️ Damage tracking: {} - using frame diff fallback",
+                damage_level
+            );
         }
 
         if cursor_level >= ServiceLevel::BestEffort {
-            info!("   ✅ Metadata cursor: {} - client-side rendering", cursor_level);
+            info!(
+                "   ✅ Metadata cursor: {} - client-side rendering",
+                cursor_level
+            );
         } else {
-            info!("   ⚠️ Metadata cursor: {} - painted cursor mode", cursor_level);
+            info!(
+                "   ⚠️ Metadata cursor: {} - painted cursor mode",
+                cursor_level
+            );
         }
 
         if dmabuf_level >= ServiceLevel::Guaranteed {
@@ -239,10 +251,8 @@ impl WrdServer {
         // Select best strategy based on detected capabilities
         info!("Selecting session strategy based on detected capabilities");
 
-        let strategy_selector = SessionStrategySelector::new(
-            service_registry.clone(),
-            Arc::new(token_manager),
-        );
+        let strategy_selector =
+            SessionStrategySelector::new(service_registry.clone(), Arc::new(token_manager));
 
         let strategy = strategy_selector
             .select_strategy()
@@ -250,7 +260,6 @@ impl WrdServer {
             .context("Failed to select session strategy")?;
 
         info!("🎯 Selected strategy: {}", strategy.name());
-
 
         // Create session via selected strategy
         info!("Creating session via selected strategy");
@@ -308,7 +317,7 @@ impl WrdServer {
 
         // Create Portal manager for input+clipboard (needed for both strategies)
         let mut portal_config = config.to_portal_config();
-        portal_config.persist_mode = ashpd::desktop::PersistMode::DoNot;  // Don't persist (causes errors)
+        portal_config.persist_mode = ashpd::desktop::PersistMode::DoNot; // Don't persist (causes errors)
         portal_config.restore_token = None;
 
         let portal_manager = Arc::new(
@@ -319,58 +328,68 @@ impl WrdServer {
 
         // Get clipboard components from session handle, or create fallback Portal session
         // HYBRID STRATEGY: For Mutter, we also use Portal session for input (Mutter input broken on GNOME 46)
-        let (portal_clipboard_manager, portal_clipboard_session, portal_input_handle) = if session_handle.session_type() == SessionType::Portal {
-            // Portal strategy: use session_handle directly (no duplicate sessions)
-            info!("Portal strategy: using session_handle directly");
+        let (portal_clipboard_manager, portal_clipboard_session, portal_input_handle) =
+            if session_handle.session_type() == SessionType::Portal {
+                // Portal strategy: use session_handle directly (no duplicate sessions)
+                info!("Portal strategy: using session_handle directly");
 
-            // Portal strategy always provides ClipboardComponents
-            // manager may be None on Portal v1, but session is always present
-            let clipboard_components = session_handle.portal_clipboard()
-                .expect("Portal strategy always provides ClipboardComponents");
+                // Portal strategy always provides ClipboardComponents
+                // manager may be None on Portal v1, but session is always present
+                let clipboard_components = session_handle
+                    .portal_clipboard()
+                    .expect("Portal strategy always provides ClipboardComponents");
 
-            let clipboard_mgr = clipboard_components.manager;  // Option<Arc<...>>
-            let session = clipboard_components.session;  // Always present
+                let clipboard_mgr = clipboard_components.manager; // Option<Arc<...>>
+                let session = clipboard_components.session; // Always present
 
-            (clipboard_mgr, session, session_handle)
-        } else {
-            // Mutter strategy: Need separate Portal session for input AND clipboard (one dialog)
-            // HYBRID: Mutter provides video (zero dialogs), Portal provides input+clipboard (one dialog)
-            info!("Strategy doesn't provide clipboard, creating separate Portal session for input+clipboard");
-            info!("HYBRID MODE: Mutter for video (zero dialogs), Portal for input+clipboard (one dialog)");
-
-            let session_id = format!("lamco-rdp-input-clipboard-{}", uuid::Uuid::new_v4());
-            let (portal_handle, _) = portal_manager
-                .create_session(session_id, None)
-                .await
-                .context("Failed to create Portal session for input+clipboard")?;
-
-            // Only create clipboard if Portal supports it (v2+)
-            let clipboard_mgr = if capabilities.portal.supports_clipboard {
-                Some(Arc::new(
-                    lamco_portal::ClipboardManager::new()
-                        .await
-                        .context("Failed to create Portal clipboard manager")?,
-                ))
+                (clipboard_mgr, session, session_handle)
             } else {
-                info!("Skipping clipboard creation - Portal v{} doesn't support clipboard", capabilities.portal.version);
-                None
+                // Mutter strategy: Need separate Portal session for input AND clipboard (one dialog)
+                // HYBRID: Mutter provides video (zero dialogs), Portal provides input+clipboard (one dialog)
+                info!("Strategy doesn't provide clipboard, creating separate Portal session for input+clipboard");
+                info!("HYBRID MODE: Mutter for video (zero dialogs), Portal for input+clipboard (one dialog)");
+
+                let session_id = format!("lamco-rdp-input-clipboard-{}", uuid::Uuid::new_v4());
+                let (portal_handle, _) = portal_manager
+                    .create_session(session_id, None)
+                    .await
+                    .context("Failed to create Portal session for input+clipboard")?;
+
+                // Only create clipboard if Portal supports it (v2+)
+                let clipboard_mgr = if capabilities.portal.supports_clipboard {
+                    Some(Arc::new(
+                        lamco_portal::ClipboardManager::new()
+                            .await
+                            .context("Failed to create Portal clipboard manager")?,
+                    ))
+                } else {
+                    info!(
+                        "Skipping clipboard creation - Portal v{} doesn't support clipboard",
+                        capabilities.portal.version
+                    );
+                    None
+                };
+
+                info!("Separate Portal session created for input+clipboard (non-persistent)");
+
+                let session = Arc::new(RwLock::new(portal_handle.session));
+
+                // Create PortalSessionHandleImpl for input
+                // If no clipboard (Portal v1), just use Mutter session_handle for input instead
+                // Create Portal input handle regardless of clipboard availability
+                let input_handle =
+                    crate::session::strategies::PortalSessionHandleImpl::from_portal_session(
+                        session.clone(),
+                        portal_manager.remote_desktop().clone(),
+                        clipboard_mgr.clone(), // Pass Option directly
+                    );
+
+                (
+                    clipboard_mgr,
+                    session,
+                    Arc::new(input_handle) as Arc<dyn crate::session::SessionHandle>,
+                )
             };
-
-            info!("Separate Portal session created for input+clipboard (non-persistent)");
-
-            let session = Arc::new(RwLock::new(portal_handle.session));
-
-            // Create PortalSessionHandleImpl for input
-            // If no clipboard (Portal v1), just use Mutter session_handle for input instead
-            // Create Portal input handle regardless of clipboard availability
-            let input_handle = crate::session::strategies::PortalSessionHandleImpl::from_portal_session(
-                session.clone(),
-                portal_manager.remote_desktop().clone(),
-                clipboard_mgr.clone(), // Pass Option directly
-            );
-
-            (clipboard_mgr, session, Arc::new(input_handle) as Arc<dyn crate::session::SessionHandle>)
-        };
 
         info!(
             "Session started with {} streams, PipeWire FD: {}",
@@ -428,8 +447,8 @@ impl WrdServer {
                 initial_size.0,
                 initial_size.1,
                 pipewire_fd,
-                stream_info.to_vec(),  // streams() returns &[StreamInfo], convert to Vec
-                Some(graphics_tx), // Graphics queue for multiplexer
+                stream_info.to_vec(), // streams() returns &[StreamInfo], convert to Vec
+                Some(graphics_tx),    // Graphics queue for multiplexer
                 Some(gfx_server_handle), // EGFX server handle for H.264 frame sending
                 Some(gfx_handler_state), // EGFX handler state for readiness checks
                 Arc::clone(&config),  // Pass config for feature flags
@@ -539,10 +558,7 @@ impl WrdServer {
         // Set Portal clipboard reference if available (from session or fallback)
         if let Some(clipboard_mgr_arc) = portal_clipboard_manager {
             clipboard_mgr
-                .set_portal_clipboard(
-                    clipboard_mgr_arc,
-                    Arc::clone(&portal_clipboard_session),
-                )
+                .set_portal_clipboard(clipboard_mgr_arc, Arc::clone(&portal_clipboard_session))
                 .await;
             // Note: Success message logged inside set_portal_clipboard
         } else {
@@ -590,7 +606,7 @@ impl WrdServer {
             .await;
         info!("Server event sender configured in display handler");
 
-        info!("WRD Server initialized successfully");
+        info!("Server initialized successfully");
 
         Ok(Self {
             config,
@@ -606,7 +622,7 @@ impl WrdServer {
     /// Blocks until the server is shut down.
     pub async fn run(mut self) -> Result<()> {
         info!("╔════════════════════════════════════════════════════════════╗");
-        info!("║          WRD-Server is Starting                            ║");
+        info!("║          Server Starting                                   ║");
         info!("╚════════════════════════════════════════════════════════════╝");
         info!("  Listen Address: {}", self.config.server.listen_addr);
         info!("  TLS: Enabled (rustls 0.23)");
@@ -646,7 +662,7 @@ impl WrdServer {
             info!("Server stopped gracefully");
         }
 
-        info!("WRD Server shutdown complete");
+        info!("Server shutdown complete");
         result
     }
 

@@ -66,8 +66,8 @@ impl ColorMatrix {
     #[inline]
     const fn y_coefficients_fixed(&self) -> (i32, i32, i32) {
         match self {
-            Self::BT601 => (19595, 38470, 7471),    // 0.299, 0.587, 0.114
-            Self::BT709 => (13933, 46871, 4732),    // 0.2126, 0.7152, 0.0722
+            Self::BT601 => (19595, 38470, 7471), // 0.299, 0.587, 0.114
+            Self::BT709 => (13933, 46871, 4732), // 0.2126, 0.7152, 0.0722
             // OpenH264: 66/256, 129/256, 25/256 → scaled by 65536/256 = 256
             Self::OpenH264 => (16896, 33024, 6400), // 66*256, 129*256, 25*256
         }
@@ -425,8 +425,8 @@ unsafe fn bgra_to_yuv444_avx2_impl(bgra: &[u8], frame: &mut Yuv444Frame, matrix:
         // to [0,1,2,3,4,5,6,7,x,x,x,x,x,x,x,x]
         // Shuffle mask: pick bytes 0,1,2,3,8,9,10,11 and put them in first 8 positions
         let shuffle_mask = _mm_setr_epi8(
-            0, 1, 2, 3, 8, 9, 10, 11,  // First 8 bytes we want
-            -1, -1, -1, -1, -1, -1, -1, -1  // Don't care
+            0, 1, 2, 3, 8, 9, 10, 11, // First 8 bytes we want
+            -1, -1, -1, -1, -1, -1, -1, -1, // Don't care
         );
 
         // Extract 128-bit lane and shuffle
@@ -649,7 +649,11 @@ fn bgra_to_yuv444_neon(bgra: &[u8], frame: &mut Yuv444Frame, matrix: ColorMatrix
 pub fn subsample_chroma_420(chroma_444: &[u8], width: usize, height: usize) -> Vec<u8> {
     assert!(width % 2 == 0, "Width must be even for 4:2:0 subsampling");
     assert!(height % 2 == 0, "Height must be even for 4:2:0 subsampling");
-    assert_eq!(chroma_444.len(), width * height, "Chroma plane size mismatch");
+    assert_eq!(
+        chroma_444.len(),
+        width * height,
+        "Chroma plane size mismatch"
+    );
 
     let out_width = width / 2;
     let out_height = height / 2;
@@ -689,7 +693,8 @@ pub fn subsample_chroma_420(chroma_444: &[u8], width: usize, height: usize) -> V
                 + chroma_444[idx01] as u32
                 + chroma_444[idx10] as u32
                 + chroma_444[idx11] as u32
-                + 2) / 4;
+                + 2)
+                / 4;
 
             chroma_420.push(avg as u8);
         }
@@ -778,7 +783,8 @@ unsafe fn subsample_chroma_420_avx2(chroma_444: &[u8], width: usize, height: usi
                 + chroma_444[idx01] as u32
                 + chroma_444[idx10] as u32
                 + chroma_444[idx11] as u32
-                + 2) / 4;
+                + 2)
+                / 4;
 
             chroma_420[out_row + out_x] = avg as u8;
         }
@@ -857,7 +863,8 @@ unsafe fn subsample_chroma_420_neon(chroma_444: &[u8], width: usize, height: usi
                 + chroma_444[idx01] as u32
                 + chroma_444[idx10] as u32
                 + chroma_444[idx11] as u32
-                + 2) / 4;
+                + 2)
+                / 4;
 
             chroma_420[out_row + out_x] = avg as u8;
         }
@@ -890,8 +897,16 @@ mod tests {
         let yuv = bgra_to_yuv444(&bgra, 1, 1, ColorMatrix::BT709);
 
         assert_eq!(yuv.y[0], 255);
-        assert!((yuv.u[0] as i32 - 128).abs() <= 1, "U should be ~128, got {}", yuv.u[0]);
-        assert!((yuv.v[0] as i32 - 128).abs() <= 1, "V should be ~128, got {}", yuv.v[0]);
+        assert!(
+            (yuv.u[0] as i32 - 128).abs() <= 1,
+            "U should be ~128, got {}",
+            yuv.u[0]
+        );
+        assert!(
+            (yuv.v[0] as i32 - 128).abs() <= 1,
+            "V should be ~128, got {}",
+            yuv.v[0]
+        );
     }
 
     #[test]
@@ -901,8 +916,16 @@ mod tests {
         let yuv = bgra_to_yuv444(&bgra, 1, 1, ColorMatrix::BT709);
 
         assert_eq!(yuv.y[0], 0);
-        assert!((yuv.u[0] as i32 - 128).abs() <= 1, "U should be ~128, got {}", yuv.u[0]);
-        assert!((yuv.v[0] as i32 - 128).abs() <= 1, "V should be ~128, got {}", yuv.v[0]);
+        assert!(
+            (yuv.u[0] as i32 - 128).abs() <= 1,
+            "U should be ~128, got {}",
+            yuv.u[0]
+        );
+        assert!(
+            (yuv.v[0] as i32 - 128).abs() <= 1,
+            "V should be ~128, got {}",
+            yuv.v[0]
+        );
     }
 
     #[test]
@@ -912,7 +935,11 @@ mod tests {
         let yuv = bgra_to_yuv444(&bgra, 1, 1, ColorMatrix::BT709);
 
         // BT.709: Y = 0.2126 * 255 = 54.2
-        assert!((yuv.y[0] as i32 - 54).abs() <= 2, "Y should be ~54, got {}", yuv.y[0]);
+        assert!(
+            (yuv.y[0] as i32 - 54).abs() <= 2,
+            "Y should be ~54, got {}",
+            yuv.y[0]
+        );
         // V should be > 128 (shifted toward red)
         assert!(yuv.v[0] > 180, "V should be high for red, got {}", yuv.v[0]);
     }
@@ -924,7 +951,11 @@ mod tests {
         let yuv = bgra_to_yuv444(&bgra, 1, 1, ColorMatrix::BT709);
 
         // BT.709: Y = 0.7152 * 255 = 182.4
-        assert!((yuv.y[0] as i32 - 182).abs() <= 2, "Y should be ~182, got {}", yuv.y[0]);
+        assert!(
+            (yuv.y[0] as i32 - 182).abs() <= 2,
+            "Y should be ~182, got {}",
+            yuv.y[0]
+        );
     }
 
     #[test]
@@ -934,9 +965,17 @@ mod tests {
         let yuv = bgra_to_yuv444(&bgra, 1, 1, ColorMatrix::BT709);
 
         // BT.709: Y = 0.0722 * 255 = 18.4
-        assert!((yuv.y[0] as i32 - 18).abs() <= 2, "Y should be ~18, got {}", yuv.y[0]);
+        assert!(
+            (yuv.y[0] as i32 - 18).abs() <= 2,
+            "Y should be ~18, got {}",
+            yuv.y[0]
+        );
         // U should be > 128 (shifted toward blue)
-        assert!(yuv.u[0] > 200, "U should be high for blue, got {}", yuv.u[0]);
+        assert!(
+            yuv.u[0] > 200,
+            "U should be high for blue, got {}",
+            yuv.u[0]
+        );
     }
 
     #[test]
@@ -949,7 +988,10 @@ mod tests {
 
         // BT.601 and BT.709 should produce slightly different Y values
         // The difference should be small but measurable
-        assert_ne!(yuv_601.y[0], yuv_709.y[0], "BT.601 and BT.709 should differ");
+        assert_ne!(
+            yuv_601.y[0], yuv_709.y[0],
+            "BT.601 and BT.709 should differ"
+        );
     }
 
     #[test]
@@ -962,7 +1004,7 @@ mod tests {
         // Fill with gradient
         for i in 0..(width * height) {
             let val = ((i * 16) % 256) as u8;
-            bgra[i * 4] = val;     // B
+            bgra[i * 4] = val; // B
             bgra[i * 4 + 1] = val; // G
             bgra[i * 4 + 2] = val; // R
             bgra[i * 4 + 3] = 255; // A
@@ -999,8 +1041,8 @@ mod tests {
     fn test_subsample_chroma_420_4x4() {
         // 4x4 input -> 2x2 output
         let chroma_444 = vec![
-            10, 20, 30, 40,  // Row 0
-            50, 60, 70, 80,  // Row 1
+            10, 20, 30, 40, // Row 0
+            50, 60, 70, 80, // Row 1
             90, 100, 110, 120, // Row 2
             130, 140, 150, 160, // Row 3
         ];
@@ -1063,7 +1105,7 @@ mod tests {
 
         // Create a known pattern: pure white
         for i in 0..8 {
-            bgra[i * 4] = 255;     // B
+            bgra[i * 4] = 255; // B
             bgra[i * 4 + 1] = 255; // G
             bgra[i * 4 + 2] = 255; // R
             bgra[i * 4 + 3] = 255; // A
@@ -1074,8 +1116,16 @@ mod tests {
         // All Y should be 255, U/V should be 128
         for i in 0..8 {
             assert_eq!(yuv.y[i], 255, "Y[{}] should be 255", i);
-            assert!((yuv.u[i] as i32 - 128).abs() <= 1, "U[{}] should be ~128", i);
-            assert!((yuv.v[i] as i32 - 128).abs() <= 1, "V[{}] should be ~128", i);
+            assert!(
+                (yuv.u[i] as i32 - 128).abs() <= 1,
+                "U[{}] should be ~128",
+                i
+            );
+            assert!(
+                (yuv.v[i] as i32 - 128).abs() <= 1,
+                "V[{}] should be ~128",
+                i
+            );
         }
     }
 
@@ -1108,12 +1158,32 @@ mod tests {
         for i in 0..16 {
             if i % 2 == 0 {
                 // Red should have low Y (~54), low U, high V
-                assert!((yuv.y[i] as i32 - 54).abs() <= 2, "Red Y[{}] = {}", i, yuv.y[i]);
-                assert!(yuv.v[i] > 180, "Red V[{}] = {} should be > 180", i, yuv.v[i]);
+                assert!(
+                    (yuv.y[i] as i32 - 54).abs() <= 2,
+                    "Red Y[{}] = {}",
+                    i,
+                    yuv.y[i]
+                );
+                assert!(
+                    yuv.v[i] > 180,
+                    "Red V[{}] = {} should be > 180",
+                    i,
+                    yuv.v[i]
+                );
             } else {
                 // Blue should have low Y (~18), high U, low V
-                assert!((yuv.y[i] as i32 - 18).abs() <= 2, "Blue Y[{}] = {}", i, yuv.y[i]);
-                assert!(yuv.u[i] > 200, "Blue U[{}] = {} should be > 200", i, yuv.u[i]);
+                assert!(
+                    (yuv.y[i] as i32 - 18).abs() <= 2,
+                    "Blue Y[{}] = {}",
+                    i,
+                    yuv.y[i]
+                );
+                assert!(
+                    yuv.u[i] > 200,
+                    "Blue U[{}] = {} should be > 200",
+                    i,
+                    yuv.u[i]
+                );
             }
         }
     }
@@ -1127,9 +1197,9 @@ mod tests {
 
         // Fill with green
         for i in 0..11 {
-            bgra[i * 4] = 0;       // B
+            bgra[i * 4] = 0; // B
             bgra[i * 4 + 1] = 255; // G
-            bgra[i * 4 + 2] = 0;   // R
+            bgra[i * 4 + 2] = 0; // R
             bgra[i * 4 + 3] = 255; // A
         }
 
@@ -1137,7 +1207,12 @@ mod tests {
 
         // All pixels should have same result (green: Y~182)
         for i in 0..11 {
-            assert!((yuv.y[i] as i32 - 182).abs() <= 2, "Y[{}] = {} should be ~182", i, yuv.y[i]);
+            assert!(
+                (yuv.y[i] as i32 - 182).abs() <= 2,
+                "Y[{}] = {} should be ~182",
+                i,
+                yuv.y[i]
+            );
         }
     }
 
@@ -1153,10 +1228,10 @@ mod tests {
             for x in 0..width {
                 let idx = (y * width + x) * 4;
                 let gray = ((x + y) % 256) as u8;
-                bgra[idx] = gray;     // B
+                bgra[idx] = gray; // B
                 bgra[idx + 1] = gray; // G
                 bgra[idx + 2] = gray; // R
-                bgra[idx + 3] = 255;  // A
+                bgra[idx + 3] = 255; // A
             }
         }
 
@@ -1236,11 +1311,11 @@ mod tests {
     fn test_bgra_to_yuv444_rgb_primaries() {
         // Red, Green, Blue, White, Black - 5 pixels
         let bgra = vec![
-            0, 0, 255, 255,     // Red
-            0, 255, 0, 255,     // Green
-            255, 0, 0, 255,     // Blue
+            0, 0, 255, 255, // Red
+            0, 255, 0, 255, // Green
+            255, 0, 0, 255, // Blue
             255, 255, 255, 255, // White
-            0, 0, 0, 255,       // Black
+            0, 0, 0, 255, // Black
         ];
 
         let yuv = bgra_to_yuv444(&bgra, 5, 1, ColorMatrix::BT709);

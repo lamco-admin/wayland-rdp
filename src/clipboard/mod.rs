@@ -16,12 +16,12 @@
 //!
 //! - [`SyncManager`] - State machine orchestration (server-specific policy)
 //! - [`ClipboardManager`] - Event routing between Portal and RDP
-//! - [`WrdCliprdrFactory`] - Server-specific backend factory wrapper
+//! - [`LamcoCliprdrFactory`] - Server-specific backend factory wrapper
 //!
 //! # Data Flow
 //!
 //! ```text
-//! RDP Client                IronRDP               WRD                Portal            Wayland
+//! RDP Client                IronRDP               Server             Portal            Wayland
 //! ━━━━━━━━━━                ━━━━━━━               ━━━               ━━━━━━            ━━━━━━━
 //!
 //! Copy (Ctrl+C)
@@ -93,7 +93,7 @@ pub use lamco_rdp_clipboard::{
 pub use error::{ClipboardError, ErrorContext, ErrorType, RecoveryAction, Result, RetryConfig};
 
 // Server IronRDP factory (wraps library factory)
-pub use ironrdp_backend::WrdCliprdrFactory;
+pub use ironrdp_backend::LamcoCliprdrFactory;
 
 // Server clipboard manager
 pub use manager::{ClipboardConfig, ClipboardEvent, ClipboardManager};
@@ -103,8 +103,8 @@ pub use sync::{ClipboardState, SyncDirection, SyncManager};
 
 // FUSE-based clipboard file transfer
 pub use fuse::{
-    FileContentsRequest, FileContentsResponse, FileDescriptor, FuseManager,
     generate_gnome_copied_files_content, generate_uri_list_content, get_mount_point,
+    FileContentsRequest, FileContentsResponse, FileDescriptor, FuseManager,
 };
 
 // =============================================================================

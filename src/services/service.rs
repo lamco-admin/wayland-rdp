@@ -44,7 +44,6 @@ pub enum ServiceId {
 
     // === Session Persistence Services ===
     // Added in Phase 2 for unattended operation support
-
     /// Session persistence capability (portal restore tokens)
     /// Indicates whether permission dialogs can be avoided on reconnect
     SessionPersistence,

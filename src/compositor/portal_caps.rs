@@ -77,7 +77,6 @@ pub struct PortalCapabilities {
     pub backend: Option<String>,
 
     // === Phase 2: Session Persistence ===
-
     /// Portal version supports restore tokens (v4+)
     pub supports_restore_tokens: bool,
 
@@ -212,10 +211,7 @@ impl PortalCapabilities {
             }
             Ok(version) => {
                 self.supports_clipboard = false;
-                debug!(
-                    "Clipboard not available (RemoteDesktop v{} < 2)",
-                    version
-                );
+                debug!("Clipboard not available (RemoteDesktop v{} < 2)", version);
             }
             Err(_) => {
                 self.supports_clipboard = false;

@@ -82,7 +82,9 @@ use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::input::{CoordinateTransformer, InputError, KeyboardHandler, MonitorInfo, MouseButton, MouseHandler};
+use crate::input::{
+    CoordinateTransformer, InputError, KeyboardHandler, MonitorInfo, MouseButton, MouseHandler,
+};
 
 /// WRD Input Handler
 ///
