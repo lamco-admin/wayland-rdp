@@ -61,6 +61,65 @@ These require Flatpak due to old Rust versions in distro repos:
 
 ---
 
+## MSRV Dependency Fixes (v0.9.0)
+
+**Issue:** Upstream dependencies had MSRV requirements higher than OBS distribution Rust versions.
+
+### Dependency MSRV Requirements
+
+| Dependency | Crates.io Version | Crates.io MSRV | Our Solution | Effective MSRV |
+|------------|-------------------|----------------|--------------|----------------|
+| **openh264** | 0.9.1 | 1.88 (edition 2024) | Fork with edition 2021 | 1.77 |
+| **zune-jpeg** | 0.5.8 | 1.87 | Use GitHub main | 1.75 |
+| **lamco-rdp-server** | 0.9.0 | 1.77 | No change | 1.77 |
+
+### Applied Patches (Cargo.toml)
+
+```toml
+[patch.crates-io]
+# openh264-rs from lamco-admin fork
+openh264 = { git = "https://github.com/lamco-admin/openh264-rs", branch = "lamco-lower-msrv" }
+openh264-sys2 = { git = "https://github.com/lamco-admin/openh264-rs", branch = "lamco-lower-msrv" }
+
+# zune-jpeg from GitHub main (MSRV fix merged, awaiting crates.io release)
+zune-jpeg = { git = "https://github.com/etemesi254/zune-image", branch = "main" }
+
+# IronRDP from lamco-admin fork (existing)
+ironrdp = { git = "https://github.com/lamco-admin/IronRDP", branch = "master" }
+# ... (other ironrdp crates)
+```
+
+### Fork Details
+
+**openh264-rs fork:**
+- Repository: https://github.com/lamco-admin/openh264-rs
+- Branch: lamco-lower-msrv
+- Changes: edition 2024→2021, rust-version 1.88→1.77
+- Maintenance: Remove when upstream PR #91 merges and publishes
+
+**zune-jpeg (no fork needed):**
+- Using upstream GitHub main branch
+- MSRV fix already merged (commit 2841ef7)
+- Maintenance: Switch to crates.io when new version released
+
+### Build Compatibility Matrix
+
+| Distribution | Rust Version | openh264 0.9.1 | zune-jpeg 0.5.8 | With Patches | Result |
+|--------------|--------------|----------------|-----------------|--------------|--------|
+| Fedora 42 | 1.85.1 | ❌ (need 1.88) | ❌ (need 1.87) | ✅ (1.77 + 1.75) | ✅ Building |
+| Fedora 41 | 1.85 | ❌ | ❌ | ✅ | ✅ Building |
+| Fedora 40 | 1.79 | ❌ | ❌ | ✅ | ✅ Building |
+| openSUSE Tumbleweed | 1.82+ | ❌ | ❌ | ✅ | ✅ Building |
+| openSUSE Leap 15.6 | 1.78+ | ❌ | ❌ | ✅ | ✅ Building |
+| Debian 13 | 1.79 | ❌ | ❌ | ✅ | ✅ Building |
+| AlmaLinux 9 | 1.84 | ❌ | ❌ | ✅ | ✅ Building |
+| Ubuntu 24.04 | 1.75 | ❌ | ❌ | ❌ (need 1.77) | ❌ Unresolvable |
+| Debian 12 | 1.63 | ❌ | ❌ | ❌ (need 1.77) | ❌ Unresolvable |
+
+**Summary:** MSRV patches resolve dependency issues for 7/9 distributions. 2 distributions still blocked by core application MSRV (1.77).
+
+---
+
 ## Testing Priority
 
 ### 🔴 CRITICAL - Must Test Before Enterprise Launch
