@@ -43,21 +43,20 @@ use tracing::{debug, info, warn};
 
 use cudarc::driver::CudaContext;
 use nvidia_video_codec_sdk::{
-    Bitstream, Buffer, Encoder, EncoderInitParams, EncodePictureParams,
-    Session,
     sys::nvEncodeAPI::{
-        NV_ENC_BUFFER_FORMAT, NV_ENC_CODEC_H264_GUID,
-        NV_ENC_CONFIG_VER, NV_ENC_H264_PROFILE_HIGH_GUID, NV_ENC_PIC_TYPE,
-        NV_ENC_PRESET_P1_GUID, NV_ENC_PRESET_P2_GUID, NV_ENC_PRESET_P3_GUID,
-        NV_ENC_PRESET_P4_GUID, NV_ENC_PRESET_P5_GUID, NV_ENC_PRESET_P6_GUID,
-        NV_ENC_PRESET_P7_GUID, NV_ENC_TUNING_INFO, GUID,
-        NV_ENC_VUI_COLOR_PRIMARIES, NV_ENC_VUI_TRANSFER_CHARACTERISTIC,
-        NV_ENC_VUI_MATRIX_COEFFS,
+        GUID, NV_ENC_BUFFER_FORMAT, NV_ENC_CODEC_H264_GUID, NV_ENC_CONFIG_VER,
+        NV_ENC_H264_PROFILE_HIGH_GUID, NV_ENC_PIC_TYPE, NV_ENC_PRESET_P1_GUID,
+        NV_ENC_PRESET_P2_GUID, NV_ENC_PRESET_P3_GUID, NV_ENC_PRESET_P4_GUID, NV_ENC_PRESET_P5_GUID,
+        NV_ENC_PRESET_P6_GUID, NV_ENC_PRESET_P7_GUID, NV_ENC_TUNING_INFO,
+        NV_ENC_VUI_COLOR_PRIMARIES, NV_ENC_VUI_MATRIX_COEFFS, NV_ENC_VUI_TRANSFER_CHARACTERISTIC,
     },
+    Bitstream, Buffer, EncodePictureParams, Encoder, EncoderInitParams, Session,
 };
 
 use crate::config::HardwareEncodingConfig;
-use crate::egfx::color_space::{ColorRange, ColorSpaceConfig, ColourPrimaries, MatrixCoefficients, TransferCharacteristics};
+use crate::egfx::color_space::{
+    ColorRange, ColorSpaceConfig, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
+};
 
 use super::{
     error::NvencError, EncodeTimer, H264Frame, HardwareEncoder, HardwareEncoderError,
@@ -214,22 +213,40 @@ pub struct NvencEncoder {
 fn map_colour_primaries(primaries: ColourPrimaries) -> NV_ENC_VUI_COLOR_PRIMARIES {
     match primaries {
         ColourPrimaries::BT709 => NV_ENC_VUI_COLOR_PRIMARIES::NV_ENC_VUI_COLOR_PRIMARIES_BT709,
-        ColourPrimaries::Unspecified => NV_ENC_VUI_COLOR_PRIMARIES::NV_ENC_VUI_COLOR_PRIMARIES_UNSPECIFIED,
-        ColourPrimaries::BT601NTSC => NV_ENC_VUI_COLOR_PRIMARIES::NV_ENC_VUI_COLOR_PRIMARIES_SMPTE170M,
+        ColourPrimaries::Unspecified => {
+            NV_ENC_VUI_COLOR_PRIMARIES::NV_ENC_VUI_COLOR_PRIMARIES_UNSPECIFIED
+        }
+        ColourPrimaries::BT601NTSC => {
+            NV_ENC_VUI_COLOR_PRIMARIES::NV_ENC_VUI_COLOR_PRIMARIES_SMPTE170M
+        }
         ColourPrimaries::BT601PAL => NV_ENC_VUI_COLOR_PRIMARIES::NV_ENC_VUI_COLOR_PRIMARIES_BT470BG,
         ColourPrimaries::BT2020 => NV_ENC_VUI_COLOR_PRIMARIES::NV_ENC_VUI_COLOR_PRIMARIES_BT2020,
     }
 }
 
 /// Map ColorSpaceConfig transfer characteristics to NVENC VUI enum
-fn map_transfer_characteristics(transfer: TransferCharacteristics) -> NV_ENC_VUI_TRANSFER_CHARACTERISTIC {
+fn map_transfer_characteristics(
+    transfer: TransferCharacteristics,
+) -> NV_ENC_VUI_TRANSFER_CHARACTERISTIC {
     match transfer {
-        TransferCharacteristics::BT709 => NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_BT709,
-        TransferCharacteristics::Unspecified => NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_UNSPECIFIED,
-        TransferCharacteristics::BT601 => NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_SMPTE170M,
-        TransferCharacteristics::SRGB => NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_SRGB,
-        TransferCharacteristics::BT2020_10 => NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_BT2020_10,
-        TransferCharacteristics::BT2020_12 => NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_BT2020_12,
+        TransferCharacteristics::BT709 => {
+            NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_BT709
+        }
+        TransferCharacteristics::Unspecified => {
+            NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_UNSPECIFIED
+        }
+        TransferCharacteristics::BT601 => {
+            NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_SMPTE170M
+        }
+        TransferCharacteristics::SRGB => {
+            NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_SRGB
+        }
+        TransferCharacteristics::BT2020_10 => {
+            NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_BT2020_10
+        }
+        TransferCharacteristics::BT2020_12 => {
+            NV_ENC_VUI_TRANSFER_CHARACTERISTIC::NV_ENC_VUI_TRANSFER_CHARACTERISTIC_BT2020_12
+        }
     }
 }
 
@@ -237,9 +254,13 @@ fn map_transfer_characteristics(transfer: TransferCharacteristics) -> NV_ENC_VUI
 fn map_matrix_coefficients(matrix: MatrixCoefficients) -> NV_ENC_VUI_MATRIX_COEFFS {
     match matrix {
         MatrixCoefficients::BT709 => NV_ENC_VUI_MATRIX_COEFFS::NV_ENC_VUI_MATRIX_COEFFS_BT709,
-        MatrixCoefficients::Unspecified => NV_ENC_VUI_MATRIX_COEFFS::NV_ENC_VUI_MATRIX_COEFFS_UNSPECIFIED,
+        MatrixCoefficients::Unspecified => {
+            NV_ENC_VUI_MATRIX_COEFFS::NV_ENC_VUI_MATRIX_COEFFS_UNSPECIFIED
+        }
         MatrixCoefficients::BT601 => NV_ENC_VUI_MATRIX_COEFFS::NV_ENC_VUI_MATRIX_COEFFS_SMPTE170M,
-        MatrixCoefficients::BT2020NCL => NV_ENC_VUI_MATRIX_COEFFS::NV_ENC_VUI_MATRIX_COEFFS_BT2020_NCL,
+        MatrixCoefficients::BT2020NCL => {
+            NV_ENC_VUI_MATRIX_COEFFS::NV_ENC_VUI_MATRIX_COEFFS_BT2020_NCL
+        }
     }
 }
 
@@ -363,17 +384,16 @@ impl NvencEncoder {
             })?;
 
         // Use ARGB format for BGRA input (NVENC swizzles internally)
-        let buffer_format = if input_formats
-            .contains(&NV_ENC_BUFFER_FORMAT::NV_ENC_BUFFER_FORMAT_ARGB)
-        {
-            NV_ENC_BUFFER_FORMAT::NV_ENC_BUFFER_FORMAT_ARGB
-        } else if input_formats.contains(&NV_ENC_BUFFER_FORMAT::NV_ENC_BUFFER_FORMAT_ABGR) {
-            NV_ENC_BUFFER_FORMAT::NV_ENC_BUFFER_FORMAT_ABGR
-        } else {
-            return Err(HardwareEncoderError::from(NvencError::ApiInitFailed(
-                "No compatible RGBA input format supported".to_string(),
-            )));
-        };
+        let buffer_format =
+            if input_formats.contains(&NV_ENC_BUFFER_FORMAT::NV_ENC_BUFFER_FORMAT_ARGB) {
+                NV_ENC_BUFFER_FORMAT::NV_ENC_BUFFER_FORMAT_ARGB
+            } else if input_formats.contains(&NV_ENC_BUFFER_FORMAT::NV_ENC_BUFFER_FORMAT_ABGR) {
+                NV_ENC_BUFFER_FORMAT::NV_ENC_BUFFER_FORMAT_ABGR
+            } else {
+                return Err(HardwareEncoderError::from(NvencError::ApiInitFailed(
+                    "No compatible RGBA input format supported".to_string(),
+                )));
+            };
 
         debug!("Using buffer format: {:?}", buffer_format);
 
@@ -419,7 +439,11 @@ impl NvencEncoder {
             vui.colourDescriptionPresentFlag = 1;
 
             // Set color range (full or limited)
-            vui.videoFullRangeFlag = if color_space.range == ColorRange::Full { 1 } else { 0 };
+            vui.videoFullRangeFlag = if color_space.range == ColorRange::Full {
+                1
+            } else {
+                0
+            };
 
             // Set color primaries, transfer characteristics, and matrix coefficients
             vui.colourPrimaries = map_colour_primaries(color_space.primaries);
@@ -429,7 +453,10 @@ impl NvencEncoder {
 
         info!(
             "🎨 NVENC VUI configured: primaries={:?}, transfer={:?}, matrix={:?}, range={:?}",
-            color_space.primaries, color_space.transfer, color_space.matrix_coeff, color_space.range
+            color_space.primaries,
+            color_space.transfer,
+            color_space.matrix_coeff,
+            color_space.range
         );
 
         // Initialize encoder params
@@ -444,12 +471,16 @@ impl NvencEncoder {
         // Start session - Box IMMEDIATELY to prevent move-invalidation
         // The nvidia-video-codec-sdk types contain internal pointers that become
         // invalid when moved. Boxing keeps them at a stable heap address.
-        let session = Box::new(encoder.start_session(buffer_format, init_params).map_err(|e| {
-            HardwareEncoderError::from(NvencError::SessionCreationFailed(format!(
-                "Failed to start session: {}",
-                e
-            )))
-        })?);
+        let session = Box::new(
+            encoder
+                .start_session(buffer_format, init_params)
+                .map_err(|e| {
+                    HardwareEncoderError::from(NvencError::SessionCreationFailed(format!(
+                        "Failed to start session: {}",
+                        e
+                    )))
+                })?,
+        );
 
         // Create input/output buffers - each wrapped in Option<Box> for move safety
         // SAFETY: We're extending the lifetime of buffers/bitstreams to 'static.
@@ -518,16 +549,15 @@ impl NvencEncoder {
 
         while i < data.len() {
             // Find start code
-            let start_code_len = if i + 4 <= data.len()
-                && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01]
-            {
-                4
-            } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
-                3
-            } else {
-                i += 1;
-                continue;
-            };
+            let start_code_len =
+                if i + 4 <= data.len() && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01] {
+                    4
+                } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
+                    3
+                } else {
+                    i += 1;
+                    continue;
+                };
 
             let nal_start = i + start_code_len;
             if nal_start >= data.len() {
@@ -630,12 +660,12 @@ impl HardwareEncoder for NvencEncoder {
         self.current_buffer = (self.current_buffer + 1) % NUM_BUFFERS;
 
         // Get buffer references - unwrap Option and deref Box
-        let input_buffer = self.input_buffers[buf_idx]
-            .as_mut()
-            .ok_or_else(|| HardwareEncoderError::EncodeFailed("Input buffer was dropped".to_string()))?;
-        let output_bitstream = self.output_bitstreams[buf_idx]
-            .as_mut()
-            .ok_or_else(|| HardwareEncoderError::EncodeFailed("Output bitstream was dropped".to_string()))?;
+        let input_buffer = self.input_buffers[buf_idx].as_mut().ok_or_else(|| {
+            HardwareEncoderError::EncodeFailed("Input buffer was dropped".to_string())
+        })?;
+        let output_bitstream = self.output_bitstreams[buf_idx].as_mut().ok_or_else(|| {
+            HardwareEncoderError::EncodeFailed("Output bitstream was dropped".to_string())
+        })?;
 
         // Lock input buffer and write BGRA data
         {
@@ -670,7 +700,10 @@ impl HardwareEncoder for NvencEncoder {
         // Scoped to release the lock before processing (avoids borrow conflict with self.prepend_sps_pps)
         let (raw_data_copy, actual_is_idr) = {
             let lock = output_bitstream.lock().map_err(|e| {
-                HardwareEncoderError::EncodeFailed(format!("Failed to lock output bitstream: {}", e))
+                HardwareEncoderError::EncodeFailed(format!(
+                    "Failed to lock output bitstream: {}",
+                    e
+                ))
             })?;
 
             let raw_data = lock.data().to_vec();
@@ -863,6 +896,10 @@ mod tests {
     fn test_nvenc_encoder_creation() {
         let config = test_config();
         let result = NvencEncoder::new(&config, 1920, 1080, QualityPreset::Balanced);
-        assert!(result.is_ok(), "Failed to create NVENC encoder: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create NVENC encoder: {:?}",
+            result.err()
+        );
     }
 }

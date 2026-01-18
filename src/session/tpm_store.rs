@@ -23,8 +23,7 @@ impl TpmCredentialStore {
         info!("Initializing TPM 2.0 credential store");
 
         // Verify systemd-creds is available
-        Self::check_systemd_creds_available()
-            .context("systemd-creds not available")?;
+        Self::check_systemd_creds_available().context("systemd-creds not available")?;
 
         // Verify TPM 2.0 is available
         if !Self::has_tpm2()? {
@@ -57,8 +56,7 @@ impl TpmCredentialStore {
         let temp_file = temp_dir.join(format!("lamco-cred-{}", name));
 
         // Write data to temp file
-        std::fs::write(&temp_file, data)
-            .context("Failed to write temporary credential file")?;
+        std::fs::write(&temp_file, data).context("Failed to write temporary credential file")?;
 
         // Use systemd-creds to encrypt and store
         // Format: systemd-creds encrypt <input-file> <output-file> --with-key=tpm2 --name=<name>
@@ -77,7 +75,10 @@ impl TpmCredentialStore {
         std::fs::remove_file(&temp_file).ok();
 
         if !status.success() {
-            return Err(anyhow!("systemd-creds encrypt failed with status: {}", status));
+            return Err(anyhow!(
+                "systemd-creds encrypt failed with status: {}",
+                status
+            ));
         }
 
         info!("Credential stored in TPM-bound storage: {:?}", output_file);
@@ -119,16 +120,17 @@ impl TpmCredentialStore {
         if !status.success() {
             // Clean up on failure
             std::fs::remove_file(&temp_file).ok();
-            return Err(anyhow!("systemd-creds decrypt failed with status: {}", status));
+            return Err(anyhow!(
+                "systemd-creds decrypt failed with status: {}",
+                status
+            ));
         }
 
         // Read decrypted data
-        let data = std::fs::read(&temp_file)
-            .context("Failed to read decrypted credential")?;
+        let data = std::fs::read(&temp_file).context("Failed to read decrypted credential")?;
 
         // Clean up temp file
-        std::fs::remove_file(&temp_file)
-            .context("Failed to remove temporary file")?;
+        std::fs::remove_file(&temp_file).context("Failed to remove temporary file")?;
 
         debug!("Credential loaded successfully ({} bytes)", data.len());
 
@@ -150,8 +152,7 @@ impl TpmCredentialStore {
         let cred_file = self.storage_path.join(format!("{}.cred", name));
 
         if cred_file.exists() {
-            std::fs::remove_file(&cred_file)
-                .context("Failed to delete credential file")?;
+            std::fs::remove_file(&cred_file).context("Failed to delete credential file")?;
             info!("TPM credential deleted successfully");
         } else {
             debug!("Credential not found (already deleted)");
@@ -171,7 +172,10 @@ impl TpmCredentialStore {
             return Err(anyhow!("systemd-creds command failed"));
         }
 
-        debug!("systemd-creds available: {}", String::from_utf8_lossy(&output.stdout).trim());
+        debug!(
+            "systemd-creds available: {}",
+            String::from_utf8_lossy(&output.stdout).trim()
+        );
 
         Ok(())
     }
@@ -185,8 +189,8 @@ impl TpmCredentialStore {
             .output()
             .context("Failed to check TPM 2.0 availability")?;
 
-        let has_tpm = output.status.success()
-            && String::from_utf8_lossy(&output.stdout).trim() == "yes";
+        let has_tpm =
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "yes";
 
         debug!("TPM 2.0 available: {}", has_tpm);
 

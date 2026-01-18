@@ -274,8 +274,7 @@ impl CursorStrategy {
     }
 
     fn auto_select_mode(&mut self) {
-        let should_predict =
-            self.measured_latency_ms > self.config.predictive_latency_threshold_ms;
+        let should_predict = self.measured_latency_ms > self.config.predictive_latency_threshold_ms;
 
         let new_mode = if should_predict {
             CursorMode::Predictive

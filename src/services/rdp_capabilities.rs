@@ -173,7 +173,12 @@ impl RdpCapability {
 impl std::fmt::Display for RdpCapability {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::EgfxCodec { avc444, avc420, remotefx, .. } => {
+            Self::EgfxCodec {
+                avc444,
+                avc420,
+                remotefx,
+                ..
+            } => {
                 let mut codecs = Vec::new();
                 if *avc444 {
                     codecs.push("AVC444");
@@ -186,7 +191,11 @@ impl std::fmt::Display for RdpCapability {
                 }
                 write!(f, "EGFX[{}]", codecs.join(","))
             }
-            Self::DesktopComposition { multi_mon, max_monitors, .. } => {
+            Self::DesktopComposition {
+                multi_mon,
+                max_monitors,
+                ..
+            } => {
                 if *multi_mon {
                     write!(f, "Desktop[multi-mon, max={}]", max_monitors)
                 } else {
@@ -200,7 +209,11 @@ impl std::fmt::Display for RdpCapability {
                     write!(f, "Cursor[painted]")
                 }
             }
-            Self::ClipboardExtended { file_copy, max_size_bytes, .. } => {
+            Self::ClipboardExtended {
+                file_copy,
+                max_size_bytes,
+                ..
+            } => {
                 let size_mb = max_size_bytes / (1024 * 1024);
                 if *file_copy {
                     write!(f, "Clipboard[files, {}MB]", size_mb)
@@ -208,7 +221,12 @@ impl std::fmt::Display for RdpCapability {
                     write!(f, "Clipboard[text, {}MB]", size_mb)
                 }
             }
-            Self::InputCapability { keyboard, mouse, touch, .. } => {
+            Self::InputCapability {
+                keyboard,
+                mouse,
+                touch,
+                ..
+            } => {
                 let mut inputs = Vec::new();
                 if *keyboard {
                     inputs.push("kbd");
@@ -241,13 +259,24 @@ mod tests {
     #[test]
     fn test_egfx_presets() {
         let avc420 = RdpCapability::egfx_avc420();
-        if let RdpCapability::EgfxCodec { avc444, avc420: has_420, .. } = avc420 {
+        if let RdpCapability::EgfxCodec {
+            avc444,
+            avc420: has_420,
+            ..
+        } = avc420
+        {
             assert!(!avc444);
             assert!(has_420);
         }
 
         let full = RdpCapability::egfx_full();
-        if let RdpCapability::EgfxCodec { avc444, avc420, remotefx, .. } = full {
+        if let RdpCapability::EgfxCodec {
+            avc444,
+            avc420,
+            remotefx,
+            ..
+        } = full
+        {
             assert!(avc444);
             assert!(avc420);
             assert!(remotefx);

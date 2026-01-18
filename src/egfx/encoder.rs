@@ -20,7 +20,9 @@
 //! - Target 30 FPS for typical desktop sharing scenarios
 
 #[cfg(feature = "h264")]
-use openh264::encoder::{BitRate, Encoder, EncoderConfig as OpenH264Config, FrameRate, FrameType, UsageType};
+use openh264::encoder::{
+    BitRate, Encoder, EncoderConfig as OpenH264Config, FrameRate, FrameType, UsageType,
+};
 #[cfg(feature = "h264")]
 use openh264::formats::{BgraSliceU8, YUVBuffer};
 
@@ -99,8 +101,8 @@ impl Default for EncoderConfig {
             width: None,
             height: None,
             color_space: None, // Encoder-specific default
-            qp_min: 0,   // OpenH264 default
-            qp_max: 51,  // OpenH264 default
+            qp_min: 0,         // OpenH264 default
+            qp_max: 51,        // OpenH264 default
         }
     }
 }
@@ -121,7 +123,7 @@ impl EncoderConfig {
             bitrate_kbps: 10000,
             max_fps: 30.0,
             enable_skip_frame: false,
-            qp_min: 10,  // Better quality range
+            qp_min: 10, // Better quality range
             qp_max: 25,
             ..Default::default()
         }
@@ -148,7 +150,7 @@ impl EncoderConfig {
             bitrate_kbps: 1000,
             max_fps: 15.0,
             enable_skip_frame: true,
-            qp_min: 20,  // Allow more compression
+            qp_min: 20, // Allow more compression
             qp_max: 45,
             ..Default::default()
         }
@@ -303,16 +305,15 @@ impl Avc420Encoder {
 
         while i < data.len() {
             // Find start code
-            let start_code_len = if i + 4 <= data.len()
-                && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01]
-            {
-                4
-            } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
-                3
-            } else {
-                i += 1;
-                continue;
-            };
+            let start_code_len =
+                if i + 4 <= data.len() && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01] {
+                    4
+                } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
+                    3
+                } else {
+                    i += 1;
+                    continue;
+                };
 
             let nal_start = i + start_code_len;
             if nal_start >= data.len() {
@@ -359,16 +360,15 @@ impl Avc420Encoder {
 
         while i < data.len() {
             // Find start code
-            let start_code_len = if i + 4 <= data.len()
-                && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01]
-            {
-                4
-            } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
-                3
-            } else {
-                i += 1;
-                continue;
-            };
+            let start_code_len =
+                if i + 4 <= data.len() && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01] {
+                    4
+                } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
+                    3
+                } else {
+                    i += 1;
+                    continue;
+                };
 
             let nal_start = i + start_code_len;
             if nal_start >= data.len() {
@@ -457,11 +457,9 @@ impl Avc420Encoder {
             );
         }
 
-        let encoder = Encoder::with_api_config(
-            openh264::OpenH264API::from_source(),
-            encoder_config,
-        )
-        .map_err(|e| EncoderError::InitFailed(format!("OpenH264 init failed: {:?}", e)))?;
+        let encoder =
+            Encoder::with_api_config(openh264::OpenH264API::from_source(), encoder_config)
+                .map_err(|e| EncoderError::InitFailed(format!("OpenH264 init failed: {:?}", e)))?;
 
         Ok(Self {
             encoder,
@@ -512,9 +510,10 @@ impl Avc420Encoder {
         let yuv = YUVBuffer::from_rgb_source(bgra_source);
 
         // Encode
-        let bitstream = self.encoder.encode(&yuv).map_err(|e| {
-            EncoderError::EncodeFailed(format!("OpenH264 encode failed: {:?}", e))
-        })?;
+        let bitstream = self
+            .encoder
+            .encode(&yuv)
+            .map_err(|e| EncoderError::EncodeFailed(format!("OpenH264 encode failed: {:?}", e)))?;
 
         // Convert bitstream to Vec<u8> (Annex B format)
         let annex_b_data = bitstream.to_vec();
@@ -689,7 +688,10 @@ mod tests {
         // Odd dimensions should fail
         let bgra_data = vec![0u8; 63 * 64 * 4];
         let result = encoder.encode_bgra(&bgra_data, 63, 64, 0);
-        assert!(matches!(result, Err(EncoderError::InvalidDimensions { .. })));
+        assert!(matches!(
+            result,
+            Err(EncoderError::InvalidDimensions { .. })
+        ));
     }
 
     #[test]

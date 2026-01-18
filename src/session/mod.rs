@@ -65,16 +65,16 @@
 //! See: docs/architecture/SESSION-PERSISTENCE-ARCHITECTURE.md
 
 pub mod credentials;
-pub mod token_manager;
-pub mod secret_service;
 pub mod flatpak_secret;
-pub mod tpm_store;
+pub mod secret_service;
 pub mod strategy;
+pub mod token_manager;
+pub mod tpm_store;
 
 // Strategy implementations
 pub mod strategies {
-    pub mod portal_token;
     pub mod mutter_direct;
+    pub mod portal_token;
     pub mod selector;
 
     #[cfg(feature = "wayland")]
@@ -83,25 +83,25 @@ pub mod strategies {
     #[cfg(feature = "libei")]
     pub mod libei;
 
-    pub use portal_token::{PortalTokenStrategy, PortalSessionHandleImpl};
     pub use mutter_direct::MutterDirectStrategy;
+    pub use portal_token::{PortalSessionHandleImpl, PortalTokenStrategy};
     pub use selector::SessionStrategySelector;
 
     #[cfg(feature = "wayland")]
     pub use wlr_direct::{WlrDirectStrategy, WlrSessionHandleImpl};
 
     #[cfg(feature = "libei")]
-    pub use libei::{LibeiStrategy, LibeiSessionHandleImpl};
+    pub use libei::{LibeiSessionHandleImpl, LibeiStrategy};
 }
 
 // Re-exports for convenience
 pub use credentials::{
-    detect_credential_storage, detect_deployment_context,
-    CredentialStorageMethod, DeploymentContext, EncryptionType,
+    detect_credential_storage, detect_deployment_context, CredentialStorageMethod,
+    DeploymentContext, EncryptionType,
 };
-pub use token_manager::TokenManager;
-pub use secret_service::AsyncSecretServiceClient;
 pub use flatpak_secret::FlatpakSecretManager;
-pub use tpm_store::AsyncTpmCredentialStore;
-pub use strategy::{SessionStrategy, SessionHandle, SessionType, SessionConfig, PipeWireAccess};
+pub use secret_service::AsyncSecretServiceClient;
 pub use strategies::SessionStrategySelector;
+pub use strategy::{PipeWireAccess, SessionConfig, SessionHandle, SessionStrategy, SessionType};
+pub use token_manager::TokenManager;
+pub use tpm_store::AsyncTpmCredentialStore;

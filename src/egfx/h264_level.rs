@@ -54,7 +54,7 @@ impl H264Level {
             H264Level::L2_2 => 20_250,
             H264Level::L3_0 => 40_500,
             H264Level::L3_1 => 108_000,
-            H264Level::L3_2 => 108_000,  // Note: 216,000 if frame ≤ 1620 MBs
+            H264Level::L3_2 => 108_000, // Note: 216,000 if frame ≤ 1620 MBs
             H264Level::L4_0 => 245_760,
             H264Level::L4_1 => 245_760,
             H264Level::L4_2 => 522_240,
@@ -68,7 +68,11 @@ impl H264Level {
     pub const fn max_frame_macroblocks(&self) -> u32 {
         match self {
             H264Level::L1_0 => 99,
-            H264Level::L1_1 | H264Level::L1_2 | H264Level::L1_3 | H264Level::L2_0 | H264Level::L2_1 => 396,
+            H264Level::L1_1
+            | H264Level::L1_2
+            | H264Level::L1_3
+            | H264Level::L2_0
+            | H264Level::L2_1 => 396,
             H264Level::L2_2 | H264Level::L3_0 => 1_620,
             H264Level::L3_1 => 3_600,
             H264Level::L3_2 => 5_120,
@@ -82,7 +86,7 @@ impl H264Level {
     /// Get effective max MB/s for Level 3.2 with special frame size handling
     pub const fn effective_max_mbs_per_sec(&self, frame_mbs: u32) -> u32 {
         if matches!(self, H264Level::L3_2) && frame_mbs <= 1_620 {
-            216_000  // Higher limit for small frames
+            216_000 // Higher limit for small frames
         } else {
             self.max_macroblocks_per_second()
         }
@@ -358,7 +362,7 @@ mod tests {
 
         // Max FPS for Level 3.1
         let max_fps = constraints.max_fps_for_level(H264Level::L3_1);
-        assert_eq!(max_fps, 30.0);  // 108,000 / 3,600 = 30.0
+        assert_eq!(max_fps, 30.0); // 108,000 / 3,600 = 30.0
     }
 
     #[test]
@@ -377,11 +381,11 @@ mod tests {
 
         // Max FPS for Level 3.2 (special handling)
         let max_fps_3_2 = constraints.max_fps_for_level(H264Level::L3_2);
-        assert_eq!(max_fps_3_2, 27.0);  // 108,000 / 4,000 = 27.0
+        assert_eq!(max_fps_3_2, 27.0); // 108,000 / 4,000 = 27.0
 
         // Max FPS for Level 4.0
         let max_fps_4_0 = constraints.max_fps_for_level(H264Level::L4_0);
-        assert_eq!(max_fps_4_0, 61.44);  // 245,760 / 4,000 = 61.44
+        assert_eq!(max_fps_4_0, 61.44); // 245,760 / 4,000 = 61.44
     }
 
     #[test]

@@ -98,19 +98,19 @@ impl ModeSettings {
         match mode {
             LatencyMode::Interactive => Self {
                 max_frame_delay_ms: 16.0, // ~60fps timing
-                damage_threshold: 0.0,     // Encode ANY change immediately
-                use_adaptive_fps: false,   // Always max FPS
+                damage_threshold: 0.0,    // Encode ANY change immediately
+                use_adaptive_fps: false,  // Always max FPS
                 encode_timeout_ms: 10,
             },
             LatencyMode::Balanced => Self {
                 max_frame_delay_ms: 33.0, // ~30fps timing
-                damage_threshold: 0.02,    // 2% damage threshold
+                damage_threshold: 0.02,   // 2% damage threshold
                 use_adaptive_fps: true,
                 encode_timeout_ms: 20,
             },
             LatencyMode::Quality => Self {
                 max_frame_delay_ms: 100.0, // Can batch more
-                damage_threshold: 0.05,     // 5% damage threshold
+                damage_threshold: 0.05,    // 5% damage threshold
                 use_adaptive_fps: true,
                 encode_timeout_ms: 50,
             },
@@ -309,14 +309,14 @@ impl LatencyGovernor {
         // Simple exponential moving average
         const ALPHA: f32 = 0.1;
 
-        self.metrics.capture_to_encode_avg_ms = self.metrics.capture_to_encode_avg_ms * (1.0 - ALPHA)
-            + capture_to_encode_ms * ALPHA;
+        self.metrics.capture_to_encode_avg_ms =
+            self.metrics.capture_to_encode_avg_ms * (1.0 - ALPHA) + capture_to_encode_ms * ALPHA;
 
         self.metrics.encode_duration_avg_ms =
             self.metrics.encode_duration_avg_ms * (1.0 - ALPHA) + encode_duration_ms * ALPHA;
 
-        self.metrics.total_latency_avg_ms = self.metrics.capture_to_encode_avg_ms
-            + self.metrics.encode_duration_avg_ms;
+        self.metrics.total_latency_avg_ms =
+            self.metrics.capture_to_encode_avg_ms + self.metrics.encode_duration_avg_ms;
     }
 
     /// Get current mode

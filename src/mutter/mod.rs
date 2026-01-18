@@ -30,16 +30,16 @@
 //! let (pipewire_node, streams) = manager.start_capture(&session).await?;
 //! ```
 
-pub mod screencast;
-pub mod remote_desktop;
-pub mod session_manager;
 pub mod pipewire_helper;
+pub mod remote_desktop;
+pub mod screencast;
+pub mod session_manager;
 
 // Re-exports
-pub use screencast::{MutterScreenCast, MutterScreenCastSession, MutterScreenCastStream};
-pub use remote_desktop::{MutterRemoteDesktop, MutterRemoteDesktopSession};
-pub use session_manager::{MutterSessionManager, MutterSessionHandle};
 pub use pipewire_helper::{connect_to_pipewire_daemon, get_pipewire_fd_for_mutter};
+pub use remote_desktop::{MutterRemoteDesktop, MutterRemoteDesktopSession};
+pub use screencast::{MutterScreenCast, MutterScreenCastSession, MutterScreenCastStream};
+pub use session_manager::{MutterSessionHandle, MutterSessionManager};
 
 use anyhow::Result;
 
@@ -48,9 +48,7 @@ use anyhow::Result;
 /// Returns true if org.gnome.Mutter.ScreenCast is accessible on D-Bus
 pub async fn is_mutter_screencast_available() -> bool {
     match zbus::Connection::session().await {
-        Ok(conn) => {
-            screencast::MutterScreenCast::new(&conn).await.is_ok()
-        }
+        Ok(conn) => screencast::MutterScreenCast::new(&conn).await.is_ok(),
         Err(_) => false,
     }
 }
@@ -60,9 +58,9 @@ pub async fn is_mutter_screencast_available() -> bool {
 /// Returns true if org.gnome.Mutter.RemoteDesktop is accessible on D-Bus
 pub async fn is_mutter_remote_desktop_available() -> bool {
     match zbus::Connection::session().await {
-        Ok(conn) => {
-            remote_desktop::MutterRemoteDesktop::new(&conn).await.is_ok()
-        }
+        Ok(conn) => remote_desktop::MutterRemoteDesktop::new(&conn)
+            .await
+            .is_ok(),
         Err(_) => false,
     }
 }

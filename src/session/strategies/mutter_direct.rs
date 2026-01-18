@@ -174,7 +174,9 @@ impl SessionStrategy for MutterDirectStrategy {
 
         // Check if running in Flatpak (would block D-Bus access)
         if std::path::Path::new("/.flatpak-info").exists() {
-            return Err(anyhow!("Mutter Direct API not available in Flatpak (sandbox blocks D-Bus access)"));
+            return Err(anyhow!(
+                "Mutter Direct API not available in Flatpak (sandbox blocks D-Bus access)"
+            ));
         }
 
         // Create Mutter session manager
@@ -194,7 +196,12 @@ impl SessionStrategy for MutterDirectStrategy {
         for (idx, stream) in mutter_handle.streams().iter().enumerate() {
             info!(
                 "  Stream {}: {}x{} at ({}, {}), PipeWire node: {}",
-                idx, stream.width, stream.height, stream.position_x, stream.position_y, stream.node_id
+                idx,
+                stream.width,
+                stream.height,
+                stream.position_x,
+                stream.position_y,
+                stream.node_id
             );
         }
 

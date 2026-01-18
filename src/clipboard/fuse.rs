@@ -142,10 +142,7 @@ pub struct FuseClipboardFs {
 
 impl FuseClipboardFs {
     /// Create a new FUSE filesystem
-    pub fn new(
-        request_tx: mpsc::Sender<FileContentsRequest>,
-        mount_point: PathBuf,
-    ) -> Self {
+    pub fn new(request_tx: mpsc::Sender<FileContentsRequest>, mount_point: PathBuf) -> Self {
         Self {
             files: Arc::new(RwLock::new(HashMap::new())),
             name_to_inode: Arc::new(RwLock::new(HashMap::new())),
@@ -166,7 +163,13 @@ impl FuseClipboardFs {
     }
 
     /// Add a virtual file and return its inode
-    pub fn add_file(&self, filename: String, size: u64, file_index: u32, clip_data_id: Option<u32>) -> u64 {
+    pub fn add_file(
+        &self,
+        filename: String,
+        size: u64,
+        file_index: u32,
+        clip_data_id: Option<u32>,
+    ) -> u64 {
         let inode = self.next_inode.fetch_add(1, Ordering::SeqCst);
         let file = VirtualFile {
             inode,
@@ -475,7 +478,10 @@ impl FuseManager {
             ClipboardError::FileIoError(format!("Failed to create FUSE mount point: {}", e))
         })?;
 
-        info!("Mounting FUSE clipboard filesystem at {:?}", self.mount_point);
+        info!(
+            "Mounting FUSE clipboard filesystem at {:?}",
+            self.mount_point
+        );
 
         // Helper to create filesystem with shared state
         let create_fs = || FuseClipboardFsShared {
@@ -490,7 +496,7 @@ impl FuseManager {
         // This requires 'user_allow_other' in /etc/fuse.conf
         let options_with_allow_other = vec![
             MountOption::RO,
-            MountOption::FSName("wrd-clipboard".to_string()),
+            MountOption::FSName("lamco-clipboard".to_string()),
             MountOption::AllowOther,
             MountOption::AutoUnmount,
         ];
@@ -512,14 +518,12 @@ impl FuseManager {
         // Fallback: mount without AllowOther (only current user can access)
         let options_user_only = vec![
             MountOption::RO,
-            MountOption::FSName("wrd-clipboard".to_string()),
+            MountOption::FSName("lamco-clipboard".to_string()),
             MountOption::AutoUnmount,
         ];
 
-        let session =
-            fuser::spawn_mount2(create_fs(), &self.mount_point, &options_user_only).map_err(
-                |e| ClipboardError::FileIoError(format!("Failed to mount FUSE: {}", e)),
-            )?;
+        let session = fuser::spawn_mount2(create_fs(), &self.mount_point, &options_user_only)
+            .map_err(|e| ClipboardError::FileIoError(format!("Failed to mount FUSE: {}", e)))?;
 
         self.session = Some(SendableSession(session));
         info!("FUSE clipboard filesystem mounted (user-only mode)");
@@ -812,10 +816,10 @@ impl Filesystem for FuseClipboardFsShared {
 /// Get the FUSE mount point path
 pub fn get_mount_point() -> PathBuf {
     let uid = unsafe { libc::getuid() };
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| format!("/run/user/{}", uid));
+    let runtime_dir =
+        std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", uid));
 
-    PathBuf::from(runtime_dir).join("wrd-clipboard-fuse")
+    PathBuf::from(runtime_dir).join("lamco-clipboard-fuse")
 }
 
 /// Get root directory attributes
@@ -911,7 +915,7 @@ mod tests {
     #[test]
     fn test_get_mount_point() {
         let path = get_mount_point();
-        assert!(path.to_string_lossy().contains("wrd-clipboard-fuse"));
+        assert!(path.to_string_lossy().contains("lamco-clipboard-fuse"));
     }
 
     #[test]
@@ -936,9 +940,7 @@ mod tests {
 
     #[test]
     fn test_generate_uri_list() {
-        let paths = vec![
-            PathBuf::from("/tmp/test/file1.txt"),
-        ];
+        let paths = vec![PathBuf::from("/tmp/test/file1.txt")];
         let content = generate_uri_list_content(&paths);
         assert_eq!(content, "file:///tmp/test/file1.txt\r\n");
     }

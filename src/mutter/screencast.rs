@@ -49,13 +49,15 @@ impl<'a> MutterScreenCast<'a> {
         &self,
         properties: HashMap<String, Value<'_>>,
     ) -> Result<OwnedObjectPath> {
-        let response = self.proxy
+        let response = self
+            .proxy
             .call_method("CreateSession", &(properties,))
             .await
             .context("Failed to call CreateSession")?;
 
         let body = response.body();
-        let path: OwnedObjectPath = body.deserialize()
+        let path: OwnedObjectPath = body
+            .deserialize()
             .context("Failed to deserialize CreateSession response")?;
 
         Ok(path)
@@ -104,13 +106,15 @@ impl<'a> MutterScreenCastSession<'a> {
         connector: &str,
         properties: HashMap<String, Value<'_>>,
     ) -> Result<OwnedObjectPath> {
-        let response = self.proxy
+        let response = self
+            .proxy
             .call_method("RecordMonitor", &(connector, properties))
             .await
             .context("Failed to call RecordMonitor")?;
 
         let body = response.body();
-        let path: OwnedObjectPath = body.deserialize()
+        let path: OwnedObjectPath = body
+            .deserialize()
             .context("Failed to deserialize RecordMonitor response")?;
 
         Ok(path)
@@ -129,13 +133,15 @@ impl<'a> MutterScreenCastSession<'a> {
         &self,
         properties: HashMap<String, Value<'_>>,
     ) -> Result<OwnedObjectPath> {
-        let response = self.proxy
+        let response = self
+            .proxy
             .call_method("RecordVirtual", &(properties,))
             .await
             .context("Failed to call RecordVirtual")?;
 
         let body = response.body();
-        let path: OwnedObjectPath = body.deserialize()
+        let path: OwnedObjectPath = body
+            .deserialize()
             .context("Failed to deserialize RecordVirtual response")?;
 
         Ok(path)
@@ -189,7 +195,9 @@ impl<'a> MutterScreenCastStream<'a> {
     ///
     /// The node ID is emitted via the PipeWireStreamAdded signal when the stream starts,
     /// not as a property. We must subscribe before the signal is emitted.
-    pub async fn subscribe_for_node_id(&self) -> Result<impl futures_util::Stream<Item = zbus::Message>> {
+    pub async fn subscribe_for_node_id(
+        &self,
+    ) -> Result<impl futures_util::Stream<Item = zbus::Message>> {
         self.proxy
             .receive_signal("PipeWireStreamAdded")
             .await
@@ -258,22 +266,24 @@ impl StreamParameters {
                     let fields = structure.fields();
 
                     // Extract the field at the requested index
-                    fields.get(index).and_then(|field: &zbus::zvariant::Value<'_>| {
-                        // Try to extract as i32
-                        match field.downcast_ref::<i32>() {
-                            Ok(val) => Some(val),
-                            Err(_) => {
-                                // Log unexpected type for debugging
-                                tracing::debug!(
-                                    "Mutter parameter '{}' index {} has unexpected type: {:?}",
-                                    key,
-                                    index,
-                                    field.value_signature()
-                                );
-                                None
+                    fields
+                        .get(index)
+                        .and_then(|field: &zbus::zvariant::Value<'_>| {
+                            // Try to extract as i32
+                            match field.downcast_ref::<i32>() {
+                                Ok(val) => Some(val),
+                                Err(_) => {
+                                    // Log unexpected type for debugging
+                                    tracing::debug!(
+                                        "Mutter parameter '{}' index {} has unexpected type: {:?}",
+                                        key,
+                                        index,
+                                        field.value_signature()
+                                    );
+                                    None
+                                }
                             }
-                        }
-                    })
+                        })
                 }
                 Err(_) => {
                     // Not a structure, log for debugging
@@ -297,12 +307,10 @@ mod tests {
     #[ignore] // Requires GNOME with Mutter
     async fn test_mutter_screencast_availability() {
         match zbus::Connection::session().await {
-            Ok(conn) => {
-                match MutterScreenCast::new(&conn).await {
-                    Ok(_proxy) => println!("Mutter ScreenCast API available"),
-                    Err(e) => println!("Mutter ScreenCast not available: {}", e),
-                }
-            }
+            Ok(conn) => match MutterScreenCast::new(&conn).await {
+                Ok(_proxy) => println!("Mutter ScreenCast API available"),
+                Err(e) => println!("Mutter ScreenCast not available: {}", e),
+            },
             Err(e) => println!("D-Bus session not available: {}", e),
         }
     }

@@ -156,10 +156,8 @@ fn translate_dmabuf(caps: &CompositorCapabilities) -> AdvertisedService {
                 .with_rdp_capability(RdpCapability::egfx_avc420())
                 .with_performance(PerformanceHints::memcpy())
         }
-        BufferType::MemFd => {
-            AdvertisedService::unavailable(ServiceId::DmaBufZeroCopy)
-                .with_note("Compositor prefers MemFd buffers")
-        }
+        BufferType::MemFd => AdvertisedService::unavailable(ServiceId::DmaBufZeroCopy)
+            .with_note("Compositor prefers MemFd buffers"),
     }
 }
 
@@ -175,12 +173,13 @@ fn translate_explicit_sync(caps: &CompositorCapabilities) -> AdvertisedService {
 fn translate_fractional_scaling(caps: &CompositorCapabilities) -> AdvertisedService {
     if caps.has_fractional_scale() {
         let feature = WaylandFeature::FractionalScaling { max_scale: 3.0 };
-        AdvertisedService::guaranteed(ServiceId::FractionalScaling, feature)
-            .with_rdp_capability(RdpCapability::DesktopComposition {
+        AdvertisedService::guaranteed(ServiceId::FractionalScaling, feature).with_rdp_capability(
+            RdpCapability::DesktopComposition {
                 multi_mon: false,
                 max_monitors: 1,
                 scaling: true,
-            })
+            },
+        )
     } else {
         AdvertisedService::unavailable(ServiceId::FractionalScaling)
     }
@@ -191,7 +190,9 @@ fn translate_metadata_cursor(caps: &CompositorCapabilities) -> AdvertisedService
     let profile = &caps.profile;
 
     // Check if metadata cursor mode is available
-    let has_metadata = portal.available_cursor_modes.contains(&CursorMode::Metadata);
+    let has_metadata = portal
+        .available_cursor_modes
+        .contains(&CursorMode::Metadata);
 
     // Check for cursor quirks
     let needs_composite = profile.has_quirk(&Quirk::NeedsExplicitCursorComposite);
@@ -263,8 +264,7 @@ fn translate_multi_monitor(caps: &CompositorCapabilities) -> AdvertisedService {
             .with_rdp_capability(rdp_cap)
             .with_note("Capture restarts on resolution change")
     } else {
-        AdvertisedService::guaranteed(ServiceId::MultiMonitor, feature)
-            .with_rdp_capability(rdp_cap)
+        AdvertisedService::guaranteed(ServiceId::MultiMonitor, feature).with_rdp_capability(rdp_cap)
     }
 }
 
@@ -361,8 +361,8 @@ fn translate_video_capture(caps: &CompositorCapabilities) -> AdvertisedService {
 // ============================================================================
 
 fn translate_session_persistence(caps: &CompositorCapabilities) -> AdvertisedService {
-    use crate::session::CredentialStorageMethod;
     use crate::services::wayland_features::TokenStorageMethod;
+    use crate::session::CredentialStorageMethod;
 
     let portal = &caps.portal;
 
@@ -403,11 +403,18 @@ fn translate_session_persistence(caps: &CompositorCapabilities) -> AdvertisedSer
 
     // Create service with appropriate constructor
     let service = match level {
-        ServiceLevel::Guaranteed => AdvertisedService::guaranteed(ServiceId::SessionPersistence, feature),
-        ServiceLevel::BestEffort => AdvertisedService::best_effort(ServiceId::SessionPersistence, feature),
+        ServiceLevel::Guaranteed => {
+            AdvertisedService::guaranteed(ServiceId::SessionPersistence, feature)
+        }
+        ServiceLevel::BestEffort => {
+            AdvertisedService::best_effort(ServiceId::SessionPersistence, feature)
+        }
         ServiceLevel::Degraded => {
             let note = if !portal.supports_restore_tokens {
-                format!("Portal v{} does not support restore tokens (requires v4+)", portal.version)
+                format!(
+                    "Portal v{} does not support restore tokens (requires v4+)",
+                    portal.version
+                )
             } else if !accessible {
                 "Credential storage exists but is not accessible (locked?)".to_string()
             } else {
@@ -416,8 +423,9 @@ fn translate_session_persistence(caps: &CompositorCapabilities) -> AdvertisedSer
             AdvertisedService::degraded(ServiceId::SessionPersistence, feature, &note)
         }
         ServiceLevel::Unavailable => {
-            return AdvertisedService::unavailable(ServiceId::SessionPersistence)
-                .with_note(&format!("Portal v{} does not support restore tokens", portal.version));
+            return AdvertisedService::unavailable(ServiceId::SessionPersistence).with_note(
+                &format!("Portal v{} does not support restore tokens", portal.version),
+            );
         }
     };
 
@@ -443,11 +451,10 @@ fn translate_direct_compositor_api(caps: &CompositorCapabilities) -> AdvertisedS
 
     match &caps.compositor {
         CompositorType::Gnome { version } => {
-            AdvertisedService::unavailable(ServiceId::DirectCompositorAPI)
-                .with_note(&format!(
-                    "Mutter API non-functional (tested on GNOME 40, 46 - session linkage broken). GNOME {}",
-                    version.as_deref().unwrap_or("unknown")
-                ))
+            AdvertisedService::unavailable(ServiceId::DirectCompositorAPI).with_note(&format!(
+            "Mutter API non-functional (tested on GNOME 40, 46 - session linkage broken). GNOME {}",
+            version.as_deref().unwrap_or("unknown")
+        ))
         }
         _ => AdvertisedService::unavailable(ServiceId::DirectCompositorAPI)
             .with_note("Only implemented for GNOME compositor"),
@@ -482,9 +489,10 @@ fn translate_credential_storage(caps: &CompositorCapabilities) -> AdvertisedServ
     };
 
     let note = match (deployment, method) {
-        (crate::session::DeploymentContext::Flatpak, CredentialStorageMethod::FlatpakSecretPortal) => {
-            Some("Using Flatpak Secret Portal (host keyring via sandbox)".to_string())
-        }
+        (
+            crate::session::DeploymentContext::Flatpak,
+            CredentialStorageMethod::FlatpakSecretPortal,
+        ) => Some("Using Flatpak Secret Portal (host keyring via sandbox)".to_string()),
         (crate::session::DeploymentContext::Flatpak, _) => {
             Some("Using encrypted file (Secret Portal unavailable)".to_string())
         }
@@ -507,16 +515,12 @@ fn translate_credential_storage(caps: &CompositorCapabilities) -> AdvertisedServ
             }
             s
         }
-        ServiceLevel::Degraded => {
-            AdvertisedService::degraded(
-                ServiceId::CredentialStorage,
-                feature,
-                note.as_deref().unwrap_or("Credential storage degraded")
-            )
-        }
-        ServiceLevel::Unavailable => {
-            AdvertisedService::unavailable(ServiceId::CredentialStorage)
-        }
+        ServiceLevel::Degraded => AdvertisedService::degraded(
+            ServiceId::CredentialStorage,
+            feature,
+            note.as_deref().unwrap_or("Credential storage degraded"),
+        ),
+        ServiceLevel::Unavailable => AdvertisedService::unavailable(ServiceId::CredentialStorage),
     };
 
     service
@@ -573,8 +577,12 @@ fn translate_wlr_direct_input(caps: &CompositorCapabilities) -> AdvertisedServic
     let has_pointer = caps.has_protocol("zwlr_virtual_pointer_manager_v1", 1);
 
     if has_keyboard && has_pointer {
-        let keyboard_version = caps.get_protocol_version("zwp_virtual_keyboard_manager_v1").unwrap_or(1);
-        let pointer_version = caps.get_protocol_version("zwlr_virtual_pointer_manager_v1").unwrap_or(1);
+        let keyboard_version = caps
+            .get_protocol_version("zwp_virtual_keyboard_manager_v1")
+            .unwrap_or(1);
+        let pointer_version = caps
+            .get_protocol_version("zwlr_virtual_pointer_manager_v1")
+            .unwrap_or(1);
 
         let feature = WaylandFeature::WlrDirectInput {
             keyboard_version,
@@ -590,12 +598,14 @@ fn translate_wlr_direct_input(caps: &CompositorCapabilities) -> AdvertisedServic
         AdvertisedService::degraded(
             ServiceId::WlrDirectInput,
             WaylandFeature::WlrDirectInput {
-                keyboard_version: caps.get_protocol_version("zwp_virtual_keyboard_manager_v1").unwrap_or(1),
+                keyboard_version: caps
+                    .get_protocol_version("zwp_virtual_keyboard_manager_v1")
+                    .unwrap_or(1),
                 pointer_version: 0,
                 supports_modifiers: true,
                 supports_touch: false,
             },
-            "Virtual keyboard available but virtual pointer missing (wlroots < 0.12?)"
+            "Virtual keyboard available but virtual pointer missing (wlroots < 0.12?)",
         )
     } else {
         AdvertisedService::unavailable(ServiceId::WlrDirectInput)
@@ -617,11 +627,10 @@ fn translate_libei_input(caps: &CompositorCapabilities) -> AdvertisedService {
     let has_connect_to_eis = portal.version >= 2;
 
     if !has_connect_to_eis {
-        return AdvertisedService::unavailable(ServiceId::LibeiInput)
-            .with_note(&format!(
-                "Portal v{} does not support ConnectToEIS (requires v2+)",
-                portal.version
-            ));
+        return AdvertisedService::unavailable(ServiceId::LibeiInput).with_note(&format!(
+            "Portal v{} does not support ConnectToEIS (requires v2+)",
+            portal.version
+        ));
     }
 
     // libei supports keyboard, pointer, and potentially touch
@@ -668,38 +677,35 @@ fn translate_unattended_access(caps: &CompositorCapabilities) -> AdvertisedServi
     let (level, note) = match (can_avoid_dialog, can_store_credentials) {
         (true, true) => (
             ServiceLevel::Guaranteed,
-            "Full unattended operation available"
+            "Full unattended operation available",
         ),
         (true, false) => (
             ServiceLevel::BestEffort,
-            "Dialog avoidance available, credential storage limited"
+            "Dialog avoidance available, credential storage limited",
         ),
         (false, true) => (
             ServiceLevel::Degraded,
-            "Credential storage available, but dialog required each session"
+            "Credential storage available, but dialog required each session",
         ),
         (false, false) => (
             ServiceLevel::Unavailable,
-            "Manual intervention required for each session"
+            "Manual intervention required for each session",
         ),
     };
 
     // Create service with appropriate constructor
     match level {
         ServiceLevel::Guaranteed => {
-            AdvertisedService::guaranteed(ServiceId::UnattendedAccess, feature)
-                .with_note(note)
+            AdvertisedService::guaranteed(ServiceId::UnattendedAccess, feature).with_note(note)
         }
         ServiceLevel::BestEffort => {
-            AdvertisedService::best_effort(ServiceId::UnattendedAccess, feature)
-                .with_note(note)
+            AdvertisedService::best_effort(ServiceId::UnattendedAccess, feature).with_note(note)
         }
         ServiceLevel::Degraded => {
             AdvertisedService::degraded(ServiceId::UnattendedAccess, feature, note)
         }
         ServiceLevel::Unavailable => {
-            AdvertisedService::unavailable(ServiceId::UnattendedAccess)
-                .with_note(note)
+            AdvertisedService::unavailable(ServiceId::UnattendedAccess).with_note(note)
         }
     }
 }

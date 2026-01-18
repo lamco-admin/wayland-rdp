@@ -219,8 +219,8 @@ pub use lamco_rdp_clipboard;
 /// Portal types (convenience re-export)
 pub mod portal {
     pub use lamco_portal::{
-        ClipboardManager as PortalClipboardManager, PortalConfig, PortalConfigBuilder,
-        PortalError, PortalManager, PortalSessionHandle, RemoteDesktopManager, Result as PortalResult,
+        ClipboardManager as PortalClipboardManager, PortalConfig, PortalConfigBuilder, PortalError,
+        PortalManager, PortalSessionHandle, RemoteDesktopManager, Result as PortalResult,
         ScreenCastManager, SourceType, StreamInfo,
     };
 }
@@ -228,15 +228,27 @@ pub mod portal {
 /// PipeWire types (convenience re-export)
 pub mod pipewire {
     pub use lamco_pipewire::{
+        // Multi-stream coordinator types
+        MonitorInfo,
+        MultiStreamConfig,
+        MultiStreamCoordinator,
         // Core manager types
-        PipeWireConfig, PipeWireConfigBuilder, PipeWireError, PipeWireManager,
-        PipeWireThreadCommand, PipeWireThreadManager, Result as PipeWireResult,
+        PipeWireConfig,
+        PipeWireConfigBuilder,
         // Connection types
         PipeWireConnection,
+        PipeWireError,
+        PipeWireManager,
+        PipeWireThreadCommand,
+        PipeWireThreadManager,
         // Stream types
-        PixelFormat, SourceType, StreamConfig, StreamHandle, StreamInfo, VideoFrame,
-        // Multi-stream coordinator types
-        MonitorInfo, MultiStreamConfig, MultiStreamCoordinator,
+        PixelFormat,
+        Result as PipeWireResult,
+        SourceType,
+        StreamConfig,
+        StreamHandle,
+        StreamInfo,
+        VideoFrame,
     };
 }
 
@@ -252,7 +264,7 @@ pub mod video {
 pub mod input {
     pub use lamco_rdp_input::{
         CoordinateTransformer, InputError, InputTranslator, KeyModifiers, KeyboardEvent,
-        KeyboardEventType, KeyboardHandler, LinuxInputEvent, MonitorInfo, MouseButton,
-        MouseEvent, MouseHandler, RdpInputEvent, Result as InputResult,
+        KeyboardEventType, KeyboardHandler, LinuxInputEvent, MonitorInfo, MouseButton, MouseEvent,
+        MouseHandler, RdpInputEvent, Result as InputResult,
     };
 }

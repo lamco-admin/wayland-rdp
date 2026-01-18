@@ -166,11 +166,8 @@ impl GfxServerFactory for WrdGfxFactory {
     fn build_gfx_handler(&self) -> Box<dyn GraphicsPipelineHandler> {
         // Basic mode: just return the handler without shared access
         // Note: This method is called when build_server_with_handle() returns None
-        let handler = WrdGraphicsHandler::with_quirks(
-            self.width,
-            self.height,
-            self.force_avc420_only,
-        );
+        let handler =
+            WrdGraphicsHandler::with_quirks(self.width, self.height, self.force_avc420_only);
         Box::new(handler)
     }
 

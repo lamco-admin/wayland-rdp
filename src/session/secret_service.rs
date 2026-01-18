@@ -238,19 +238,15 @@ pub fn check_secret_service_unlocked() -> bool {
     let handle = tokio::runtime::Handle::try_current();
 
     match handle {
-        Ok(h) => {
-            h.block_on(async {
-                match SecretService::connect(EncryptionType::Dh).await {
-                    Ok(service) => {
-                        match service.get_default_collection().await {
-                            Ok(collection) => !collection.is_locked().await.unwrap_or(true),
-                            Err(_) => false,
-                        }
-                    }
+        Ok(h) => h.block_on(async {
+            match SecretService::connect(EncryptionType::Dh).await {
+                Ok(service) => match service.get_default_collection().await {
+                    Ok(collection) => !collection.is_locked().await.unwrap_or(true),
                     Err(_) => false,
-                }
-            })
-        }
+                },
+                Err(_) => false,
+            }
+        }),
         Err(_) => {
             // No runtime, can't check async
             false
@@ -297,7 +293,10 @@ mod tests {
             .expect("Failed to store");
 
         // Retrieve
-        let retrieved = client.lookup_secret(key.clone()).await.expect("Failed to retrieve");
+        let retrieved = client
+            .lookup_secret(key.clone())
+            .await
+            .expect("Failed to retrieve");
         assert_eq!(retrieved, secret);
 
         // Delete

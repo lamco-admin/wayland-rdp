@@ -175,14 +175,14 @@ impl SessionStrategy for LibeiStrategy {
         let stream = UnixStream::from(fd);
 
         // Create EIS context
-        let context = ei::Context::new(stream)
-            .context("Failed to create EIS context from socket")?;
+        let context =
+            ei::Context::new(stream).context("Failed to create EIS context from socket")?;
 
         info!("🔑 libei: EIS context created, performing handshake");
 
         // Perform handshake and get event stream (tokio-async)
-        let mut events = EiEventStream::new(context.clone())
-            .context("Failed to create EIS event stream")?;
+        let mut events =
+            EiEventStream::new(context.clone()).context("Failed to create EIS event stream")?;
 
         let handshake_resp = reis::tokio::ei_handshake(
             &mut events,
@@ -453,9 +453,7 @@ impl SessionHandle for LibeiSessionHandleImpl {
 
     fn streams(&self) -> Vec<StreamInfo> {
         // Return streams synchronously
-        futures::executor::block_on(async {
-            self.streams.lock().await.clone()
-        })
+        futures::executor::block_on(async { self.streams.lock().await.clone() })
     }
 
     fn session_type(&self) -> SessionType {
@@ -469,8 +467,7 @@ impl SessionHandle for LibeiSessionHandleImpl {
             kbd.clone()
         };
 
-        let device = kbd_device_opt
-            .ok_or_else(|| anyhow!("Keyboard device not yet available"))?;
+        let device = kbd_device_opt.ok_or_else(|| anyhow!("Keyboard device not yet available"))?;
 
         // Get device data to access keyboard interface
         let devices = self.devices.lock().await;
@@ -518,8 +515,7 @@ impl SessionHandle for LibeiSessionHandleImpl {
             ptr.clone()
         };
 
-        let device = ptr_device_opt
-            .ok_or_else(|| anyhow!("Pointer device not yet available"))?;
+        let device = ptr_device_opt.ok_or_else(|| anyhow!("Pointer device not yet available"))?;
 
         // Get device data to access pointer interface
         let devices = self.devices.lock().await;
@@ -544,7 +540,10 @@ impl SessionHandle for LibeiSessionHandleImpl {
         // Flush to send
         self.context.flush()?;
 
-        debug!("[libei] Pointer motion: stream={}, x={}, y={}", stream_id, x, y);
+        debug!(
+            "[libei] Pointer motion: stream={}, x={}, y={}",
+            stream_id, x, y
+        );
 
         Ok(())
     }
@@ -556,8 +555,7 @@ impl SessionHandle for LibeiSessionHandleImpl {
             ptr.clone()
         };
 
-        let device = ptr_device_opt
-            .ok_or_else(|| anyhow!("Pointer device not yet available"))?;
+        let device = ptr_device_opt.ok_or_else(|| anyhow!("Pointer device not yet available"))?;
 
         // Get device data to access button interface
         let devices = self.devices.lock().await;
@@ -589,7 +587,10 @@ impl SessionHandle for LibeiSessionHandleImpl {
         // Flush to send
         self.context.flush()?;
 
-        debug!("[libei] Pointer button: button={}, pressed={}", button, pressed);
+        debug!(
+            "[libei] Pointer button: button={}, pressed={}",
+            button, pressed
+        );
 
         Ok(())
     }
@@ -601,8 +602,7 @@ impl SessionHandle for LibeiSessionHandleImpl {
             ptr.clone()
         };
 
-        let device = ptr_device_opt
-            .ok_or_else(|| anyhow!("Pointer device not yet available"))?;
+        let device = ptr_device_opt.ok_or_else(|| anyhow!("Pointer device not yet available"))?;
 
         // Get device data to access scroll interface
         let devices = self.devices.lock().await;

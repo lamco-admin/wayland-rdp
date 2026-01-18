@@ -64,11 +64,13 @@ impl SessionStrategySelector {
         info!("📦 Deployment: {}", caps.deployment);
         info!(
             "🎯 Session Persistence: {}",
-            self.service_registry.service_level(ServiceId::SessionPersistence)
+            self.service_registry
+                .service_level(ServiceId::SessionPersistence)
         );
         info!(
             "🎯 Direct Compositor API: {}",
-            self.service_registry.service_level(ServiceId::DirectCompositorAPI)
+            self.service_registry
+                .service_level(ServiceId::DirectCompositorAPI)
         );
 
         // DEPLOYMENT CONSTRAINT CHECK
@@ -108,7 +110,9 @@ impl SessionStrategySelector {
         }
 
         // PRIORITY 1: Mutter Direct API (GNOME only, zero dialogs ever)
-        if self.service_registry.service_level(ServiceId::DirectCompositorAPI)
+        if self
+            .service_registry
+            .service_level(ServiceId::DirectCompositorAPI)
             >= ServiceLevel::BestEffort
         {
             // Verify Mutter API is actually accessible
@@ -128,7 +132,9 @@ impl SessionStrategySelector {
 
         // PRIORITY 2: wlr-direct (wlroots compositors, native protocols)
         #[cfg(feature = "wayland")]
-        if self.service_registry.service_level(ServiceId::WlrDirectInput)
+        if self
+            .service_registry
+            .service_level(ServiceId::WlrDirectInput)
             >= ServiceLevel::BestEffort
         {
             use super::wlr_direct::WlrDirectStrategy;
@@ -149,9 +155,7 @@ impl SessionStrategySelector {
 
         // PRIORITY 3: libei/EIS (wlroots via Portal RemoteDesktop, Flatpak-compatible)
         #[cfg(feature = "libei")]
-        if self.service_registry.service_level(ServiceId::LibeiInput)
-            >= ServiceLevel::BestEffort
-        {
+        if self.service_registry.service_level(ServiceId::LibeiInput) >= ServiceLevel::BestEffort {
             use super::libei::LibeiStrategy;
 
             // Verify Portal RemoteDesktop with ConnectToEIS is accessible
@@ -224,8 +228,8 @@ impl SessionStrategySelector {
     ///
     /// Reads /sys/class/drm/ to find connected displays
     async fn enumerate_drm_connectors() -> anyhow::Result<Vec<String>> {
-        use tokio::fs;
         use std::path::Path;
+        use tokio::fs;
 
         let mut connectors = Vec::new();
 
@@ -280,9 +284,7 @@ mod tests {
         use crate::services::ServiceRegistry;
         use crate::session::CredentialStorageMethod;
 
-        let compositor = CompositorType::Unknown {
-            session_info: None,
-        };
+        let compositor = CompositorType::Unknown { session_info: None };
         let portal = PortalCapabilities::default();
         let caps = crate::compositor::CompositorCapabilities::new(compositor, portal, vec![]);
 
@@ -302,7 +304,7 @@ mod tests {
 
     #[test]
     fn test_strategy_selection_logic() {
-        use crate::compositor::{CompositorType, PortalCapabilities, CompositorCapabilities};
+        use crate::compositor::{CompositorCapabilities, CompositorType, PortalCapabilities};
         use crate::services::ServiceRegistry;
         use crate::session::{CredentialStorageMethod, DeploymentContext};
         use std::sync::Arc;
@@ -310,7 +312,7 @@ mod tests {
         // Test 1: Flatpak deployment constraint (should recommend Portal)
         {
             let compositor = CompositorType::Gnome {
-                version: Some("46.0".to_string())
+                version: Some("46.0".to_string()),
             };
             let mut portal = PortalCapabilities::default();
             portal.version = 5;
@@ -321,7 +323,8 @@ mod tests {
             let registry = Arc::new(ServiceRegistry::from_compositor(caps));
 
             // Check that the service registry correctly identifies constraints
-            let session_level = registry.service_level(crate::services::ServiceId::SessionPersistence);
+            let session_level =
+                registry.service_level(crate::services::ServiceId::SessionPersistence);
             assert!(
                 session_level >= crate::services::ServiceLevel::BestEffort,
                 "Flatpak with Portal v5 should support session persistence"
@@ -331,7 +334,7 @@ mod tests {
         // Test 2: KDE should have Portal support (no Mutter API)
         {
             let compositor = CompositorType::Kde {
-                version: Some("6.0".to_string())
+                version: Some("6.0".to_string()),
             };
             let mut portal = PortalCapabilities::default();
             portal.version = 5;
@@ -340,7 +343,8 @@ mod tests {
             let registry = Arc::new(ServiceRegistry::from_compositor(caps));
 
             // KDE should not have DirectCompositorAPI (Mutter-specific)
-            let direct_api_level = registry.service_level(crate::services::ServiceId::DirectCompositorAPI);
+            let direct_api_level =
+                registry.service_level(crate::services::ServiceId::DirectCompositorAPI);
             assert_eq!(
                 direct_api_level,
                 crate::services::ServiceLevel::Unavailable,
@@ -348,7 +352,8 @@ mod tests {
             );
 
             // But should have session persistence via Portal
-            let session_level = registry.service_level(crate::services::ServiceId::SessionPersistence);
+            let session_level =
+                registry.service_level(crate::services::ServiceId::SessionPersistence);
             assert!(
                 session_level >= crate::services::ServiceLevel::BestEffort,
                 "KDE with Portal v5 should support session persistence"
@@ -358,7 +363,7 @@ mod tests {
         // Test 3: GNOME should potentially have DirectCompositorAPI
         {
             let compositor = CompositorType::Gnome {
-                version: Some("46.0".to_string())
+                version: Some("46.0".to_string()),
             };
             let mut portal = PortalCapabilities::default();
             portal.version = 5;
@@ -368,11 +373,12 @@ mod tests {
 
             // GNOME might have DirectCompositorAPI (requires actual D-Bus test)
             // In tests, it will be Unavailable (no D-Bus connection)
-            let direct_api_level = registry.service_level(crate::services::ServiceId::DirectCompositorAPI);
+            let direct_api_level =
+                registry.service_level(crate::services::ServiceId::DirectCompositorAPI);
             // We can't assert it's available without D-Bus, but we can check the logic exists
             assert!(
-                direct_api_level == crate::services::ServiceLevel::BestEffort ||
-                direct_api_level == crate::services::ServiceLevel::Unavailable,
+                direct_api_level == crate::services::ServiceLevel::BestEffort
+                    || direct_api_level == crate::services::ServiceLevel::Unavailable,
                 "GNOME DirectCompositorAPI should be either BestEffort or Unavailable"
             );
         }

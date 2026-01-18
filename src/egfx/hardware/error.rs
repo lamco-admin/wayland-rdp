@@ -106,8 +106,7 @@ impl HardwareEncoderError {
     pub fn is_recoverable(&self) -> bool {
         matches!(
             self,
-            HardwareEncoderError::BufferPoolExhausted { .. }
-                | HardwareEncoderError::Timeout { .. }
+            HardwareEncoderError::BufferPoolExhausted { .. } | HardwareEncoderError::Timeout { .. }
         )
     }
 }

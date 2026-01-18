@@ -77,14 +77,14 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::damage::{DamageConfig, DamageDetector, DamageRegion};
-use crate::services::{ServiceId, ServiceLevel, ServiceRegistry};
 use crate::egfx::{Avc420Encoder, Avc444Encoder, EncoderConfig};
-use crate::performance::{AdaptiveFpsController, LatencyGovernor, LatencyMode, EncodingDecision};
+use crate::performance::{AdaptiveFpsController, EncodingDecision, LatencyGovernor, LatencyMode};
 use crate::pipewire::{PipeWireThreadCommand, PipeWireThreadManager, VideoFrame};
 use crate::portal::StreamInfo;
 use crate::server::egfx_sender::EgfxFrameSender;
 use crate::server::event_multiplexer::GraphicsFrame;
 use crate::server::gfx_factory::HandlerState;
+use crate::services::{ServiceId, ServiceLevel, ServiceRegistry};
 use crate::video::{BitmapConverter, BitmapUpdate, RdpPixelFormat};
 
 /// Video encoder abstraction for codec-agnostic frame encoding
@@ -106,7 +106,7 @@ enum EncodedVideoFrame {
     /// Phase 1: aux is now Option for bandwidth optimization
     Dual {
         main: Vec<u8>,
-        aux: Option<Vec<u8>>  // Optional for aux omission
+        aux: Option<Vec<u8>>, // Optional for aux omission
     },
 }
 
@@ -122,17 +122,17 @@ impl VideoEncoder {
         timestamp_ms: u64,
     ) -> Result<Option<EncodedVideoFrame>, crate::egfx::EncoderError> {
         match self {
-            VideoEncoder::Avc420(encoder) => {
-                encoder.encode_bgra(bgra_data, width, height, timestamp_ms)
-                    .map(|opt| opt.map(|frame| EncodedVideoFrame::Single(frame.data)))
-            }
-            VideoEncoder::Avc444(encoder) => {
-                encoder.encode_bgra(bgra_data, width, height, timestamp_ms)
-                    .map(|opt| opt.map(|frame| EncodedVideoFrame::Dual {
+            VideoEncoder::Avc420(encoder) => encoder
+                .encode_bgra(bgra_data, width, height, timestamp_ms)
+                .map(|opt| opt.map(|frame| EncodedVideoFrame::Single(frame.data))),
+            VideoEncoder::Avc444(encoder) => encoder
+                .encode_bgra(bgra_data, width, height, timestamp_ms)
+                .map(|opt| {
+                    opt.map(|frame| EncodedVideoFrame::Dual {
                         main: frame.stream1_data,
                         aux: frame.stream2_data,
-                    }))
-            }
+                    })
+                }),
         }
     }
 
@@ -218,7 +218,7 @@ impl FrameRateRegulator {
     }
 }
 
-/// WRD Display Handler
+/// RDP Display Handler
 ///
 /// Provides the display size and update stream to IronRDP server.
 /// Manages the video pipeline from PipeWire capture to RDP transmission.
@@ -251,7 +251,6 @@ pub struct WrdDisplayHandler {
     stream_info: Vec<StreamInfo>,
 
     // === EGFX/H.264 Support ===
-
     /// Shared GFX server handle for EGFX frame sending
     /// Populated by GfxFactory after channel attachment
     gfx_server_handle: Arc<RwLock<Option<GfxServerHandle>>>,
@@ -361,17 +360,18 @@ impl WrdDisplayHandler {
         let update_receiver = Arc::new(Mutex::new(Some(update_receiver)));
 
         // Set up EGFX fields (use provided handles or create empty ones)
-        let gfx_server_handle =
-            gfx_server_handle.unwrap_or_else(|| Arc::new(RwLock::new(None)));
-        let gfx_handler_state =
-            gfx_handler_state.unwrap_or_else(|| Arc::new(RwLock::new(None)));
+        let gfx_server_handle = gfx_server_handle.unwrap_or_else(|| Arc::new(RwLock::new(None)));
+        let gfx_handler_state = gfx_handler_state.unwrap_or_else(|| Arc::new(RwLock::new(None)));
 
         debug!(
             "Display handler created: {}x{}, {} streams, EGFX={}",
             initial_width,
             initial_height,
             stream_info.len(),
-            gfx_server_handle.try_read().map(|g| g.is_some()).unwrap_or(false)
+            gfx_server_handle
+                .try_read()
+                .map(|g| g.is_some())
+                .unwrap_or(false)
         );
 
         Ok(Self {
@@ -385,7 +385,7 @@ impl WrdDisplayHandler {
             gfx_server_handle,
             gfx_handler_state,
             server_event_tx: Arc::new(RwLock::new(None)),
-            config,  // Store config for feature flags
+            config,           // Store config for feature flags
             service_registry, // Service-aware feature decisions
         })
     }
@@ -436,8 +436,9 @@ impl WrdDisplayHandler {
                 let last_pixel_src = src_offset + (src_stride - bytes_per_pixel) as usize;
                 for x in width..aligned_width {
                     let dst_offset = (y * dst_stride + x * bytes_per_pixel) as usize;
-                    padded[dst_offset..dst_offset + bytes_per_pixel as usize]
-                        .copy_from_slice(&data[last_pixel_src..last_pixel_src + bytes_per_pixel as usize]);
+                    padded[dst_offset..dst_offset + bytes_per_pixel as usize].copy_from_slice(
+                        &data[last_pixel_src..last_pixel_src + bytes_per_pixel as usize],
+                    );
                 }
             }
         }
@@ -449,8 +450,7 @@ impl WrdDisplayHandler {
             let last_row = padded[last_row_offset..last_row_offset + dst_stride as usize].to_vec();
             for y in height..aligned_height {
                 let dst_offset = (y * dst_stride) as usize;
-                padded[dst_offset..dst_offset + dst_stride as usize]
-                    .copy_from_slice(&last_row);
+                padded[dst_offset..dst_offset + dst_stride as usize].copy_from_slice(&last_row);
             }
         }
 
@@ -563,7 +563,8 @@ impl WrdDisplayHandler {
             // SERVICE-AWARE: Only enable when damage tracking service is available
             // (without it, adaptive FPS has no activity detection signal)
             let service_supports_adaptive_fps = self.service_registry.should_enable_adaptive_fps();
-            let adaptive_fps_enabled = self.config.performance.adaptive_fps.enabled && service_supports_adaptive_fps;
+            let adaptive_fps_enabled =
+                self.config.performance.adaptive_fps.enabled && service_supports_adaptive_fps;
             if self.config.performance.adaptive_fps.enabled && !service_supports_adaptive_fps {
                 info!("⚠️ Adaptive FPS disabled: damage tracking service unavailable");
             }
@@ -571,8 +572,16 @@ impl WrdDisplayHandler {
                 enabled: adaptive_fps_enabled,
                 min_fps: self.config.performance.adaptive_fps.min_fps,
                 max_fps: self.config.performance.adaptive_fps.max_fps,
-                high_activity_threshold: self.config.performance.adaptive_fps.high_activity_threshold,
-                medium_activity_threshold: self.config.performance.adaptive_fps.medium_activity_threshold,
+                high_activity_threshold: self
+                    .config
+                    .performance
+                    .adaptive_fps
+                    .high_activity_threshold,
+                medium_activity_threshold: self
+                    .config
+                    .performance
+                    .adaptive_fps
+                    .medium_activity_threshold,
                 low_activity_threshold: self.config.performance.adaptive_fps.low_activity_threshold,
                 ..Default::default()
             };
@@ -594,8 +603,12 @@ impl WrdDisplayHandler {
             let mut latency_governor = LatencyGovernor::new(latency_mode);
 
             // Log service-aware performance feature status
-            let damage_level = self.service_registry.service_level(ServiceId::DamageTracking);
-            let dmabuf_level = self.service_registry.service_level(ServiceId::DmaBufZeroCopy);
+            let damage_level = self
+                .service_registry
+                .service_level(ServiceId::DamageTracking);
+            let dmabuf_level = self
+                .service_registry
+                .service_level(ServiceId::DmaBufZeroCopy);
             info!(
                 "🎛️ Performance features: adaptive_fps={}, latency_mode={:?}",
                 adaptive_fps_enabled, latency_mode
@@ -702,13 +715,23 @@ impl WrdDisplayHandler {
                 frames_sent += 1;
                 if frames_sent % 30 == 0 || frames_sent < 10 {
                     let activity = if adaptive_fps_enabled {
-                        format!(" [activity={:?}, fps={}]", adaptive_fps.activity_level(), adaptive_fps.current_fps())
+                        format!(
+                            " [activity={:?}, fps={}]",
+                            adaptive_fps.activity_level(),
+                            adaptive_fps.current_fps()
+                        )
                     } else {
                         String::new()
                     };
                     info!(
                         "🎬 Processing frame {} ({}x{}) - sent: {} (egfx: {}), dropped: {}{}",
-                        frame.frame_id, frame.width, frame.height, frames_sent, egfx_frames_sent, frames_dropped, activity
+                        frame.frame_id,
+                        frame.width,
+                        frame.height,
+                        frames_sent,
+                        egfx_frames_sent,
+                        frames_dropped,
+                        activity
                     );
                 }
 
@@ -762,12 +785,14 @@ impl WrdDisplayHandler {
 
                         // Check if AVC444 is supported by client AND enabled in server config
                         // AVC444 provides superior chroma quality for text/UI rendering
-                        let client_supports_avc444 = if let Some(state) = handler.gfx_handler_state.read().await.as_ref() {
-                            state.is_avc444_enabled
-                        } else {
-                            false
-                        };
-                        let avc444_enabled = self.config.egfx.avc444_enabled && client_supports_avc444;
+                        let client_supports_avc444 =
+                            if let Some(state) = handler.gfx_handler_state.read().await.as_ref() {
+                                state.is_avc444_enabled
+                            } else {
+                                false
+                            };
+                        let avc444_enabled =
+                            self.config.egfx.avc444_enabled && client_supports_avc444;
 
                         if !self.config.egfx.avc444_enabled {
                             info!("AVC444 disabled in config, using AVC420");
@@ -793,7 +818,10 @@ impl WrdDisplayHandler {
 
                                     video_encoder = Some(VideoEncoder::Avc444(encoder));
                                     use_avc444 = true;
-                                    info!("✅ AVC444 encoder initialized for {}×{} (4:4:4 chroma)", aligned_width, aligned_height);
+                                    info!(
+                                        "✅ AVC444 encoder initialized for {}×{} (4:4:4 chroma)",
+                                        aligned_width, aligned_height
+                                    );
                                 }
                                 Err(e) => {
                                     warn!("Failed to create AVC444 encoder: {:?} - falling back to AVC420", e);
@@ -814,7 +842,10 @@ impl WrdDisplayHandler {
                             match Avc420Encoder::new(config) {
                                 Ok(encoder) => {
                                     video_encoder = Some(VideoEncoder::Avc420(encoder));
-                                    info!("✅ AVC420 encoder initialized for {}×{} (aligned)", aligned_width, aligned_height);
+                                    info!(
+                                        "✅ AVC420 encoder initialized for {}×{} (aligned)",
+                                        aligned_width, aligned_height
+                                    );
                                 }
                                 Err(e) => {
                                     warn!("Failed to create H.264 encoder: {:?} - falling back to RemoteFX", e);
@@ -831,25 +862,34 @@ impl WrdDisplayHandler {
                             // Must be done BEFORE sending any frames
                             // MS-RDPEGFX REQUIRES 16-pixel alignment!
                             {
-
                                 info!(
                                     "📐 Aligning surface: {}×{} → {}×{} (16-pixel boundary)",
                                     frame.width, frame.height, aligned_width, aligned_height
                                 );
 
-                                let mut server = gfx_handle.lock().expect("GfxServerHandle mutex poisoned");
+                                let mut server =
+                                    gfx_handle.lock().expect("GfxServerHandle mutex poisoned");
 
                                 // CRITICAL FIX: Set desktop size BEFORE creating surface
                                 // This prevents desktop size mismatch when ResetGraphics is auto-sent
                                 // Desktop = actual resolution (800×600)
                                 // Surface = aligned resolution (800×608)
-                                server.set_output_dimensions(frame.width as u16, frame.height as u16);
-                                info!("✅ EGFX desktop dimensions set: {}×{} (actual)", frame.width, frame.height);
+                                server
+                                    .set_output_dimensions(frame.width as u16, frame.height as u16);
+                                info!(
+                                    "✅ EGFX desktop dimensions set: {}×{} (actual)",
+                                    frame.width, frame.height
+                                );
 
                                 // Create surface with ALIGNED dimensions
                                 // create_surface() will auto-send ResetGraphics using output_dimensions
-                                if let Some(surface_id) = server.create_surface(aligned_width, aligned_height) {
-                                    info!("✅ EGFX surface {} created ({}×{} aligned)", surface_id, aligned_width, aligned_height);
+                                if let Some(surface_id) =
+                                    server.create_surface(aligned_width, aligned_height)
+                                {
+                                    info!(
+                                        "✅ EGFX surface {} created ({}×{} aligned)",
+                                        surface_id, aligned_width, aligned_height
+                                    );
                                     // Map surface to output at origin (0,0)
                                     if server.map_surface_to_output(surface_id, 0, 0) {
                                         info!("✅ EGFX surface {} mapped to output", surface_id);
@@ -869,10 +909,14 @@ impl WrdDisplayHandler {
 
                                         if let Some(ch_id) = channel_id {
                                             use ironrdp_dvc::encode_dvc_messages;
-                                            use ironrdp_svc::ChannelFlags;
                                             use ironrdp_server::EgfxServerMessage;
+                                            use ironrdp_svc::ChannelFlags;
 
-                                            match encode_dvc_messages(ch_id, dvc_messages, ChannelFlags::SHOW_PROTOCOL) {
+                                            match encode_dvc_messages(
+                                                ch_id,
+                                                dvc_messages,
+                                                ChannelFlags::SHOW_PROTOCOL,
+                                            ) {
                                                 Ok(svc_messages) => {
                                                     info!("EGFX: Encoded {} SVC messages for DVC channel {}", svc_messages.len(), ch_id);
                                                     let msg = EgfxServerMessage::SendMessages {
@@ -883,13 +927,18 @@ impl WrdDisplayHandler {
                                                     info!("✅ EGFX surface PDUs sent to client");
                                                 }
                                                 Err(e) => {
-                                                    error!("EGFX: Failed to encode DVC messages: {:?}", e);
+                                                    error!(
+                                                        "EGFX: Failed to encode DVC messages: {:?}",
+                                                        e
+                                                    );
                                                 }
                                             }
                                         }
                                     }
                                 } else {
-                                    warn!("Failed to create EGFX surface - server may not be ready");
+                                    warn!(
+                                        "Failed to create EGFX surface - server may not be ready"
+                                    );
                                 }
                             }
 
@@ -904,7 +953,9 @@ impl WrdDisplayHandler {
                     }
 
                     // Try to send via EGFX if encoder is available
-                    if let (Some(ref mut encoder), Some(ref sender)) = (&mut video_encoder, &egfx_sender) {
+                    if let (Some(ref mut encoder), Some(ref sender)) =
+                        (&mut video_encoder, &egfx_sender)
+                    {
                         use crate::egfx::align_to_16;
 
                         // VALIDATION TEST: 27fps to stay within Level 3.2 constraint (108,000 MB/s)
@@ -917,7 +968,10 @@ impl WrdDisplayHandler {
                         if frame.data.len() < expected_size {
                             trace!(
                                 "Skipping invalid frame: size={}, expected={} for {}×{}",
-                                frame.data.len(), expected_size, frame.width, frame.height
+                                frame.data.len(),
+                                expected_size,
+                                frame.width,
+                                frame.height
                             );
                             frames_dropped += 1;
                             continue;
@@ -935,7 +989,9 @@ impl WrdDisplayHandler {
 
                         let damage_regions = if force_full_frame {
                             // Periodic IDR due - send full frame to clear all artifacts
-                            debug!("Forcing full frame for periodic IDR (bypassing damage detection)");
+                            debug!(
+                                "Forcing full frame for periodic IDR (bypassing damage detection)"
+                            );
                             vec![DamageRegion::full_frame(frame.width, frame.height)]
                         } else if let Some(ref mut detector) = damage_detector_opt {
                             // Damage tracking enabled - detect changed regions
@@ -1030,15 +1086,28 @@ impl WrdDisplayHandler {
                         let aligned_height = align_to_16(frame.height as u32);
 
                         // Pad frame data if needed
-                        let frame_data = if aligned_width != frame.width as u32 || aligned_height != frame.height as u32 {
-                            Self::pad_frame_to_aligned(&frame.data, frame.width, frame.height, aligned_width, aligned_height)
+                        let frame_data = if aligned_width != frame.width as u32
+                            || aligned_height != frame.height as u32
+                        {
+                            Self::pad_frame_to_aligned(
+                                &frame.data,
+                                frame.width,
+                                frame.height,
+                                aligned_width,
+                                aligned_height,
+                            )
                         } else {
                             (*frame.data).clone()
                         };
 
                         // Encode frame to H.264 with ALIGNED dimensions
                         // VideoEncoder handles both AVC420 and AVC444 transparently
-                        match encoder.encode_bgra(&frame_data, aligned_width, aligned_height, timestamp_ms) {
+                        match encoder.encode_bgra(
+                            &frame_data,
+                            aligned_width,
+                            aligned_height,
+                            timestamp_ms,
+                        ) {
                             Ok(Some(encoded_frame)) => {
                                 // Send via EGFX - method varies by codec
                                 // - encoded dimensions: aligned (for H.264 macroblock requirements)
@@ -1046,29 +1115,33 @@ impl WrdDisplayHandler {
                                 let send_result = match encoded_frame {
                                     EncodedVideoFrame::Single(data) => {
                                         // AVC420: Single stream with damage regions
-                                        sender.send_frame_with_regions(
-                                            &data,
-                                            aligned_width as u16,
-                                            aligned_height as u16,
-                                            frame.width as u16,
-                                            frame.height as u16,
-                                            &damage_regions,
-                                            timestamp_ms as u32,
-                                        ).await
+                                        sender
+                                            .send_frame_with_regions(
+                                                &data,
+                                                aligned_width as u16,
+                                                aligned_height as u16,
+                                                frame.width as u16,
+                                                frame.height as u16,
+                                                &damage_regions,
+                                                timestamp_ms as u32,
+                                            )
+                                            .await
                                     }
                                     EncodedVideoFrame::Dual { main, aux } => {
                                         // AVC444: Dual streams with damage regions
                                         // Phase 1: aux is now Option<Vec<u8>> for bandwidth optimization
-                                        sender.send_avc444_frame_with_regions(
-                                            &main,
-                                            aux.as_deref(),  // Option<Vec<u8>> → Option<&[u8]>
-                                            aligned_width as u16,
-                                            aligned_height as u16,
-                                            frame.width as u16,
-                                            frame.height as u16,
-                                            &damage_regions,
-                                            timestamp_ms as u32,
-                                        ).await
+                                        sender
+                                            .send_avc444_frame_with_regions(
+                                                &main,
+                                                aux.as_deref(), // Option<Vec<u8>> → Option<&[u8]>
+                                                aligned_width as u16,
+                                                aligned_height as u16,
+                                                frame.width as u16,
+                                                frame.height as u16,
+                                                &damage_regions,
+                                                timestamp_ms as u32,
+                                            )
+                                            .await
                                     }
                                 };
 
@@ -1077,7 +1150,10 @@ impl WrdDisplayHandler {
                                         egfx_frames_sent += 1;
                                         if egfx_frames_sent % 30 == 0 {
                                             let codec = encoder.codec_name();
-                                            debug!("📹 EGFX: Sent {} {} frames", egfx_frames_sent, codec);
+                                            debug!(
+                                                "📹 EGFX: Sent {} {} frames",
+                                                egfx_frames_sent, codec
+                                            );
                                         }
                                         continue; // Frame sent via EGFX, skip RemoteFX path
                                     }
@@ -1310,7 +1386,7 @@ impl Clone for WrdDisplayHandler {
             gfx_server_handle: Arc::clone(&self.gfx_server_handle),
             gfx_handler_state: Arc::clone(&self.gfx_handler_state),
             server_event_tx: Arc::clone(&self.server_event_tx),
-            config: Arc::clone(&self.config),  // Clone config Arc
+            config: Arc::clone(&self.config), // Clone config Arc
             service_registry: Arc::clone(&self.service_registry), // Clone service registry Arc
         }
     }

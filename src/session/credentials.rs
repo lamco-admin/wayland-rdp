@@ -183,7 +183,10 @@ fn check_linger_enabled() -> bool {
 pub async fn detect_credential_storage(
     deployment: &DeploymentContext,
 ) -> (CredentialStorageMethod, EncryptionType, bool) {
-    debug!("Detecting credential storage for deployment: {}", deployment);
+    debug!(
+        "Detecting credential storage for deployment: {}",
+        deployment
+    );
 
     // FLATPAK-SPECIFIC DETECTION
     if matches!(deployment, DeploymentContext::Flatpak) {
@@ -213,19 +216,24 @@ pub async fn detect_credential_storage(
     if !matches!(deployment, DeploymentContext::Flatpak) {
         if let Ok(service) = detect_secret_service().await {
             let (method, encryption) = match service {
-                SecretServiceBackend::GnomeKeyring => {
-                    (CredentialStorageMethod::GnomeKeyring, EncryptionType::Aes256Gcm)
-                }
+                SecretServiceBackend::GnomeKeyring => (
+                    CredentialStorageMethod::GnomeKeyring,
+                    EncryptionType::Aes256Gcm,
+                ),
                 SecretServiceBackend::KWallet => {
                     (CredentialStorageMethod::KWallet, EncryptionType::Aes256Gcm)
                 }
-                SecretServiceBackend::KeePassXC => {
-                    (CredentialStorageMethod::KeePassXC, EncryptionType::ChaCha20Poly1305)
-                }
+                SecretServiceBackend::KeePassXC => (
+                    CredentialStorageMethod::KeePassXC,
+                    EncryptionType::ChaCha20Poly1305,
+                ),
             };
 
             let accessible = check_secret_service_unlocked().await;
-            info!("Secret Service detected: {} (unlocked: {})", method, accessible);
+            info!(
+                "Secret Service detected: {} (unlocked: {})",
+                method, accessible
+            );
             return (method, encryption, accessible);
         }
     }
@@ -273,8 +281,8 @@ fn check_tpm2_available() -> Result<bool> {
         .output()
         .context("Failed to run systemd-creds")?;
 
-    let has_tpm = output.status.success()
-        && String::from_utf8_lossy(&output.stdout).trim() == "yes";
+    let has_tpm =
+        output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "yes";
 
     debug!("TPM 2.0 available: {}", has_tpm);
     Ok(has_tpm)
@@ -303,9 +311,15 @@ async fn detect_secret_service() -> Result<SecretServiceBackend> {
         .await
         .context("Failed to create D-Bus proxy")?;
 
-    let names = proxy.list_names().await.context("Failed to list D-Bus names")?;
+    let names = proxy
+        .list_names()
+        .await
+        .context("Failed to list D-Bus names")?;
 
-    if !names.iter().any(|n| n.as_str() == "org.freedesktop.secrets") {
+    if !names
+        .iter()
+        .any(|n| n.as_str() == "org.freedesktop.secrets")
+    {
         return Err(anyhow!("Secret Service not available on D-Bus"));
     }
 
@@ -367,7 +381,9 @@ async fn check_flatpak_secret_portal_available() -> bool {
 
     match proxy.list_names().await {
         Ok(names) => {
-            let available = names.iter().any(|n| n.as_str() == "org.freedesktop.portal.Secret");
+            let available = names
+                .iter()
+                .any(|n| n.as_str() == "org.freedesktop.portal.Secret");
             debug!("Flatpak Secret Portal available: {}", available);
             available
         }

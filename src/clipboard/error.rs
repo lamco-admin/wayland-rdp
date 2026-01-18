@@ -113,12 +113,14 @@ pub fn classify_error(error: &ClipboardError) -> ErrorType {
 fn classify_core_error(error: &CoreClipboardError) -> ErrorType {
     match error {
         // Format conversion errors
-        CoreClipboardError::UnsupportedFormat(_)
-        | CoreClipboardError::FormatConversion(_) => ErrorType::FormatConversion,
+        CoreClipboardError::UnsupportedFormat(_) | CoreClipboardError::FormatConversion(_) => {
+            ErrorType::FormatConversion
+        }
 
         // Image conversion errors (always present in library)
-        CoreClipboardError::ImageDecode(_)
-        | CoreClipboardError::ImageEncode(_) => ErrorType::FormatConversion,
+        CoreClipboardError::ImageDecode(_) | CoreClipboardError::ImageEncode(_) => {
+            ErrorType::FormatConversion
+        }
 
         // Data validation errors
         CoreClipboardError::InvalidUtf8
@@ -126,8 +128,9 @@ fn classify_core_error(error: &CoreClipboardError) -> ErrorType {
         | CoreClipboardError::DataSizeExceeded { .. } => ErrorType::DataValidation,
 
         // Transfer errors
-        CoreClipboardError::TransferTimeout(_)
-        | CoreClipboardError::TransferCancelled => ErrorType::Transfer,
+        CoreClipboardError::TransferTimeout(_) | CoreClipboardError::TransferCancelled => {
+            ErrorType::Transfer
+        }
 
         // Backend errors
         CoreClipboardError::Backend(_) => ErrorType::Communication,
@@ -291,7 +294,9 @@ pub fn recovery_action(error: &ClipboardError, context: &ErrorContext) -> Recove
 
         ErrorType::DataValidation => {
             // Check for DataSizeExceeded from core errors
-            if let ClipboardError::Core(CoreClipboardError::DataSizeExceeded { actual, max }) = error {
+            if let ClipboardError::Core(CoreClipboardError::DataSizeExceeded { actual, max }) =
+                error
+            {
                 let reduced_size = max / 2;
                 if *actual > reduced_size {
                     return RecoveryAction::ReduceDataSize(reduced_size);

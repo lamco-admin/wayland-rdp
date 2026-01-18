@@ -1,4 +1,4 @@
-//! WrdGraphicsHandler - GraphicsPipelineHandler implementation
+//! LamcoGraphicsHandler - GraphicsPipelineHandler implementation
 //!
 //! This module provides the handler that bridges our OpenH264 encoder
 //! with ironrdp-egfx's GraphicsPipelineServer.
@@ -43,7 +43,7 @@ use crate::server::{HandlerState, SharedHandlerState};
 /// Some platforms have known issues with AVC444. When `force_avc420_only` is set,
 /// the handler will disable AVC444 regardless of client capability. This is used
 /// for platforms like RHEL 9 where AVC444 produces visual artifacts.
-pub struct WrdGraphicsHandler {
+pub struct LamcoGraphicsHandler {
     /// Surface dimensions
     width: u16,
     height: u16,
@@ -80,7 +80,7 @@ pub struct WrdGraphicsHandler {
     force_avc420_only: bool,
 }
 
-impl WrdGraphicsHandler {
+impl LamcoGraphicsHandler {
     /// Create a new graphics handler
     pub fn new(width: u16, height: u16) -> Self {
         Self {
@@ -243,7 +243,7 @@ impl WrdGraphicsHandler {
     }
 }
 
-impl GraphicsPipelineHandler for WrdGraphicsHandler {
+impl GraphicsPipelineHandler for LamcoGraphicsHandler {
     fn capabilities_advertise(&mut self, pdu: &CapabilitiesAdvertisePdu) {
         info!("EGFX: Client advertised {} capability sets", pdu.0.len());
         for cap in &pdu.0 {
@@ -382,7 +382,10 @@ impl GraphicsPipelineHandler for WrdGraphicsHandler {
     }
 
     fn preferred_capabilities(&self) -> Vec<CapabilitySet> {
-        use ironrdp_egfx::pdu::{CapabilitiesV103Flags, CapabilitiesV104Flags, CapabilitiesV107Flags, CapabilitiesV10Flags};
+        use ironrdp_egfx::pdu::{
+            CapabilitiesV103Flags, CapabilitiesV104Flags, CapabilitiesV107Flags,
+            CapabilitiesV10Flags,
+        };
 
         // Prefer highest V10.x version for best features (all V10+ support AVC420)
         // Fall back to V8.1 for older clients that explicitly enable AVC420
@@ -409,8 +412,7 @@ impl GraphicsPipelineHandler for WrdGraphicsHandler {
                 flags: CapabilitiesV10Flags::SMALL_CACHE,
             },
             CapabilitySet::V8_1 {
-                flags: CapabilitiesV81Flags::AVC420_ENABLED
-                    | CapabilitiesV81Flags::SMALL_CACHE,
+                flags: CapabilitiesV81Flags::AVC420_ENABLED | CapabilitiesV81Flags::SMALL_CACHE,
             },
         ]
     }
@@ -428,21 +430,20 @@ impl SharedGraphicsHandler {
     /// Create a new shared handler
     pub fn new(width: u16, height: u16) -> Self {
         Self {
-            inner: Arc::new(std::sync::RwLock::new(WrdGraphicsHandler::new(width, height))),
+            inner: Arc::new(std::sync::RwLock::new(LamcoGraphicsHandler::new(
+                width, height,
+            ))),
         }
     }
 
     /// Get a clone of the inner Arc for querying state
-    pub fn clone_inner(&self) -> Arc<std::sync::RwLock<WrdGraphicsHandler>> {
+    pub fn clone_inner(&self) -> Arc<std::sync::RwLock<LamcoGraphicsHandler>> {
         Arc::clone(&self.inner)
     }
 
     /// Check if ready (convenience method)
     pub fn is_ready(&self) -> bool {
-        self.inner
-            .read()
-            .map(|h| h.is_ready())
-            .unwrap_or(false)
+        self.inner.read().map(|h| h.is_ready()).unwrap_or(false)
     }
 
     /// Check if AVC420 is enabled (convenience method)

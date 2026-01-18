@@ -169,7 +169,6 @@ pub enum WaylandFeature {
 
     // === Session Persistence Features ===
     // Added in Phase 2
-
     /// Session persistence via portal restore tokens
     SessionPersistence {
         /// Portal supports restore tokens (v4+)
@@ -292,8 +291,15 @@ impl WaylandFeature {
 impl std::fmt::Display for WaylandFeature {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::DamageTracking { method, compositor_hints } => {
-                write!(f, "DamageTracking({:?}, hints={})", method, compositor_hints)
+            Self::DamageTracking {
+                method,
+                compositor_hints,
+            } => {
+                write!(
+                    f,
+                    "DamageTracking({:?}, hints={})",
+                    method, compositor_hints
+                )
             }
             Self::DmaBufZeroCopy { formats, .. } => {
                 write!(f, "DmaBuf({} formats)", formats.len())
@@ -315,8 +321,17 @@ impl std::fmt::Display for WaylandFeature {
             Self::Clipboard { portal_version } => {
                 write!(f, "Clipboard(portal v{})", portal_version)
             }
-            Self::RemoteInput { keyboard, pointer, touch, .. } => {
-                write!(f, "RemoteInput(kbd={}, ptr={}, touch={})", keyboard, pointer, touch)
+            Self::RemoteInput {
+                keyboard,
+                pointer,
+                touch,
+                ..
+            } => {
+                write!(
+                    f,
+                    "RemoteInput(kbd={}, ptr={}, touch={})",
+                    keyboard, pointer, touch
+                )
             }
             Self::PipeWireStream { buffer_type, .. } => {
                 write!(f, "PipeWire({})", buffer_type)
@@ -352,7 +367,11 @@ impl std::fmt::Display for WaylandFeature {
                 is_accessible,
                 encryption,
             } => {
-                write!(f, "CredStorage({}, {}, accessible={})", method, encryption, is_accessible)
+                write!(
+                    f,
+                    "CredStorage({}, {}, accessible={})",
+                    method, encryption, is_accessible
+                )
             }
             Self::UnattendedAccess {
                 can_avoid_dialog,

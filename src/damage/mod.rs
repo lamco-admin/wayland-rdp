@@ -98,7 +98,10 @@ impl DamageRegion {
         let other_right = other.x + other.width;
         let other_bottom = other.y + other.height;
 
-        self.x < other_right && self_right > other.x && self.y < other_bottom && self_bottom > other.y
+        self.x < other_right
+            && self_right > other.x
+            && self.y < other_bottom
+            && self_bottom > other.y
     }
 
     /// Check if this region contains a point
@@ -189,7 +192,7 @@ impl DamageConfig {
     /// Create config optimized for low-bandwidth scenarios
     pub fn low_bandwidth() -> Self {
         Self {
-            tile_size: 32,       // Finer granularity
+            tile_size: 32,        // Finer granularity
             diff_threshold: 0.02, // More sensitive
             pixel_threshold: 2,
             merge_distance: 16,
@@ -200,7 +203,7 @@ impl DamageConfig {
     /// Create config optimized for high-motion content
     pub fn high_motion() -> Self {
         Self {
-            tile_size: 128,      // Coarser for speed
+            tile_size: 128,       // Coarser for speed
             diff_threshold: 0.10, // Less sensitive
             pixel_threshold: 8,
             merge_distance: 64,
@@ -254,9 +257,9 @@ impl DamageStats {
         if self.frames_processed > 0 {
             self.avg_damage_ratio =
                 self.total_damage_area as f32 / self.total_frame_area.max(1) as f32;
-            self.avg_detection_time_ms =
-                (self.total_detection_time_ns as f64 / self.frames_processed as f64 / 1_000_000.0)
-                    as f32;
+            self.avg_detection_time_ms = (self.total_detection_time_ns as f64
+                / self.frames_processed as f64
+                / 1_000_000.0) as f32;
         }
     }
 }
@@ -1027,7 +1030,13 @@ mod tests {
 
         // Create frame with a changed region in top-left corner
         let changed_region = DamageRegion::new(0, 0, 64, 64);
-        let frame2 = create_frame_with_region(256, 256, [0, 0, 0, 255], changed_region, [255, 255, 255, 255]);
+        let frame2 = create_frame_with_region(
+            256,
+            256,
+            [0, 0, 0, 255],
+            changed_region,
+            [255, 255, 255, 255],
+        );
 
         // First frame
         let _ = detector.detect(&frame1, 256, 256);

@@ -211,13 +211,11 @@ impl CursorPredictor {
         // Physics-based prediction: pos + vel*t + 0.5*acc*t²
         let dt = lookahead_ms / 1000.0;
 
-        let pred_x = self.position.0 as f32
-            + self.velocity.0 * dt
-            + 0.5 * self.acceleration.0 * dt * dt;
+        let pred_x =
+            self.position.0 as f32 + self.velocity.0 * dt + 0.5 * self.acceleration.0 * dt * dt;
 
-        let pred_y = self.position.1 as f32
-            + self.velocity.1 * dt
-            + 0.5 * self.acceleration.1 * dt * dt;
+        let pred_y =
+            self.position.1 as f32 + self.velocity.1 * dt + 0.5 * self.acceleration.1 * dt * dt;
 
         // Clamp to maximum prediction distance
         let dx = pred_x - self.position.0 as f32;
@@ -288,7 +286,10 @@ impl CursorPredictor {
         let recent = &self.history[self.history.len() - 1];
         let prev = &self.history[self.history.len() - 2];
 
-        let dt = recent.timestamp.duration_since(prev.timestamp).as_secs_f32();
+        let dt = recent
+            .timestamp
+            .duration_since(prev.timestamp)
+            .as_secs_f32();
         if dt <= 0.0 {
             return;
         }

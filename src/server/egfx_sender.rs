@@ -267,7 +267,7 @@ impl EgfxFrameSender {
                         7 => "SPS",
                         8 => "PPS",
                         9 => "AUD",
-                        _ => "Other"
+                        _ => "Other",
                     };
 
                     // For SPS/PPS, log first few bytes for debugging
@@ -277,7 +277,13 @@ impl EgfxFrameSender {
                             .iter()
                             .map(|b| format!("{:02x}", b))
                             .collect();
-                        nal_types.push(format!("{}({}b,ref={})[{}]", type_name, nal_len, nal_ref_idc, preview.join(" ")));
+                        nal_types.push(format!(
+                            "{}({}b,ref={})[{}]",
+                            type_name,
+                            nal_len,
+                            nal_ref_idc,
+                            preview.join(" ")
+                        ));
                     } else {
                         nal_types.push(format!("{}({}b,ref={})", type_name, nal_len, nal_ref_idc));
                     }
@@ -293,8 +299,15 @@ impl EgfxFrameSender {
                 offset = nal_end;
             }
 
-            trace!("EGFX: Frame NAL units ({}): [{}]", nal_count, nal_types.join(", "));
-            trace!("EGFX: Total H.264 data size: {} bytes (Annex B format)", h264_data.len());
+            trace!(
+                "EGFX: Frame NAL units ({}): [{}]",
+                nal_count,
+                nal_types.join(", ")
+            );
+            trace!(
+                "EGFX: Total H.264 data size: {} bytes (Annex B format)",
+                h264_data.len()
+            );
         }
 
         // DEBUG: Dump first 3 frames to files for validation
@@ -308,8 +321,13 @@ impl EgfxFrameSender {
             let filename = format!("/tmp/rdp-frame-{}.h264", dump_count);
             if let Ok(mut file) = std::fs::File::create(&filename) {
                 if file.write_all(h264_data).is_ok() {
-                    trace!("🎬 Dumped frame {} to {} ({} bytes, timestamp={}ms)",
-                           dump_count, filename, h264_data.len(), timestamp_ms);
+                    trace!(
+                        "🎬 Dumped frame {} to {} ({} bytes, timestamp={}ms)",
+                        dump_count,
+                        filename,
+                        h264_data.len(),
+                        timestamp_ms
+                    );
                 }
             }
         }
@@ -321,8 +339,10 @@ impl EgfxFrameSender {
 
         trace!(
             "Region: Display {}×{} from encoded {}×{} (cropping: {}px right, {}px bottom)",
-            display_width, display_height,
-            encoded_width, encoded_height,
+            display_width,
+            display_height,
+            encoded_width,
+            encoded_height,
             encoded_width.saturating_sub(display_width),
             encoded_height.saturating_sub(display_height)
         );
@@ -378,7 +398,10 @@ impl EgfxFrameSender {
 
             trace!("EGFX: ServerEvent::Egfx sent for frame {}", frame_id);
         } else {
-            warn!("EGFX: drain_output returned EMPTY for frame {} - no data sent!", frame_id);
+            warn!(
+                "EGFX: drain_output returned EMPTY for frame {} - no data sent!",
+                frame_id
+            );
         }
 
         // Update stats
@@ -666,7 +689,7 @@ impl EgfxFrameSender {
     pub async fn send_avc444_frame_with_regions(
         &self,
         stream1_data: &[u8],
-        stream2_data: Option<&[u8]>,  // Now optional!
+        stream2_data: Option<&[u8]>, // Now optional!
         encoded_width: u16,
         encoded_height: u16,
         display_width: u16,
@@ -725,8 +748,8 @@ impl EgfxFrameSender {
                     surface_id,
                     stream1_data,
                     &regions,
-                    stream2_data,  // Pass Option<&[u8]> - IronRDP handles it!
-                    stream2_data.map(|_| regions.as_slice()),  // Option<&[Avc420Region]>
+                    stream2_data, // Pass Option<&[u8]> - IronRDP handles it!
+                    stream2_data.map(|_| regions.as_slice()), // Option<&[Avc420Region]>
                     timestamp_ms,
                 )
                 .ok_or(SendError::Backpressure)?;
@@ -776,7 +799,9 @@ fn damage_regions_to_avc420(
             let top = r.y.min(display_height as u32) as u16;
             // Right and bottom are inclusive, so subtract 1 from the exclusive bounds
             let right = (r.x + r.width).min(display_width as u32).saturating_sub(1) as u16;
-            let bottom = (r.y + r.height).min(display_height as u32).saturating_sub(1) as u16;
+            let bottom = (r.y + r.height)
+                .min(display_height as u32)
+                .saturating_sub(1) as u16;
 
             // Skip invalid regions (where right < left or bottom < top)
             if right < left || bottom < top {

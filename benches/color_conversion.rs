@@ -40,36 +40,28 @@ fn bench_bgra_to_yuv444(c: &mut Criterion) {
         group.throughput(Throughput::Elements(pixels));
 
         // Benchmark with BT.709 (HD)
-        group.bench_with_input(
-            BenchmarkId::new("BT709", name),
-            &bgra_data,
-            |b, data| {
-                b.iter(|| {
-                    black_box(bgra_to_yuv444(
-                        black_box(data),
-                        black_box(width),
-                        black_box(height),
-                        ColorMatrix::BT709,
-                    ))
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("BT709", name), &bgra_data, |b, data| {
+            b.iter(|| {
+                black_box(bgra_to_yuv444(
+                    black_box(data),
+                    black_box(width),
+                    black_box(height),
+                    ColorMatrix::BT709,
+                ))
+            })
+        });
 
         // Benchmark with BT.601 (SD)
-        group.bench_with_input(
-            BenchmarkId::new("BT601", name),
-            &bgra_data,
-            |b, data| {
-                b.iter(|| {
-                    black_box(bgra_to_yuv444(
-                        black_box(data),
-                        black_box(width),
-                        black_box(height),
-                        ColorMatrix::BT601,
-                    ))
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("BT601", name), &bgra_data, |b, data| {
+            b.iter(|| {
+                black_box(bgra_to_yuv444(
+                    black_box(data),
+                    black_box(width),
+                    black_box(height),
+                    ColorMatrix::BT601,
+                ))
+            })
+        });
     }
 
     group.finish();
@@ -95,9 +87,7 @@ fn bench_chroma_subsample(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("pack_dual_views", name),
             &yuv444,
-            |b, frame| {
-                b.iter(|| black_box(pack_dual_views(black_box(frame))))
-            },
+            |b, frame| b.iter(|| black_box(pack_dual_views(black_box(frame)))),
         );
     }
 

@@ -30,12 +30,12 @@
 
 use anyhow::{Context, Result};
 use tracing::{debug, warn};
+use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_client::QueueHandle;
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1,
     zwlr_virtual_pointer_v1::{self, ZwlrVirtualPointerV1},
 };
-use wayland_client::protocol::wl_seat::WlSeat;
 
 /// Virtual pointer wrapper for wlr-virtual-pointer-v1 protocol
 ///

@@ -69,10 +69,10 @@ pub fn format_user_error(error: &anyhow::Error) -> String {
     writeln!(&mut output, "Need Help?").ok();
     writeln!(
         &mut output,
-        "  - Run with --verbose for detailed logs: wrd-server -vvv"
+        "  - Run with --verbose for detailed logs: lamco-rdp-server -vvv"
     )
     .ok();
-    writeln!(&mut output, "  - Check logs in: /var/log/wrd-server/").ok();
+    writeln!(&mut output, "  - Check logs in: /var/log/lamco-rdp-server/").ok();
     writeln!(
         &mut output,
         "  - Report issues: https://github.com/lamco-admin/wayland-rdp/issues"
@@ -214,7 +214,7 @@ fn format_tls_error(output: &mut String, _error: &str) {
         "         -keyout certs/key.pem -out certs/cert.pem \\"
     )
     .ok();
-    writeln!(output, "         -days 365 -subj '/CN=wrd-server'").ok();
+    writeln!(output, "         -days 365 -subj '/CN=lamco-rdp-server'").ok();
     writeln!(output, "").ok();
     writeln!(output, "  3. Invalid certificate format").ok();
     writeln!(output, "     → Certificates must be PEM format").ok();
@@ -264,12 +264,12 @@ fn format_config_error(output: &mut String, _error: &str) {
     writeln!(output, "  1. Configuration file not found").ok();
     writeln!(
         output,
-        "     → Default location: /etc/wrd-server/config.toml"
+        "     → Default location: /etc/lamco-rdp-server/config.toml"
     )
     .ok();
     writeln!(
         output,
-        "     → Or specify: wrd-server -c /path/to/config.toml"
+        "     → Or specify: lamco-rdp-server -c /path/to/config.toml"
     )
     .ok();
     writeln!(

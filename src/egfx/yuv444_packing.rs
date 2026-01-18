@@ -27,7 +27,7 @@
 //!
 //! See MS-RDPEGFX Section 3.3.8.3.2 and Figure 7 for the specification.
 
-use super::color_convert::{subsample_chroma_420, Yuv444Frame, ColorMatrix};
+use super::color_convert::{subsample_chroma_420, ColorMatrix, Yuv444Frame};
 
 /// YUV420 frame (4:2:0 chroma subsampling)
 ///
@@ -107,10 +107,10 @@ impl Yuv420Frame {
                 let b = (y_val + bu * u_val).clamp(0.0, 255.0);
 
                 let idx = (y * self.width + x) * 4;
-                bgra[idx] = b as u8;     // B
+                bgra[idx] = b as u8; // B
                 bgra[idx + 1] = g as u8; // G
                 bgra[idx + 2] = r as u8; // R
-                bgra[idx + 3] = 255;     // A (opaque)
+                bgra[idx + 3] = 255; // A (opaque)
             }
         }
 
@@ -239,7 +239,7 @@ pub fn pack_main_view(yuv444: &Yuv444Frame) -> Yuv420Frame {
     // macroblock alignment internally. Padding breaks openh264-rs buffer validation.
 
     // DEEP DIAGNOSTIC: Sample multiple screen positions to capture colorful areas
-    use tracing::{trace, debug};
+    use tracing::{debug, trace};
     if width == 1280 && height == 800 {
         debug!("═══ MAIN VIEW MULTI-POSITION ANALYSIS ═══");
 
@@ -257,21 +257,36 @@ pub fn pack_main_view(yuv444: &Yuv444Frame) -> Yuv420Frame {
             debug!("📍 {} @ ({}, {})", label, x, y);
 
             // Sample 2x2 block for analysis
-            debug!("  Y444: [{:3},{:3}] [{:3},{:3}]",
-                   yuv444.y[idx], yuv444.y[idx+1],
-                   yuv444.y[idx+width], yuv444.y[idx+width+1]);
-            debug!("  U444: [{:3},{:3}] [{:3},{:3}]",
-                   yuv444.u[idx], yuv444.u[idx+1],
-                   yuv444.u[idx+width], yuv444.u[idx+width+1]);
-            debug!("  V444: [{:3},{:3}] [{:3},{:3}]",
-                   yuv444.v[idx], yuv444.v[idx+1],
-                   yuv444.v[idx+width], yuv444.v[idx+width+1]);
+            debug!(
+                "  Y444: [{:3},{:3}] [{:3},{:3}]",
+                yuv444.y[idx],
+                yuv444.y[idx + 1],
+                yuv444.y[idx + width],
+                yuv444.y[idx + width + 1]
+            );
+            debug!(
+                "  U444: [{:3},{:3}] [{:3},{:3}]",
+                yuv444.u[idx],
+                yuv444.u[idx + 1],
+                yuv444.u[idx + width],
+                yuv444.u[idx + width + 1]
+            );
+            debug!(
+                "  V444: [{:3},{:3}] [{:3},{:3}]",
+                yuv444.v[idx],
+                yuv444.v[idx + 1],
+                yuv444.v[idx + width],
+                yuv444.v[idx + width + 1]
+            );
 
             // Show subsampled result for this position
             let chroma_x = x / 2;
             let chroma_y = y / 2;
             let chroma_idx = chroma_y * (width / 2) + chroma_x;
-            debug!("  Main U420: {:3}, Main V420: {:3}", u[chroma_idx], v[chroma_idx]);
+            debug!(
+                "  Main U420: {:3}, Main V420: {:3}",
+                u[chroma_idx], v[chroma_idx]
+            );
         }
 
         debug!("═══════════════════════════════════════════");
@@ -401,8 +416,8 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
     // - Auxiliary row 15: V444 row 15
     // - Auxiliary row 16: U444 row 17 (pattern repeats)
 
-    let mut u_row_counter = 0;  // Tracks which U444 odd row to pack next
-    let mut v_row_counter = 0;  // Tracks which V444 odd row to pack next
+    let mut u_row_counter = 0; // Tracks which U444 odd row to pack next
+    let mut v_row_counter = 0; // Tracks which V444 odd row to pack next
 
     for aux_row in 0..padded_height {
         let macroblock_row = aux_row % 16;
@@ -414,7 +429,7 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
 
             // Skip padding rows beyond actual frame
             if source_row >= height {
-                continue;  // Keep padding as neutral (128)
+                continue; // Keep padding as neutral (128)
             }
 
             // Copy ENTIRE row from U444 (all columns: even and odd!)
@@ -429,7 +444,7 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
 
             // Skip padding rows beyond actual frame
             if source_row >= height {
-                continue;  // Keep padding as neutral (128)
+                continue; // Keep padding as neutral (128)
             }
 
             // Copy ENTIRE row from V444 (all columns: even and odd!)
@@ -463,14 +478,14 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
 
     // Fill actual data with UNPADDED stride (matches what we tell encoder)
     for cy in 0..chroma_height {
-        let y = cy * 2;  // Even row in source (0, 2, 4, 6, ...)
+        let y = cy * 2; // Even row in source (0, 2, 4, 6, ...)
 
         for cx in 0..chroma_width {
-            let x = cx * 2 + 1;  // Odd column in source (1, 3, 5, 7, ...)
+            let x = cx * 2 + 1; // Odd column in source (1, 3, 5, 7, ...)
             let idx = y * width + x;
 
             // Write to buffer with UNPADDED stride (matches strides() return value)
-            let out_idx = cy * chroma_width + cx;  // ← Use chroma_width, not padded!
+            let out_idx = cy * chroma_width + cx; // ← Use chroma_width, not padded!
 
             // B6: Sample U444 at (odd_col, even_row)
             aux_u[out_idx] = yuv444.u[idx];
@@ -481,16 +496,20 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
             // DIAGNOSTIC: Log the cycling position
             if width == 1280 && height == 800 && out_idx == 39204 {
                 use tracing::debug;
-                debug!("🔍 PACKING aux_u[{}] (cy={}, cx={}) ← yuv444.u[{}] (x={}, y={}): value={}",
-                       out_idx, cy, cx, idx, x, y, yuv444.u[idx]);
-                debug!("🔍 PACKING aux_v[{}] (cy={}, cx={}) ← yuv444.v[{}] (x={}, y={}): value={}",
-                       out_idx, cy, cx, idx, x, y, yuv444.v[idx]);
+                debug!(
+                    "🔍 PACKING aux_u[{}] (cy={}, cx={}) ← yuv444.u[{}] (x={}, y={}): value={}",
+                    out_idx, cy, cx, idx, x, y, yuv444.u[idx]
+                );
+                debug!(
+                    "🔍 PACKING aux_v[{}] (cy={}, cx={}) ← yuv444.v[{}] (x={}, y={}): value={}",
+                    out_idx, cy, cx, idx, x, y, yuv444.v[idx]
+                );
             }
         }
     }
 
     // DIAGNOSTIC: Multi-position auxiliary view analysis
-    use tracing::{trace, debug};
+    use tracing::{debug, trace};
     if width == 1280 && height == 800 {
         debug!("═══ AUXILIARY VIEW MULTI-POSITION ANALYSIS ═══");
 
@@ -506,17 +525,19 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
 
             // Auxiliary Y: should contain U444 odd rows (0-7) and V444 odd rows (8-15)
             // Check what row of auxiliary Y this position maps to
-            let aux_row = y;  // Simplified - just check the row directly
+            let aux_row = y; // Simplified - just check the row directly
             let aux_idx = aux_row * width + x;
 
             // Sample auxiliary Y plane at this position
             if aux_row < aux_y.len() / width {
-                debug!("  Aux Y (row {}): [{:3},{:3},{:3},{:3}]",
-                       aux_row,
-                       aux_y.get(aux_idx).unwrap_or(&0),
-                       aux_y.get(aux_idx+1).unwrap_or(&0),
-                       aux_y.get(aux_idx+2).unwrap_or(&0),
-                       aux_y.get(aux_idx+3).unwrap_or(&0));
+                debug!(
+                    "  Aux Y (row {}): [{:3},{:3},{:3},{:3}]",
+                    aux_row,
+                    aux_y.get(aux_idx).unwrap_or(&0),
+                    aux_y.get(aux_idx + 1).unwrap_or(&0),
+                    aux_y.get(aux_idx + 2).unwrap_or(&0),
+                    aux_y.get(aux_idx + 3).unwrap_or(&0)
+                );
 
                 // Show corresponding source U444/V444 odd row
                 let source_row = if (aux_row % 16) < 8 {
@@ -530,19 +551,23 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
                 if source_row < height {
                     let src_idx = source_row * width + x;
                     if (aux_row % 16) < 8 {
-                        debug!("  Source U444[row {}]: [{:3},{:3},{:3},{:3}]",
-                               source_row,
-                               yuv444.u.get(src_idx).unwrap_or(&0),
-                               yuv444.u.get(src_idx+1).unwrap_or(&0),
-                               yuv444.u.get(src_idx+2).unwrap_or(&0),
-                               yuv444.u.get(src_idx+3).unwrap_or(&0));
+                        debug!(
+                            "  Source U444[row {}]: [{:3},{:3},{:3},{:3}]",
+                            source_row,
+                            yuv444.u.get(src_idx).unwrap_or(&0),
+                            yuv444.u.get(src_idx + 1).unwrap_or(&0),
+                            yuv444.u.get(src_idx + 2).unwrap_or(&0),
+                            yuv444.u.get(src_idx + 3).unwrap_or(&0)
+                        );
                     } else {
-                        debug!("  Source V444[row {}]: [{:3},{:3},{:3},{:3}]",
-                               source_row,
-                               yuv444.v.get(src_idx).unwrap_or(&0),
-                               yuv444.v.get(src_idx+1).unwrap_or(&0),
-                               yuv444.v.get(src_idx+2).unwrap_or(&0),
-                               yuv444.v.get(src_idx+3).unwrap_or(&0));
+                        debug!(
+                            "  Source V444[row {}]: [{:3},{:3},{:3},{:3}]",
+                            source_row,
+                            yuv444.v.get(src_idx).unwrap_or(&0),
+                            yuv444.v.get(src_idx + 1).unwrap_or(&0),
+                            yuv444.v.get(src_idx + 2).unwrap_or(&0),
+                            yuv444.v.get(src_idx + 3).unwrap_or(&0)
+                        );
                     }
                 }
             }
@@ -550,18 +575,24 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
             // Sample auxiliary U/V chroma at this position
             let chroma_x = x / 2;
             let chroma_y = y / 2;
-            let chroma_idx = chroma_y * chroma_width + chroma_x;  // Use actual stride
+            let chroma_idx = chroma_y * chroma_width + chroma_x; // Use actual stride
             if chroma_idx < aux_u.len() {
-                debug!("  Aux U420: {:3}, Aux V420: {:3}", aux_u[chroma_idx], aux_v[chroma_idx]);
+                debug!(
+                    "  Aux U420: {:3}, Aux V420: {:3}",
+                    aux_u[chroma_idx], aux_v[chroma_idx]
+                );
 
                 // Show source position (odd column, even row)
-                let src_x = chroma_x * 2 + 1;  // Odd column
-                let src_y = chroma_y * 2;      // Even row
+                let src_x = chroma_x * 2 + 1; // Odd column
+                let src_y = chroma_y * 2; // Even row
                 let src_idx = src_y * width + src_x;
-                debug!("  Source U444[{},{}]: {:3}, V444: {:3}",
-                       src_x, src_y,
-                       yuv444.u.get(src_idx).unwrap_or(&0),
-                       yuv444.v.get(src_idx).unwrap_or(&0));
+                debug!(
+                    "  Source U444[{},{}]: {:3}, V444: {:3}",
+                    src_x,
+                    src_y,
+                    yuv444.u.get(src_idx).unwrap_or(&0),
+                    yuv444.v.get(src_idx).unwrap_or(&0)
+                );
             }
         }
 
@@ -574,8 +605,8 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
 
     // DIAGNOSTIC: Compute hash AFTER truncate so we only hash what OpenH264 sees
     if width == 1280 && height == 800 {
-        use tracing::debug;
         use std::hash::{Hash, Hasher};
+        use tracing::debug;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         aux_y.hash(&mut hasher);
         aux_u.hash(&mut hasher);
@@ -592,60 +623,82 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
         let prev = PREV_HASH.swap(frame_hash, Ordering::Relaxed);
 
         if prev == frame_hash {
-            debug!("[Frame #{}] ✅ TEMPORAL STABLE: Auxiliary IDENTICAL (hash: 0x{:016x})", frame_num, frame_hash);
+            debug!(
+                "[Frame #{}] ✅ TEMPORAL STABLE: Auxiliary IDENTICAL (hash: 0x{:016x})",
+                frame_num, frame_hash
+            );
         } else if prev != 0 {
             debug!("[Frame #{}] ⚠️  TEMPORAL CHANGE: Auxiliary DIFFERENT (prev: 0x{:016x}, curr: 0x{:016x})", frame_num, prev, frame_hash);
 
             // OPTION 2: Find first byte that differs
-            let buffers = PREV_BUFFERS.get_or_init(|| {
-                Mutex::new((Vec::new(), Vec::new(), Vec::new()))
-            });
+            let buffers =
+                PREV_BUFFERS.get_or_init(|| Mutex::new((Vec::new(), Vec::new(), Vec::new())));
 
             if let Ok(mut prev_bufs) = buffers.lock() {
                 let (prev_y, prev_u, prev_v) = &*prev_bufs;
 
                 if !prev_y.is_empty() {
                     // Check aux_y
-                    if let Some((idx, old_val, new_val)) = aux_y.iter().zip(prev_y.iter())
+                    if let Some((idx, old_val, new_val)) = aux_y
+                        .iter()
+                        .zip(prev_y.iter())
                         .enumerate()
                         .find(|(_, (&a, &b))| a != b)
                         .map(|(i, (&a, &b))| (i, b, a))
                     {
-                        let region = if idx < height * width { "DATA" } else { "PADDING" };
-                        debug!("  📍 aux_y[{}] differs: {} (was {}) → {} (now {}) [{}]",
-                               idx, old_val, old_val, new_val, new_val, region);
+                        let region = if idx < height * width {
+                            "DATA"
+                        } else {
+                            "PADDING"
+                        };
+                        debug!(
+                            "  📍 aux_y[{}] differs: {} (was {}) → {} (now {}) [{}]",
+                            idx, old_val, old_val, new_val, new_val, region
+                        );
                     }
 
                     // Check aux_u
-                    if let Some((idx, old_val, new_val)) = aux_u.iter().zip(prev_u.iter())
+                    if let Some((idx, old_val, new_val)) = aux_u
+                        .iter()
+                        .zip(prev_u.iter())
                         .enumerate()
                         .find(|(_, (&a, &b))| a != b)
                         .map(|(i, (&a, &b))| (i, b, a))
                     {
                         let data_size = chroma_height * chroma_width;
                         let region = if idx < data_size { "DATA" } else { "PADDING" };
-                        let row = idx / chroma_width;  // Use actual stride, not padded
+                        let row = idx / chroma_width; // Use actual stride, not padded
                         let col = idx % chroma_width;
-                        debug!("  📍 aux_u[{}] (row {}, col {}) differs: {} → {} [{}]",
-                               idx, row, col, old_val, new_val, region);
-                        debug!("     (chroma_width={}, data_size={})",
-                               chroma_width, data_size);
+                        debug!(
+                            "  📍 aux_u[{}] (row {}, col {}) differs: {} → {} [{}]",
+                            idx, row, col, old_val, new_val, region
+                        );
+                        debug!(
+                            "     (chroma_width={}, data_size={})",
+                            chroma_width, data_size
+                        );
                     }
 
                     // Check aux_v
-                    if let Some((idx, old_val, new_val)) = aux_v.iter().zip(prev_v.iter())
+                    if let Some((idx, old_val, new_val)) = aux_v
+                        .iter()
+                        .zip(prev_v.iter())
                         .enumerate()
                         .find(|(_, (&a, &b))| a != b)
                         .map(|(i, (&a, &b))| (i, b, a))
                     {
                         let data_size = chroma_height * chroma_width;
                         let region = if idx < data_size { "DATA" } else { "PADDING" };
-                        let row = idx / chroma_width;  // Use actual stride, not padded
+                        let row = idx / chroma_width; // Use actual stride, not padded
                         let col = idx % chroma_width;
-                        debug!("  📍 aux_v[{}] (row {}, col {}) differs: {} → {} [{}]",
-                               idx, row, col, old_val, new_val, region);
-                        debug!("     (chroma_width={}, data_size={})",
-                               chroma_width, data_size);
+                        debug!(
+                            "  📍 aux_v[{}] (row {}, col {}) differs: {} → {} [{}]",
+                            idx, row, col, old_val, new_val, region
+                        );
+                        debug!(
+                            "     (chroma_width={}, data_size={})",
+                            chroma_width, data_size
+                        );
                     }
                 }
 
@@ -653,12 +706,14 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
                 *prev_bufs = (aux_y.clone(), aux_u.clone(), aux_v.clone());
             }
         } else {
-            debug!("[Frame #{}] 🔵 FIRST FRAME: Auxiliary hash: 0x{:016x}", frame_num, frame_hash);
+            debug!(
+                "[Frame #{}] 🔵 FIRST FRAME: Auxiliary hash: 0x{:016x}",
+                frame_num, frame_hash
+            );
 
             // Store first frame buffers
-            let buffers = PREV_BUFFERS.get_or_init(|| {
-                Mutex::new((Vec::new(), Vec::new(), Vec::new()))
-            });
+            let buffers =
+                PREV_BUFFERS.get_or_init(|| Mutex::new((Vec::new(), Vec::new(), Vec::new())));
 
             if let Ok(mut prev_bufs) = buffers.lock() {
                 *prev_bufs = (aux_y.clone(), aux_u.clone(), aux_v.clone());
@@ -667,9 +722,9 @@ fn pack_auxiliary_view_spec_compliant(yuv444: &Yuv444Frame) -> Yuv420Frame {
     }
 
     Yuv420Frame {
-        y: aux_y,  // Luma buffer (height * width)
-        u: aux_u,  // Chroma buffer (chroma_width * chroma_height = width/2 * height/2)
-        v: aux_v,  // Chroma buffer (chroma_width * chroma_height = width/2 * height/2)
+        y: aux_y, // Luma buffer (height * width)
+        u: aux_u, // Chroma buffer (chroma_width * chroma_height = width/2 * height/2)
+        v: aux_v, // Chroma buffer (chroma_width * chroma_height = width/2 * height/2)
         width,
         height,
     }
@@ -786,7 +841,13 @@ mod tests {
             }
         }
 
-        Yuv444Frame { y, u, v, width, height }
+        Yuv444Frame {
+            y,
+            u,
+            v,
+            width,
+            height,
+        }
     }
 
     #[test]
@@ -843,18 +904,22 @@ mod tests {
         // Verify first macroblock structure (64x64 has 4 macroblocks vertically)
         // Row 0 of aux should be row 1 of U444
         for x in 0..64 {
-            let aux_idx = 0 * 64 + x;  // Row 0
-            let u444_idx = 1 * 64 + x;  // Row 1 of U444 (odd row)
-            assert_eq!(aux.y[aux_idx], yuv444.u[u444_idx],
-                "Auxiliary Y row 0 should be U444 row 1");
+            let aux_idx = 0 * 64 + x; // Row 0
+            let u444_idx = 1 * 64 + x; // Row 1 of U444 (odd row)
+            assert_eq!(
+                aux.y[aux_idx], yuv444.u[u444_idx],
+                "Auxiliary Y row 0 should be U444 row 1"
+            );
         }
 
         // Row 8 of aux should be row 1 of V444
         for x in 0..64 {
-            let aux_idx = 8 * 64 + x;  // Row 8
-            let v444_idx = 1 * 64 + x;  // Row 1 of V444 (odd row)
-            assert_eq!(aux.y[aux_idx], yuv444.v[v444_idx],
-                "Auxiliary Y row 8 should be V444 row 1");
+            let aux_idx = 8 * 64 + x; // Row 8
+            let v444_idx = 1 * 64 + x; // Row 1 of V444 (odd row)
+            assert_eq!(
+                aux.y[aux_idx], yuv444.v[v444_idx],
+                "Auxiliary Y row 8 should be V444 row 1"
+            );
         }
     }
 
@@ -872,8 +937,8 @@ mod tests {
     #[test]
     fn test_yuv420_to_bgra_black() {
         let yuv420 = Yuv420Frame {
-            y: vec![0; 4],      // 2×2 black
-            u: vec![128; 1],    // 1×1 neutral chroma
+            y: vec![0; 4],   // 2×2 black
+            u: vec![128; 1], // 1×1 neutral chroma
             v: vec![128; 1],
             width: 2,
             height: 2,
@@ -895,8 +960,8 @@ mod tests {
     #[test]
     fn test_yuv420_to_bgra_white() {
         let yuv420 = Yuv420Frame {
-            y: vec![255; 4],    // 2×2 white
-            u: vec![128; 1],    // 1×1 neutral chroma
+            y: vec![255; 4], // 2×2 white
+            u: vec![128; 1], // 1×1 neutral chroma
             v: vec![128; 1],
             width: 2,
             height: 2,
@@ -921,16 +986,16 @@ mod tests {
 
         assert!(!validate_dimensions(1921, 1080)); // Odd width
         assert!(!validate_dimensions(1920, 1081)); // Odd height
-        assert!(!validate_dimensions(0, 100));      // Zero width
-        assert!(!validate_dimensions(100, 0));      // Zero height
+        assert!(!validate_dimensions(0, 100)); // Zero width
+        assert!(!validate_dimensions(100, 0)); // Zero height
     }
 
     #[test]
     fn test_align_to_16() {
-        assert_eq!(align_to_16(1920), 1920);  // Already aligned
-        assert_eq!(align_to_16(1080), 1088);  // Needs padding
-        assert_eq!(align_to_16(800), 800);    // Already aligned
-        assert_eq!(align_to_16(600), 608);    // Needs padding
+        assert_eq!(align_to_16(1920), 1920); // Already aligned
+        assert_eq!(align_to_16(1080), 1088); // Needs padding
+        assert_eq!(align_to_16(800), 800); // Already aligned
+        assert_eq!(align_to_16(600), 608); // Needs padding
         assert_eq!(align_to_16(1), 16);
         assert_eq!(align_to_16(15), 16);
         assert_eq!(align_to_16(16), 16);
@@ -1103,13 +1168,19 @@ mod tests {
 
         // Check that aux_v has non-neutral values (not all 128)
         let has_non_neutral = aux.v.iter().any(|&v| v != 128);
-        assert!(has_non_neutral, "Auxiliary V plane should contain sampled V444 data, not all neutral");
+        assert!(
+            has_non_neutral,
+            "Auxiliary V plane should contain sampled V444 data, not all neutral"
+        );
 
         // Verify aux_v contains values from yuv444.v gradient
         // create_test_yuv444 creates V gradient, so aux should have some of those values
         let min = aux.v.iter().min().copied().unwrap_or(128);
         let max = aux.v.iter().max().copied().unwrap_or(128);
-        assert!(max > min, "Auxiliary V plane should have variation from V444 gradient");
+        assert!(
+            max > min,
+            "Auxiliary V plane should have variation from V444 gradient"
+        );
     }
 
     // =================================================================

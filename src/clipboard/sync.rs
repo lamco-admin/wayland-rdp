@@ -21,10 +21,8 @@ use std::time::{Duration, SystemTime};
 use tracing::{debug, warn};
 
 // Import loop detection from library
-pub use lamco_clipboard_core::{
-    ClipboardFormat, LoopDetectionConfig, LoopDetector,
-};
 pub use lamco_clipboard_core::loop_detector::ClipboardSource;
+pub use lamco_clipboard_core::{ClipboardFormat, LoopDetectionConfig, LoopDetector};
 
 /// Clipboard ownership state
 #[derive(Debug, Clone)]
@@ -45,8 +43,7 @@ impl PartialEq for ClipboardState {
             (ClipboardState::Idle, ClipboardState::Idle) => true,
             (ClipboardState::RdpOwned(f1, _), ClipboardState::RdpOwned(f2, _)) => {
                 // Compare format IDs only (ignore timestamps)
-                f1.len() == f2.len()
-                    && f1.iter().zip(f2.iter()).all(|(a, b)| a.id == b.id)
+                f1.len() == f2.len() && f1.iter().zip(f2.iter()).all(|(a, b)| a.id == b.id)
             }
             (ClipboardState::PortalOwned(m1), ClipboardState::PortalOwned(m2)) => m1 == m2,
             (ClipboardState::Syncing(d1), ClipboardState::Syncing(d2)) => d1 == d2,
@@ -128,7 +125,8 @@ impl SyncManager {
         self.state = ClipboardState::RdpOwned(formats.clone(), SystemTime::now());
 
         // Record operation in loop detector
-        self.loop_detector.record_formats(&formats, ClipboardSource::Rdp);
+        self.loop_detector
+            .record_formats(&formats, ClipboardSource::Rdp);
         self.loop_detector.record_sync(ClipboardSource::Rdp);
 
         Ok(true) // Proceed with sync
@@ -191,7 +189,8 @@ impl SyncManager {
         }
 
         // Record operation in loop detector
-        self.loop_detector.record_mime_types(&mime_types, ClipboardSource::Local);
+        self.loop_detector
+            .record_mime_types(&mime_types, ClipboardSource::Local);
         self.loop_detector.record_sync(ClipboardSource::Local);
 
         Ok(true) // Proceed with sync
@@ -262,7 +261,8 @@ impl SyncManager {
     /// * `formats` - RDP clipboard formats
     pub fn set_rdp_formats(&mut self, formats: Vec<ClipboardFormat>) {
         self.state = ClipboardState::RdpOwned(formats.clone(), SystemTime::now());
-        self.loop_detector.record_formats(&formats, ClipboardSource::Rdp);
+        self.loop_detector
+            .record_formats(&formats, ClipboardSource::Rdp);
     }
 
     /// Set Portal MIME types as current clipboard owner
@@ -272,7 +272,8 @@ impl SyncManager {
     /// * `mime_types` - Portal clipboard MIME types
     pub fn set_portal_formats(&mut self, mime_types: Vec<String>) {
         self.state = ClipboardState::PortalOwned(mime_types.clone());
-        self.loop_detector.record_mime_types(&mime_types, ClipboardSource::Local);
+        self.loop_detector
+            .record_mime_types(&mime_types, ClipboardSource::Local);
     }
 
     /// Check if currently rate limited for the given source
@@ -303,7 +304,10 @@ mod tests {
     }
 
     fn make_image_formats() -> Vec<ClipboardFormat> {
-        vec![ClipboardFormat { id: 2, name: Some("CF_BITMAP".to_string()) }]
+        vec![ClipboardFormat {
+            id: 2,
+            name: Some("CF_BITMAP".to_string()),
+        }]
     }
 
     #[test]
@@ -330,7 +334,9 @@ mod tests {
         let mime_types = vec!["text/plain".to_string(), "text/html".to_string()];
 
         // Should allow first format announcement (force=true simulates D-Bus)
-        assert!(manager.handle_portal_formats(mime_types.clone(), true).unwrap());
+        assert!(manager
+            .handle_portal_formats(mime_types.clone(), true)
+            .unwrap());
 
         // Verify state
         match manager.state() {
@@ -349,7 +355,9 @@ mod tests {
 
         // Immediate D-Bus signal should be blocked (echo protection)
         let mime_types = vec!["text/plain".to_string()];
-        assert!(!manager.handle_portal_formats(mime_types.clone(), true).unwrap());
+        assert!(!manager
+            .handle_portal_formats(mime_types.clone(), true)
+            .unwrap());
 
         // Non-force Portal signal should always be blocked when RDP owns
         assert!(!manager.handle_portal_formats(mime_types, false).unwrap());
@@ -369,7 +377,9 @@ mod tests {
 
         // Simulate Portal echo - record it as coming from Local
         let text_mime = vec!["text/plain".to_string()];
-        manager.loop_detector.record_mime_types(&text_mime, ClipboardSource::Local);
+        manager
+            .loop_detector
+            .record_mime_types(&text_mime, ClipboardSource::Local);
 
         // Now RDP trying to announce same formats again should be blocked (loop)
         assert!(!manager.handle_rdp_formats(text_formats).unwrap());

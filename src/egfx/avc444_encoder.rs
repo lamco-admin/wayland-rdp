@@ -55,7 +55,8 @@
 
 #[cfg(feature = "h264")]
 use openh264::encoder::{
-    BitRate, Complexity, Encoder, EncoderConfig as OpenH264Config, FrameRate, FrameType, UsageType, VuiConfig,
+    BitRate, Complexity, Encoder, EncoderConfig as OpenH264Config, FrameRate, FrameType, UsageType,
+    VuiConfig,
 };
 #[cfg(feature = "h264")]
 use openh264::formats::YUVSlices;
@@ -300,35 +301,37 @@ impl Avc444Encoder {
             .max_frame_rate(FrameRate::from_hz(config.max_fps))
             .skip_frames(config.enable_skip_frame)
             .usage_type(UsageType::ScreenContentRealTime)
-            .complexity(Complexity::High)  // Better quality for text/UI (slower encoding)
-            .scene_change_detect(false)  // Disable auto-IDR for bandwidth optimization
-            .vui(vui);  // Signal color space to decoder (BT.709 full range)
+            .complexity(Complexity::High) // Better quality for text/UI (slower encoding)
+            .scene_change_detect(false) // Disable auto-IDR for bandwidth optimization
+            .vui(vui); // Signal color space to decoder (BT.709 full range)
 
         // Set level if we know dimensions
         if let Some(level) = level {
             encoder_config = encoder_config.level(level.to_openh264_level());
         }
 
-        info!(
-            "🎬 AVC444: High complexity, OpenH264 default QP (0-51), VUI enabled"
-        );
+        info!("🎬 AVC444: High complexity, OpenH264 default QP (0-51), VUI enabled");
 
         // Create SINGLE encoder for both Main and Aux (MS-RDPEGFX spec compliant)
-        let encoder = Encoder::with_api_config(
-            openh264::OpenH264API::from_source(),
-            encoder_config,
-        )
-        .map_err(|e| {
-            EncoderError::InitFailed(format!("AVC444 single encoder init failed: {:?}", e))
-        })?;
+        let encoder =
+            Encoder::with_api_config(openh264::OpenH264API::from_source(), encoder_config)
+                .map_err(|e| {
+                    EncoderError::InitFailed(format!("AVC444 single encoder init failed: {:?}", e))
+                })?;
 
         debug!(
             "Created AVC444 SINGLE encoder: {} color space, {}kbps, level={:?}",
-            color_space.description(), config.bitrate_kbps, level
+            color_space.description(),
+            config.bitrate_kbps,
+            level
         );
         info!(
             "🔧 AVC444: VUI enabled ({}, primaries={}, transfer={}, matrix={})",
-            if color_space.range == ColorRange::Full { "full range" } else { "limited range" },
+            if color_space.range == ColorRange::Full {
+                "full range"
+            } else {
+                "limited range"
+            },
             color_space.vui_colour_primaries(),
             color_space.vui_transfer_characteristics(),
             color_space.vui_matrix_coefficients()
@@ -348,19 +351,19 @@ impl Avc444Encoder {
             // Set to true to diagnose P-frame specific issues
             // CONFIRMED 2025-12-27: All-keyframes WORKS! P-frames cause lavender corruption
             // Now testing with temporal stability logging to find WHY
-            force_all_keyframes: false,  // Re-enabled P-frames with temporal logging
+            force_all_keyframes: false, // Re-enabled P-frames with temporal logging
             // Phase 1: Aux omission defaults
             // NOTE: These are now overridden by configure_aux_omission() called from display_handler
             // using config.toml values
             last_aux_hash: None,
             frames_since_aux: 0,
-            max_aux_interval: 30,         // Default, overridden by config
-            aux_change_threshold: 0.05,   // Default, overridden by config
-            force_aux_idr_on_return: false,  // Default, overridden by config
-            enable_aux_omission: false,   // Default, overridden by config
+            max_aux_interval: 30,           // Default, overridden by config
+            aux_change_threshold: 0.05,     // Default, overridden by config
+            force_aux_idr_on_return: false, // Default, overridden by config
+            enable_aux_omission: false,     // Default, overridden by config
             // Periodic IDR defaults (overridden by configure_periodic_idr)
             last_idr_time: std::time::Instant::now(),
-            periodic_idr_interval_secs: 5,  // Default 5 seconds
+            periodic_idr_interval_secs: 5, // Default 5 seconds
             force_next_idr: false,
             force_aux_on_next_frame: false,
         })
@@ -381,7 +384,10 @@ impl Avc444Encoder {
     ///
     /// This is the preferred method for setting color space, as it configures
     /// both the conversion matrix AND VUI signaling in the H.264 stream.
-    pub fn with_color_space(mut config: EncoderConfig, color_space: ColorSpaceConfig) -> EncoderResult<Self> {
+    pub fn with_color_space(
+        mut config: EncoderConfig,
+        color_space: ColorSpaceConfig,
+    ) -> EncoderResult<Self> {
         config.color_space = Some(color_space);
         Self::new(config)
     }
@@ -478,7 +484,8 @@ impl Avc444Encoder {
         }
         if self.periodic_idr_interval_secs > 0 {
             let elapsed = self.last_idr_time.elapsed();
-            return elapsed >= std::time::Duration::from_secs(self.periodic_idr_interval_secs as u64);
+            return elapsed
+                >= std::time::Duration::from_secs(self.periodic_idr_interval_secs as u64);
         }
         false
     }
@@ -493,7 +500,7 @@ impl Avc444Encoder {
         // Check PLI request first
         if self.force_next_idr {
             self.force_next_idr = false;
-            self.force_aux_on_next_frame = true;  // Force aux to clear ALL artifacts
+            self.force_aux_on_next_frame = true; // Force aux to clear ALL artifacts
             self.last_idr_time = std::time::Instant::now();
             info!("Forcing IDR (client PLI request) - both Main and Aux will refresh");
             return true;
@@ -504,7 +511,7 @@ impl Avc444Encoder {
             let elapsed = self.last_idr_time.elapsed();
             if elapsed >= std::time::Duration::from_secs(self.periodic_idr_interval_secs as u64) {
                 self.last_idr_time = std::time::Instant::now();
-                self.force_aux_on_next_frame = true;  // Force aux to clear ALL artifacts
+                self.force_aux_on_next_frame = true; // Force aux to clear ALL artifacts
                 info!(
                     "Forcing periodic IDR ({}s elapsed) - BOTH Main and Aux will refresh to clear artifacts",
                     elapsed.as_secs()
@@ -603,7 +610,11 @@ impl Avc444Encoder {
 
         // Encode Main subframe FIRST (luma + subsampled chroma)
         let main_yuv_slices = YUVSlices::new(
-            (main_yuv420.y_plane(), main_yuv420.u_plane(), main_yuv420.v_plane()),
+            (
+                main_yuv420.y_plane(),
+                main_yuv420.u_plane(),
+                main_yuv420.v_plane(),
+            ),
             dims,
             strides,
         );
@@ -612,8 +623,7 @@ impl Avc444Encoder {
         })?;
 
         // Convert main bitstream immediately to release borrow before should_send_aux call
-        let main_is_keyframe =
-            matches!(main_bitstream.frame_type(), FrameType::IDR | FrameType::I);
+        let main_is_keyframe = matches!(main_bitstream.frame_type(), FrameType::IDR | FrameType::I);
         let main_frame_type = main_bitstream.frame_type(); // Store for logging
         let mut stream1_data = main_bitstream.to_vec();
         // main_bitstream dropped here, mutable borrow of self.main_encoder ends
@@ -635,7 +645,7 @@ impl Avc444Encoder {
         // - Next aux P-frame would reference missing frame → corruption
         // - By not encoding: Both DPBs stay perfectly in sync
 
-        let should_send_aux = self.should_send_aux(&aux_yuv420, main_is_keyframe);  // Now OK - no mutable borrow
+        let should_send_aux = self.should_send_aux(&aux_yuv420, main_is_keyframe); // Now OK - no mutable borrow
 
         let aux_bitstream_opt = if should_send_aux {
             // === CRITICAL: Force aux IDR when main is IDR (artifact clearing sync) ===
@@ -643,17 +653,15 @@ impl Avc444Encoder {
             // If main is IDR but aux is P-frame, the aux P-frame references may be stale.
             // This ensures BOTH streams refresh together for complete artifact clearing.
             if main_is_keyframe {
-                self.encoder.force_intra_frame();  // Same encoder!
-                debug!(
-                    "Forcing aux IDR to sync with main IDR (artifact clearing)"
-                );
+                self.encoder.force_intra_frame(); // Same encoder!
+                debug!("Forcing aux IDR to sync with main IDR (artifact clearing)");
             } else if self.force_aux_idr_on_return && self.frames_since_aux > 0 {
                 // === SAFE MODE: Force aux IDR when reintroducing after omission ===
                 // If aux was omitted for N frames, forcing IDR when it returns ensures:
                 // - No dependency on stale aux frames decoder might have evicted
                 // - Clean reference point for future aux updates
                 // - Robust operation even with long omission intervals
-                self.encoder.force_intra_frame();  // Same encoder!
+                self.encoder.force_intra_frame(); // Same encoder!
                 debug!(
                     "Forcing aux IDR on reintroduction (omitted for {} frames)",
                     self.frames_since_aux
@@ -664,7 +672,11 @@ impl Avc444Encoder {
             // CRITICAL: This maintains unified DPB shared with Main
             let aux_strides = aux_yuv420.strides();
             let aux_yuv_slices = YUVSlices::new(
-                (aux_yuv420.y_plane(), aux_yuv420.u_plane(), aux_yuv420.v_plane()),
+                (
+                    aux_yuv420.y_plane(),
+                    aux_yuv420.u_plane(),
+                    aux_yuv420.v_plane(),
+                ),
                 dims,
                 aux_strides,
             );
@@ -743,7 +755,8 @@ impl Avc444Encoder {
 
         // Update statistics
         self.frame_count += 1;
-        let total_size = stream1_data.len() + stream2_data_opt.as_ref().map(|d| d.len()).unwrap_or(0);
+        let total_size =
+            stream1_data.len() + stream2_data_opt.as_ref().map(|d| d.len()).unwrap_or(0);
         self.bytes_encoded += total_size as u64;
 
         let total_time = start.elapsed();
@@ -780,7 +793,7 @@ impl Avc444Encoder {
 
         Ok(Some(Avc444Frame {
             stream1_data,
-            stream2_data: stream2_data_opt,  // Now Option<Vec<u8>>
+            stream2_data: stream2_data_opt, // Now Option<Vec<u8>>
             is_keyframe: main_is_keyframe,
             timestamp_ms,
             total_size,
@@ -797,7 +810,10 @@ impl Avc444Encoder {
             // Cache SPS/PPS from this IDR
             if let Some(sps_pps) = Self::extract_sps_pps(&data) {
                 self.cached_sps_pps = Some(sps_pps);
-                trace!("Cached SPS/PPS ({} bytes) from IDR", self.cached_sps_pps.as_ref().unwrap().len());
+                trace!(
+                    "Cached SPS/PPS ({} bytes) from IDR",
+                    self.cached_sps_pps.as_ref().unwrap().len()
+                );
             }
         } else if let Some(ref sps_pps) = self.cached_sps_pps {
             // Prepend cached SPS/PPS to P-frame
@@ -819,16 +835,15 @@ impl Avc444Encoder {
 
         while i < data.len() {
             // Find start code
-            let start_code_len = if i + 4 <= data.len()
-                && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01]
-            {
-                4
-            } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
-                3
-            } else {
-                i += 1;
-                continue;
-            };
+            let start_code_len =
+                if i + 4 <= data.len() && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01] {
+                    4
+                } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
+                    3
+                } else {
+                    i += 1;
+                    continue;
+                };
 
             let nal_start = i + start_code_len;
             if nal_start >= data.len() {
@@ -868,16 +883,15 @@ impl Avc444Encoder {
 
         while i < data.len() {
             // Find start code
-            let start_code_len = if i + 4 <= data.len()
-                && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01]
-            {
-                4
-            } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
-                3
-            } else {
-                i += 1;
-                continue;
-            };
+            let start_code_len =
+                if i + 4 <= data.len() && data[i..i + 4] == [0x00, 0x00, 0x00, 0x01] {
+                    4
+                } else if i + 3 <= data.len() && data[i..i + 3] == [0x00, 0x00, 0x01] {
+                    3
+                } else {
+                    i += 1;
+                    continue;
+                };
 
             let nal_start = i + start_code_len;
             if nal_start >= data.len() {
@@ -956,7 +970,7 @@ impl Avc444Encoder {
         // For 1280x800: 1,024,000 pixels → 4,000 samples
         // For 1920x1080: 2,073,600 pixels → 8,100 samples
         const SAMPLE_STRIDE: usize = 16;
-        const MAX_SAMPLES: usize = 8192;  // Cap at 8K samples even for 4K displays
+        const MAX_SAMPLES: usize = 8192; // Cap at 8K samples even for 4K displays
 
         let y_plane = frame.y_plane();
         let sample_count = (y_plane.len() / SAMPLE_STRIDE).min(MAX_SAMPLES);
@@ -1009,14 +1023,14 @@ impl Avc444Encoder {
     ///
     /// true if aux should be encoded and sent, false to omit
     fn should_send_aux(
-        &mut self,  // Changed to &mut self to clear force flag
+        &mut self, // Changed to &mut self to clear force flag
         aux_frame: &super::yuv444_packing::Yuv420Frame,
-        _main_is_keyframe: bool,  // IGNORED: See feedback loop documentation above
+        _main_is_keyframe: bool, // IGNORED: See feedback loop documentation above
     ) -> bool {
         // CRITICAL: Forced aux for artifact clearing (periodic IDR or PLI)
         // This bypasses ALL omission logic to ensure client gets fresh aux stream
         if self.force_aux_on_next_frame {
-            self.force_aux_on_next_frame = false;  // Consume the flag
+            self.force_aux_on_next_frame = false; // Consume the flag
             info!("Sending aux: FORCED for artifact clearing (bypassing omission)");
             return true;
         }
@@ -1052,7 +1066,8 @@ impl Avc444Encoder {
         if self.frames_since_aux < MIN_AUX_INTERVAL {
             trace!(
                 "Skipping aux: rate limited ({} frames since last, min={})",
-                self.frames_since_aux, MIN_AUX_INTERVAL
+                self.frames_since_aux,
+                MIN_AUX_INTERVAL
             );
             return false;
         }
@@ -1184,7 +1199,11 @@ mod tests {
     fn test_avc444_encoder_creation() {
         let config = EncoderConfig::default();
         let encoder = Avc444Encoder::new(config);
-        assert!(encoder.is_ok(), "Failed to create AVC444 encoder: {:?}", encoder.err());
+        assert!(
+            encoder.is_ok(),
+            "Failed to create AVC444 encoder: {:?}",
+            encoder.err()
+        );
     }
 
     #[cfg(feature = "h264")]
@@ -1229,10 +1248,7 @@ mod tests {
             // stream2_data is Option<Vec<u8>> - may be None with aux omission
             if let Some(ref stream2) = frame.stream2_data {
                 assert!(!stream2.is_empty(), "Stream 2 is empty");
-                assert_eq!(
-                    frame.total_size,
-                    frame.stream1_data.len() + stream2.len()
-                );
+                assert_eq!(frame.total_size, frame.stream1_data.len() + stream2.len());
             }
         }
     }
@@ -1251,10 +1267,10 @@ mod tests {
         for y in 0..height {
             for x in 0..width {
                 let idx = ((y * width + x) * 4) as usize;
-                bgra_data[idx] = ((x * 4) % 256) as u8;     // B
+                bgra_data[idx] = ((x * 4) % 256) as u8; // B
                 bgra_data[idx + 1] = ((y * 4) % 256) as u8; // G
-                bgra_data[idx + 2] = 128;                    // R
-                bgra_data[idx + 3] = 255;                    // A
+                bgra_data[idx + 2] = 128; // R
+                bgra_data[idx + 3] = 255; // A
             }
         }
 
@@ -1271,16 +1287,25 @@ mod tests {
         // Odd width
         let bgra_data = vec![0u8; 63 * 64 * 4];
         let result = encoder.encode_bgra(&bgra_data, 63, 64, 0);
-        assert!(matches!(result, Err(EncoderError::InvalidDimensions { .. })));
+        assert!(matches!(
+            result,
+            Err(EncoderError::InvalidDimensions { .. })
+        ));
 
         // Odd height
         let bgra_data = vec![0u8; 64 * 63 * 4];
         let result = encoder.encode_bgra(&bgra_data, 64, 63, 0);
-        assert!(matches!(result, Err(EncoderError::InvalidDimensions { .. })));
+        assert!(matches!(
+            result,
+            Err(EncoderError::InvalidDimensions { .. })
+        ));
 
         // Zero dimension
         let result = encoder.encode_bgra(&[], 0, 64, 0);
-        assert!(matches!(result, Err(EncoderError::InvalidDimensions { .. })));
+        assert!(matches!(
+            result,
+            Err(EncoderError::InvalidDimensions { .. })
+        ));
     }
 
     #[cfg(feature = "h264")]
@@ -1419,7 +1444,8 @@ mod tests {
             assert!(frame.timing.encoding_ms >= 0.0);
 
             // Total should be sum of parts (with some tolerance for measurement)
-            let sum = frame.timing.color_convert_ms + frame.timing.packing_ms + frame.timing.encoding_ms;
+            let sum =
+                frame.timing.color_convert_ms + frame.timing.packing_ms + frame.timing.encoding_ms;
             assert!((frame.timing.total_ms - sum).abs() < 1.0);
         }
     }
@@ -1465,7 +1491,10 @@ mod tests {
             }
             // 1080p keyframe should be substantial but not enormous
             assert!(frame.total_size > 1000, "1080p frame too small");
-            assert!(frame.total_size < 10_000_000, "1080p frame unreasonably large");
+            assert!(
+                frame.total_size < 10_000_000,
+                "1080p frame unreasonably large"
+            );
         }
     }
 
@@ -1519,9 +1548,15 @@ mod tests {
         }
 
         let stats = encoder.stats();
-        assert!(stats.frames_encoded >= 1, "Should have encoded at least 1 frame");
+        assert!(
+            stats.frames_encoded >= 1,
+            "Should have encoded at least 1 frame"
+        );
         assert!(stats.bytes_encoded > 0, "Should have bytes encoded");
-        assert!(stats.avg_encode_time_ms > 0.0, "Should have non-zero encode time");
+        assert!(
+            stats.avg_encode_time_ms > 0.0,
+            "Should have non-zero encode time"
+        );
         assert_eq!(stats.bitrate_kbps, 6000, "Bitrate should be 2× configured");
     }
 
@@ -1596,7 +1631,7 @@ mod tests {
         // Test that Avc444Frame derives Debug
         let frame = Avc444Frame {
             stream1_data: vec![1, 2, 3],
-            stream2_data: Some(vec![4, 5, 6]),  // Option<Vec<u8>> for aux omission
+            stream2_data: Some(vec![4, 5, 6]), // Option<Vec<u8>> for aux omission
             is_keyframe: true,
             timestamp_ms: 100,
             total_size: 6,

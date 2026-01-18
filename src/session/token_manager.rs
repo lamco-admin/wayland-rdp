@@ -62,9 +62,8 @@ impl TokenManager {
         let storage_path = if Path::new("/.flatpak-info").exists() {
             // Flatpak: Use app data directory
             let home = std::env::var("HOME").context("HOME not set")?;
-            let xdg_data = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| {
-                format!("{}/.local/share", home)
-            });
+            let xdg_data =
+                std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{}/.local/share", home));
 
             PathBuf::from(xdg_data)
                 .join("lamco-rdp-server")
@@ -73,10 +72,8 @@ impl TokenManager {
             // Native: Use standard data directory
             dirs::data_local_dir()
                 .unwrap_or_else(|| {
-                    PathBuf::from(
-                        std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
-                    )
-                    .join(".local/share")
+                    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+                        .join(".local/share")
                 })
                 .join("lamco-rdp-server")
                 .join("sessions")
@@ -125,19 +122,17 @@ impl TokenManager {
         };
 
         let tpm_store = match method {
-            CredentialStorageMethod::Tpm2 => {
-                match AsyncTpmCredentialStore::new().await {
-                    Ok(store) => {
-                        info!("TPM 2.0 credential store initialized");
-                        Some(store)
-                    }
-                    Err(e) => {
-                        warn!("Failed to initialize TPM 2.0 store: {}", e);
-                        warn!("Falling back to encrypted file storage");
-                        None
-                    }
+            CredentialStorageMethod::Tpm2 => match AsyncTpmCredentialStore::new().await {
+                Ok(store) => {
+                    info!("TPM 2.0 credential store initialized");
+                    Some(store)
                 }
-            }
+                Err(e) => {
+                    warn!("Failed to initialize TPM 2.0 store: {}", e);
+                    warn!("Falling back to encrypted file storage");
+                    None
+                }
+            },
             _ => None,
         };
 
@@ -161,7 +156,10 @@ impl TokenManager {
     ///
     /// Ok(()) if token was successfully stored
     pub async fn save_token(&self, session_id: &str, token: &str) -> Result<()> {
-        info!("Saving restore token for session: {} (method: {})", session_id, self.storage_method);
+        info!(
+            "Saving restore token for session: {} (method: {})",
+            session_id, self.storage_method
+        );
 
         let key = format!("lamco-rdp-session-{}", session_id);
         let token_zeroized = Zeroizing::new(token.to_string());
@@ -198,10 +196,7 @@ impl TokenManager {
                         .store_secret(
                             &key,
                             &token_zeroized,
-                            &[
-                                ("session_id", session_id),
-                                ("type", "portal-restore-token"),
-                            ],
+                            &[("session_id", session_id), ("type", "portal-restore-token")],
                         )
                         .await
                         .context("Failed to store via Flatpak manager")?;
@@ -261,7 +256,10 @@ impl TokenManager {
     ///
     /// Some(token) if found, None if not found
     pub async fn load_token(&self, session_id: &str) -> Result<Option<String>> {
-        debug!("Loading restore token for session: {} (method: {})", session_id, self.storage_method);
+        debug!(
+            "Loading restore token for session: {} (method: {})",
+            session_id, self.storage_method
+        );
 
         let key = format!("lamco-rdp-session-{}", session_id);
 
@@ -337,9 +335,7 @@ impl TokenManager {
                 }
             }
 
-            CredentialStorageMethod::EncryptedFile => {
-                self.load_token_from_file(session_id).await?
-            }
+            CredentialStorageMethod::EncryptedFile => self.load_token_from_file(session_id).await?,
 
             CredentialStorageMethod::None => None,
         };
@@ -526,7 +522,9 @@ impl TokenManager {
                 CredentialStorageMethod::FlatpakSecretPortal => "Host Keyring".to_string(),
                 CredentialStorageMethod::GnomeKeyring
                 | CredentialStorageMethod::KWallet
-                | CredentialStorageMethod::KeePassXC => "AES-256-GCM (via Secret Service)".to_string(),
+                | CredentialStorageMethod::KeePassXC => {
+                    "AES-256-GCM (via Secret Service)".to_string()
+                }
                 CredentialStorageMethod::EncryptedFile => "AES-256-GCM (machine-bound)".to_string(),
                 CredentialStorageMethod::None => "None".to_string(),
             },
@@ -604,7 +602,10 @@ mod tests {
             .await
             .expect("TokenManager creation failed");
 
-        assert_eq!(manager.storage_method, CredentialStorageMethod::EncryptedFile);
+        assert_eq!(
+            manager.storage_method,
+            CredentialStorageMethod::EncryptedFile
+        );
         assert!(manager.storage_path.exists());
     }
 
@@ -661,7 +662,9 @@ mod tests {
 
         let original = "my-secret-token";
         let encrypted = manager.encrypt_token(original).expect("Encryption failed");
-        let decrypted = manager.decrypt_token(&encrypted).expect("Decryption failed");
+        let decrypted = manager
+            .decrypt_token(&encrypted)
+            .expect("Decryption failed");
 
         assert_eq!(original, decrypted);
     }
@@ -688,14 +691,20 @@ mod tests {
         let session_id = "test-ss-session";
 
         // Save
-        manager.save_token(session_id, test_token).await.expect("Save failed");
+        manager
+            .save_token(session_id, test_token)
+            .await
+            .expect("Save failed");
 
         // Load
         let loaded = manager.load_token(session_id).await.expect("Load failed");
         assert_eq!(loaded, Some(test_token.to_string()));
 
         // Delete
-        manager.delete_token(session_id).await.expect("Delete failed");
+        manager
+            .delete_token(session_id)
+            .await
+            .expect("Delete failed");
     }
 
     #[tokio::test]
@@ -709,13 +718,19 @@ mod tests {
         let session_id = "test-tpm-session";
 
         // Save
-        manager.save_token(session_id, test_token).await.expect("Save failed");
+        manager
+            .save_token(session_id, test_token)
+            .await
+            .expect("Save failed");
 
         // Load
         let loaded = manager.load_token(session_id).await.expect("Load failed");
         assert_eq!(loaded, Some(test_token.to_string()));
 
         // Delete
-        manager.delete_token(session_id).await.expect("Delete failed");
+        manager
+            .delete_token(session_id)
+            .await
+            .expect("Delete failed");
     }
 }

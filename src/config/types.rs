@@ -586,7 +586,6 @@ pub struct EgfxConfig {
     pub qp_default: u8,
 
     // === AVC444-specific configuration ===
-
     /// AVC444 auxiliary stream bitrate ratio (0.3-1.0)
     /// Ratio of auxiliary stream bitrate relative to main stream.
     /// - 0.5 = aux gets 50% of main's bitrate (good for typical content)
@@ -619,7 +618,6 @@ pub struct EgfxConfig {
     pub avc444_enabled: bool,
 
     // === PHASE 1: AUX OMISSION (BANDWIDTH OPTIMIZATION) ===
-
     /// Enable auxiliary stream omission for bandwidth optimization
     /// When true: Implements FreeRDP-style aux omission (LC field)
     /// When false: Always sends both streams (backward compatible)
@@ -658,11 +656,11 @@ fn default_avc444_aux_ratio() -> f32 {
 }
 
 fn default_aux_interval() -> u32 {
-    30  // 1 second @ 30fps
+    30 // 1 second @ 30fps
 }
 
 fn default_aux_threshold() -> f32 {
-    0.05  // 5% pixels changed
+    0.05 // 5% pixels changed
 }
 
 fn default_false() -> bool {
@@ -702,13 +700,13 @@ impl Default for EgfxConfig {
             // AVC444-specific defaults
             avc444_aux_bitrate_ratio: 0.5, // Aux gets 50% of main's bitrate
             color_matrix: "auto".to_string(), // Auto-detect based on resolution
-            color_range: "auto".to_string(),  // Use matrix default (limited for compatibility)
-            avc444_enabled: true, // Enable AVC444 when client supports it
+            color_range: "auto".to_string(), // Use matrix default (limited for compatibility)
+            avc444_enabled: true,          // Enable AVC444 when client supports it
             // Phase 1: Aux omission defaults (NOW PRODUCTION DEFAULTS)
-            avc444_enable_aux_omission: true,   // Enabled by default (production proven)
-            avc444_max_aux_interval: 30,        // 1 second @ 30fps
-            avc444_aux_change_threshold: 0.05,  // 5% pixels changed
-            avc444_force_aux_idr_on_return: false,  // Must be false for single encoder
+            avc444_enable_aux_omission: true, // Enabled by default (production proven)
+            avc444_max_aux_interval: 30,      // 1 second @ 30fps
+            avc444_aux_change_threshold: 0.05, // 5% pixels changed
+            avc444_force_aux_idr_on_return: false, // Must be false for single encoder
         }
     }
 }
@@ -807,15 +805,15 @@ pub struct DamageTrackingConfig {
 }
 
 fn default_tile_size() -> usize {
-    16  // 16x16 tiles for maximum sensitivity (FreeRDP uses 16x16)
+    16 // 16x16 tiles for maximum sensitivity (FreeRDP uses 16x16)
 }
 
 fn default_diff_threshold() -> f32 {
-    0.01  // 1% threshold - very sensitive, catches single-character changes
+    0.01 // 1% threshold - very sensitive, catches single-character changes
 }
 
 fn default_pixel_threshold() -> u8 {
-    1  // Single pixel difference threshold for maximum sensitivity
+    1 // Single pixel difference threshold for maximum sensitivity
 }
 
 fn default_merge_distance() -> u32 {
@@ -823,13 +821,13 @@ fn default_merge_distance() -> u32 {
 }
 
 fn default_min_region_area() -> u64 {
-    64  // 8x8 pixel minimum
+    64 // 8x8 pixel minimum
 }
 
 impl Default for DamageTrackingConfig {
     fn default() -> Self {
         Self {
-            enabled: true,  // Enable by default for bandwidth savings
+            enabled: true, // Enable by default for bandwidth savings
             method: "diff".to_string(),
             tile_size: default_tile_size(),
             diff_threshold: default_diff_threshold(),

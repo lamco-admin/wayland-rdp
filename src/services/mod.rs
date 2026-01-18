@@ -39,14 +39,14 @@
 //! registry.log_summary();
 //! ```
 
-mod registry;
 mod rdp_capabilities;
+mod registry;
 mod service;
 mod translation;
 mod wayland_features;
 
 // Re-export main types
-pub use registry::ServiceRegistry;
 pub use rdp_capabilities::RdpCapability;
+pub use registry::ServiceRegistry;
 pub use service::{AdvertisedService, PerformanceHints, ServiceId, ServiceLevel};
 pub use wayland_features::{DamageMethod, DrmFormat, HdrTransfer, WaylandFeature};

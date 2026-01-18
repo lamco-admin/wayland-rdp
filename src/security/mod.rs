@@ -34,7 +34,6 @@ impl SecurityManager {
         // Verify TLS config
         tls_config.verify()?;
 
-        // Create authenticator
         let auth_method = AuthMethod::from_str(&config.security.auth_method);
         let authenticator = Arc::new(UserAuthenticator::new(auth_method, None));
 
@@ -59,7 +58,6 @@ impl SecurityManager {
 
     /// Authenticate user
     pub async fn authenticate(&self, username: &str, password: &str) -> Result<SessionToken> {
-        // Validate username format
         UserAuthenticator::validate_username(username)?;
 
         // Authenticate
@@ -69,7 +67,6 @@ impl SecurityManager {
             anyhow::bail!("Authentication failed");
         }
 
-        // Create session token
         Ok(SessionToken::new(username.to_string()))
     }
 }
