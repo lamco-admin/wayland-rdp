@@ -418,12 +418,12 @@ impl GraphicsPipelineHandler for LamcoGraphicsHandler {
     }
 }
 
-/// Thread-safe wrapper for WrdGraphicsHandler
+/// Thread-safe wrapper for LamcoGraphicsHandler
 ///
 /// Since GraphicsPipelineHandler requires `Send`, but we also need
 /// to query state from other tasks, this wrapper provides Arc-based sharing.
 pub struct SharedGraphicsHandler {
-    inner: Arc<std::sync::RwLock<WrdGraphicsHandler>>,
+    inner: Arc<std::sync::RwLock<LamcoGraphicsHandler>>,
 }
 
 impl SharedGraphicsHandler {

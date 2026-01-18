@@ -107,7 +107,7 @@ pub enum InputEvent {
 ///
 /// Receives keyboard and mouse events from RDP clients and injects them
 /// into the Wayland compositor via the Portal RemoteDesktop API.
-pub struct WrdInputHandler {
+pub struct LamcoInputHandler {
     /// Session handle for input injection (abstraction over Portal/Mutter)
     session_handle: Arc<dyn crate::session::SessionHandle>,
 
@@ -127,7 +127,7 @@ pub struct WrdInputHandler {
     input_tx: mpsc::Sender<InputEvent>,
 }
 
-impl WrdInputHandler {
+impl LamcoInputHandler {
     /// Create a new input handler
     ///
     /// # Arguments
@@ -598,7 +598,7 @@ impl WrdInputHandler {
 /// This is a synchronous trait, so we spawn async tasks for each event.
 /// The portal API requires async operations, so we bridge the synchronous
 /// trait to async execution.
-impl RdpServerInputHandler for WrdInputHandler {
+impl RdpServerInputHandler for LamcoInputHandler {
     fn keyboard(&mut self, event: IronKeyboardEvent) {
         // Send to batching queue (processed every 10ms)
         // Use try_send (non-blocking, bounded queue)
@@ -620,7 +620,7 @@ impl RdpServerInputHandler for WrdInputHandler {
 
 /// Custom Clone implementation to allow handler to be cloned
 /// This is necessary because RdpServer needs ownership but we want to share state
-impl Clone for WrdInputHandler {
+impl Clone for LamcoInputHandler {
     fn clone(&self) -> Self {
         Self {
             session_handle: Arc::clone(&self.session_handle),

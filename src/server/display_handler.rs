@@ -228,7 +228,7 @@ impl FrameRateRegulator {
 /// When EGFX/H.264 is negotiated, frames are encoded with OpenH264 and sent
 /// through the EGFX channel for better quality and compression. Falls back
 /// to RemoteFX when H.264 is not available.
-pub struct WrdDisplayHandler {
+pub struct LamcoDisplayHandler {
     /// Current desktop size
     size: Arc<RwLock<DesktopSize>>,
 
@@ -269,7 +269,7 @@ pub struct WrdDisplayHandler {
     service_registry: Arc<ServiceRegistry>,
 }
 
-impl WrdDisplayHandler {
+impl LamcoDisplayHandler {
     /// Create a new display handler
     ///
     /// # Arguments
@@ -1338,7 +1338,7 @@ impl WrdDisplayHandler {
 
 /// Implement IronRDP's `RdpServerDisplay` trait
 #[async_trait::async_trait]
-impl RdpServerDisplay for WrdDisplayHandler {
+impl RdpServerDisplay for LamcoDisplayHandler {
     /// Return the current desktop size
     async fn size(&mut self) -> DesktopSize {
         let size = self.size.read().await;
@@ -1372,7 +1372,7 @@ impl RdpServerDisplay for WrdDisplayHandler {
 ///
 /// Allows the handler to be cloned for use with IronRDP's builder pattern.
 /// All internal state is Arc'd so cloning is cheap and maintains shared state.
-impl Clone for WrdDisplayHandler {
+impl Clone for LamcoDisplayHandler {
     fn clone(&self) -> Self {
         Self {
             size: Arc::clone(&self.size),

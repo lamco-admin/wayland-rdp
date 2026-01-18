@@ -67,10 +67,10 @@ mod graphics_drain;
 mod input_handler;
 mod multiplexer_loop;
 
-pub use display_handler::WrdDisplayHandler;
+pub use display_handler::LamcoDisplayHandler;
 pub use egfx_sender::{EgfxFrameSender, SendError};
-pub use gfx_factory::{HandlerState, SharedHandlerState, WrdGfxFactory};
-pub use input_handler::WrdInputHandler;
+pub use gfx_factory::{HandlerState, LamcoGfxFactory, SharedHandlerState};
+pub use input_handler::LamcoInputHandler;
 
 use anyhow::{Context, Result};
 use ironrdp_pdu::rdp::capability_sets::server_codecs_capabilities;
@@ -80,7 +80,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
-use crate::clipboard::{ClipboardConfig, ClipboardManager, WrdCliprdrFactory};
+use crate::clipboard::{ClipboardConfig, ClipboardManager, LamcoCliprdrFactory};
 use crate::config::Config;
 use crate::input::MonitorInfo as InputMonitorInfo;
 use crate::portal::PortalManager;
@@ -92,7 +92,7 @@ use crate::session::{PipeWireAccess, SessionStrategySelector, SessionType};
 ///
 /// Main server struct that orchestrates all subsystems and integrates
 /// with IronRDP for RDP protocol handling.
-pub struct WrdServer {
+pub struct LamcoRdpServer {
     /// Configuration (kept for future dynamic reconfiguration)
     #[allow(dead_code)]
     config: Arc<Config>,
@@ -106,11 +106,11 @@ pub struct WrdServer {
 
     /// Display handler (kept for lifecycle management)
     #[allow(dead_code)]
-    display_handler: Arc<WrdDisplayHandler>,
+    display_handler: Arc<LamcoDisplayHandler>,
 }
 
-impl WrdServer {
-    /// Create a new WRD server instance
+impl LamcoRdpServer {
+    /// Create a new server instance
     ///
     /// # Arguments
     ///
@@ -427,7 +427,7 @@ impl WrdServer {
         let force_avc420_only = capabilities
             .profile
             .has_quirk(&crate::compositor::Quirk::Avc444Unreliable);
-        let gfx_factory = WrdGfxFactory::with_quirks(
+        let gfx_factory = LamcoGfxFactory::with_quirks(
             initial_size.0 as u16,
             initial_size.1 as u16,
             force_avc420_only,
@@ -443,7 +443,7 @@ impl WrdServer {
 
         // Create display handler with PipeWire FD, stream info, graphics queue, and EGFX references
         let display_handler = Arc::new(
-            WrdDisplayHandler::new(
+            LamcoDisplayHandler::new(
                 initial_size.0,
                 initial_size.1,
                 pipewire_fd,
@@ -501,7 +501,7 @@ impl WrdServer {
 
         // Create input handler using Portal session handle (works correctly)
         // HYBRID: For Mutter strategy, uses Portal for input while Mutter handles video
-        let input_handler = WrdInputHandler::new(
+        let input_handler = LamcoInputHandler::new(
             portal_input_handle, // Use Portal session for input (works on all DEs)
             monitors.clone(),
             primary_stream_id,
@@ -576,7 +576,7 @@ impl WrdServer {
 
         // Create clipboard factory for IronRDP
         // Factory automatically starts event bridge task internally
-        let clipboard_factory = WrdCliprdrFactory::new(Arc::clone(&clipboard_manager));
+        let clipboard_factory = LamcoCliprdrFactory::new(Arc::clone(&clipboard_manager));
 
         // Note: gfx_factory was created earlier (before display handler)
         // to share references with display handler
@@ -680,9 +680,9 @@ impl WrdServer {
     }
 }
 
-impl Drop for WrdServer {
+impl Drop for LamcoRdpServer {
     fn drop(&mut self) {
-        debug!("WrdServer dropped - cleaning up resources");
+        debug!("LamcoRdpServer dropped - cleaning up resources");
         // Resources are automatically cleaned up through Arc<Mutex<>> drops
         // and tokio task cancellation
     }
