@@ -5,7 +5,7 @@ All notable changes to lamco-rdp-server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - 2026-01-18
+## [0.9.0] - 2026-01-18
 
 ### Added
 
@@ -138,6 +138,6 @@ lamco-rdp-server follows Semantic Versioning (semver):
 - MINOR version for backwards-compatible functionality additions
 - PATCH version for backwards-compatible bug fixes
 
-**Current:** v0.1.0 (initial production release)
-**Next:** v0.2.0 (planned feature additions)
-**Stable:** v1.0.0 (when API stabilizes)
+**Current:** v0.9.0 (pre-release, production-ready)
+**Next:** v1.0.0 (stable release after field validation)
+**Future:** v1.1.0+ (planned feature additions)
