@@ -190,6 +190,22 @@ pub mod session;
 /// See: docs/architecture/SESSION-PERSISTENCE-ARCHITECTURE.md (Phase 3)
 pub mod mutter;
 
+/// GUI for configuration (optional)
+///
+/// Provides a complete graphical user interface for configuring the RDP server
+/// using the iced framework. This module includes:
+///
+/// - 10 configuration tabs for all 85+ parameters
+/// - Service registry and capabilities display
+/// - Live log viewer with filtering
+/// - Hardware detection (VA-API, NVENC)
+/// - Certificate generation
+/// - Preset systems for common configurations
+///
+/// Requires the `gui` feature to be enabled.
+#[cfg(feature = "gui")]
+pub mod gui;
+
 // =============================================================================
 // Re-exports from published lamco crates (for convenience)
 // =============================================================================

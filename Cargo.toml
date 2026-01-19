@@ -15,6 +15,11 @@ categories = ["network-programming", "multimedia"]
 name = "lamco-rdp-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "lamco-rdp-server-gui"
+path = "src/gui/main.rs"
+required-features = ["gui"]
+
 [lib]
 name = "lamco_rdp_server"
 path = "src/lib.rs"
@@ -195,6 +200,12 @@ time = { version = "0.3", features = ["formatting", "macros"] }
 # -----------------------------------------------------------------------------
 pam = { version = "0.7", optional = true }
 
+# -----------------------------------------------------------------------------
+# GUI (optional - for configuration GUI)
+# -----------------------------------------------------------------------------
+iced = { version = "0.14", optional = true, features = ["tokio", "advanced", "canvas", "lazy", "svg"] }
+rfd = { version = "0.15", optional = true, default-features = false, features = ["xdg-portal", "tokio"] }
+
 # =============================================================================
 # Dev Dependencies
 # =============================================================================
@@ -211,6 +222,9 @@ proptest = "1.4"
 
 [features]
 default = ["pam-auth", "h264"]
+
+# GUI for configuration (optional, adds ~40MB to binary)
+gui = ["iced", "rfd"]
 wayland = ["wayland-client", "wayland-protocols", "wayland-protocols-misc", "wayland-protocols-wlr"]
 libei = ["reis"]
 pam-auth = ["pam"]
